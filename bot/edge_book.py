@@ -75,11 +75,9 @@ def _combo_rows(days=30):
     cutoff = (time.time() - days * 86400) * 1000
     buckets: dict[str, list[float]] = {}
     for r in db.get("resolved") or []:
-        if r.get("ts", 0) < cutoff:
-            continue
+        if r.get("ts", 0) < cutoff or not shadow.is_clean_row(r):
+            continue                       # ردیفِ مسموم (ریسکِ صفر / R پرت) آمار را وارونه می‌کرد
         rm = r.get("r_mult")
-        if rm is None:
-            continue
         key = f"{r.get('tf')}|{r.get('setup') or 'zx'}|{r.get('side') or '?'}"
         buckets.setdefault(key, []).append(float(rm))
         key2 = f"{r.get('tf')}|{r.get('setup') or 'zx'}"

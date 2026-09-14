@@ -7,7 +7,11 @@ import threading
 import time
 import uuid
 
+import bracket
+
 SHADOW_PATH = os.path.join(os.path.dirname(__file__), "data", "signals_log.json")
+MIN_RISK_PCT = 0.05        # زیر این فاصله، گردکردنِ قیمت حدضرر را روی ورود می‌آورد و R بی‌معنا می‌شود
+MAX_ABS_R = 5.0            # هر |R| بزرگ‌تر، خطای داده است نه نتیجهٔ معامله
 _lock = threading.Lock()
 
 
@@ -26,9 +30,36 @@ def _save(db):
     os.replace(tmp, SHADOW_PATH)
 
 
+TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+# سیگنالِ کندلِ کهنه = فیدِ مرده؛ هرگز حل نمی‌شود و ثبت را قفل می‌کند. سه کندل
+# سخاوتمندانه است (زمانِ ثبت نسبت به زمانِ *باز شدنِ* کندل سنجیده می‌شود) ولی
+# ردیف‌های واقعیِ مسموم ۴۰ تا ۱۳۶۸ روز فاصله داشتند.
+MAX_CANDLE_AGE_BARS = 3
+
+
+def is_clean_row(r):
+    """ردیفی که آماری معنادار دارد. ردیف‌های مسموم آمارِ زنده را وارونه می‌کردند:
+    یک SHIBUSDT با entry==sl مقدار r_mult=997 ساخته بود و گیت‌های تعلیق را خاموش کرد."""
+    try:
+        entry, sl = float(r["entry"]), float(r["sl"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    risk_pct = abs(entry - sl) / max(abs(entry), 1e-12) * 100
+    if risk_pct < MIN_RISK_PCT:
+        return False
+    rm = r.get("r_mult")
+    return rm is not None and abs(float(rm)) <= MAX_ABS_R
+
+
 def log_signal(symbol, tf, side, entry, sl, tp, setup, p_win, ev_pct, candle_ts, horizon_min,
                cost_pct=0.15):
     """ثبت سیگنال نمایش‌داده‌شده (بدون تکرار برای همان کندل/جهت)."""
+    risk_pct = abs(float(entry) - float(sl)) / max(abs(float(entry)), 1e-12) * 100
+    if risk_pct < MIN_RISK_PCT:
+        return False                               # حدضرر روی ورود گرد شده — R بی‌معنا می‌شود
+    bar_ms = TF_MINUTES.get(tf, 60) * 60000
+    if candle_ts and time.time() * 1000 - float(candle_ts) > MAX_CANDLE_AGE_BARS * bar_ms:
+        return False                               # کندلِ کهنه/فیدِ مرده
     with _lock:
         db = _load()
         for p in db["pending"]:
@@ -37,7 +68,6 @@ def log_signal(symbol, tf, side, entry, sl, tp, setup, p_win, ev_pct, candle_ts,
         for r in db["resolved"][-200:]:
             if r["symbol"] == symbol and r["tf"] == tf and r["ts"] == candle_ts and r["side"] == side:
                 return False
-        risk_pct = abs(float(entry) - float(sl)) / max(abs(float(entry)), 1e-12) * 100
         db["pending"].append({
             "id": uuid.uuid4().hex[:8], "ts": candle_ts, "logged_at": time.time(),
             "symbol": symbol, "tf": tf, "side": side, "setup": setup,
@@ -66,26 +96,25 @@ def resolve(get_klines):
                 still.append(p)
                 continue
             d = 1 if p["side"] == "long" else -1
-            risk = abs(p["entry"] - p["sl"]) or 1e-9
+            risk = abs(p["entry"] - p["sl"])
+            if risk / max(abs(float(p["entry"])), 1e-12) * 100 < MIN_RISK_PCT:
+                continue                            # ردیفِ مسموم — دور انداخته می‌شود
+            # همان قواعدِ محافظه‌کارانهٔ براکتِ واحد (گپ، تساویِ SL/TP، حدِ زمانی)
+            start = next((i for i, t in enumerate(kl["t"]) if t > p["ts"]), None)
             outcome = None
-            last_c = None
-            for i, t in enumerate(kl["t"]):
-                if t <= p["ts"]:
-                    continue
-                last_c = kl["c"][i]
-                hit_sl = kl["l"][i] <= p["sl"] if d == 1 else kl["h"][i] >= p["sl"]
-                hit_tp = kl["h"][i] >= p["tp"] if d == 1 else kl["l"][i] <= p["tp"]
-                if hit_sl:                          # محافظه‌کار: برخورد هم‌زمان = باخت
-                    outcome = ("باخت", -1.0)
-                    break
-                if hit_tp:
-                    outcome = ("برد", abs(p["tp"] - p["entry"]) / risk)
-                    break
-                if t >= p["deadline"]:
-                    outcome = ("حدزمانی", d * (kl["c"][i] - p["entry"]) / risk)
-                    break
-            if outcome is None and time.time() * 1000 > p["deadline"] + 86400000 and last_c:
-                outcome = ("حدزمانی", d * (last_c - p["entry"]) / risk)
+            if start is not None:
+                deadline_idx = next(
+                    (i for i, t in enumerate(kl["t"]) if i >= start and t >= p["deadline"]), None)
+                last_idx = deadline_idx if deadline_idx is not None else len(kl["t"]) - 1
+                res = bracket.resolve_path(
+                    kl["o"], kl["h"], kl["l"], kl["c"], start, d,
+                    p["entry"], p["sl"], p["tp"], max_bars=last_idx - start + 1)
+                reached_end = res["exit_idx"] >= last_idx and res["timed_out"]
+                if not res["timed_out"]:
+                    label = "برد" if res["gross_r"] > 0 else "باخت"
+                    outcome = (label, res["gross_r"])
+                elif deadline_idx is not None or time.time() * 1000 > p["deadline"] + 86400000:
+                    outcome = ("حدزمانی", res["gross_r"]) if reached_end else None
             if outcome:
                 gross_r = float(outcome[1])
                 if "cost_r" in p:
@@ -115,7 +144,8 @@ def stats(tf=None, days=30, since_ts=None):
     cutoff = (time.time() - days * 86400) * 1000
     if since_ts:
         cutoff = max(cutoff, float(since_ts) * 1000)
-    rows = [r for r in db["resolved"] if r["ts"] >= cutoff and (tf is None or r["tf"] == tf)]
+    rows = [r for r in db["resolved"]
+            if r["ts"] >= cutoff and (tf is None or r["tf"] == tf) and is_clean_row(r)]
     pending = [p for p in db["pending"] if tf is None or p["tf"] == tf]
     out = {"n": len(rows), "pending": len(pending), "win_rate": None, "avg_r": None,
            "by_setup": {}, "by_combo": {}, "by_side": {}}

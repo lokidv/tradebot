@@ -6,6 +6,7 @@ import math
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
+import bracket
 import gates
 
 TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
@@ -500,34 +501,20 @@ def trade_suggestion(c, cs, fc, tf, votes_bull, votes_bear, s_ml, force_side=Non
         grade = "A+"
 
     d = 1 if side == "long" else -1
-    min_sl = entry * 0.0025
-    base = max(1.3 * a, min_sl)
-    piv = float(cs["last_pl"][-1]) if side == "long" else float(cs["last_ph"][-1])
-    sl = entry - d * base
-    if not math.isnan(piv):
-        cand = piv - 0.25 * a if side == "long" else piv + 0.25 * a
-        if (d == 1 and entry > cand) or (d == -1 and entry < cand):
-            sl = max(cand, sl) if d == 1 else min(cand, sl)
-    sl = min(sl, entry - d * min_sl) if d == 1 else max(sl, entry - d * min_sl)
-    sl = max(sl, entry - d * 3.5 * a) if d == 1 else min(sl, entry - d * 3.5 * a)
-    r_dist = abs(entry - sl)
-
-    tp = fc["target"]
-    if (d == 1 and tp <= entry) or (d == -1 and tp >= entry):
-        tp = entry + d * 1.8 * r_dist
-    tp = min(max(tp, entry + d * 0.8 * r_dist), entry + d * 3.5 * r_dist) if d == 1 else max(min(tp, entry + d * 0.8 * r_dist), entry + d * 3.5 * r_dist)
-    min_tp = entry * 0.004
-    if abs(tp - entry) < min_tp:
-        tp = entry + d * min_tp
+    # براکتِ واحد (bracket.py): دقیقاً همان چیزی که برچسب‌های آموزش با آن ساخته می‌شوند.
+    # هدفِ گرفته‌شده از «پیش‌بینیِ مسیر» و سفت‌کردنِ حدضرر با پیوت حذف شدند، چون
+    # p_win/EV مدل برای ساختارِ ثابتِ 1R/1.8R یاد گرفته شده و با هر هندسهٔ دیگری بی‌معناست.
+    lv = bracket.levels(entry, a, d)
+    sl, tp, r_dist = lv["sl"], lv["tp"], lv["r"]
     viable = abs(tp - entry) <= 8 * a
-    rr = abs(tp - entry) / max(r_dist, EPS)
     return {
         "side": side, "grade": grade, "entry": entry, "sl": sl, "tp": tp,
-        "rr": rr, "risk_pct": r_dist / entry * 100, "gain_pct": abs(tp - entry) / entry * 100,
-        "time_stop_bars": 40, "time_stop_min": 40 * TF_MINUTES[tf],
+        "rr": lv["rr"], "risk_pct": lv["risk_pct"], "gain_pct": abs(tp - entry) / entry * 100,
+        "time_stop_bars": bracket.MAX_BARS, "time_stop_min": bracket.MAX_BARS * TF_MINUTES[tf],
         "viable": viable,
         "status": "ستاپ آماده" if viable else "نوسان برای هدف اقتصادی کافی نیست",
         "reasons": [],
+        "forecast_target": fc["target"],        # فقط اطلاعاتی — دیگر هدفِ معامله نیست
     }
 
 
@@ -549,34 +536,12 @@ def quick_backtest(o, h, l, c, cs, tf, cost_pct=0.15):
         sig, _setup = setup_signal(cs, o, h, l, c, i)
         if sig == 0:
             continue
-        entry = float(o[i + 1])
-        r = max(1.3 * float(cs["a14"][i]), 0.0025 * entry)
-        sl = entry - sig * r
-        tp = entry + sig * 1.8 * r
-        exit_price = None
-        timed_out = True
-        for j in range(i + 1, min(i + 41, n)):
-            if (sig == 1 and o[j] <= sl) or (sig == -1 and o[j] >= sl):
-                exit_price = float(o[j])              # گپِ زیان‌بار روی قیمت مشاهده‌شده
-                timed_out = False
-                break
-            hit_sl = l[j] <= sl if sig == 1 else h[j] >= sl
-            hit_tp = h[j] >= tp if sig == 1 else l[j] <= tp
-            if hit_sl:                      # محافظه‌کار: اگر هر دو در یک کندل، ضرر
-                exit_price = sl
-                timed_out = False
-                break
-            if hit_tp:
-                exit_price = tp
-                timed_out = False
-                break
-        if exit_price is None:
-            exit_price = float(c[min(i + 40, n - 1)])
-        gross_r = sig * (exit_price - entry) / max(r, EPS)
-        risk_pct = r / max(entry, EPS) * 100
-        net_r = gross_r - max(float(cost_pct), 0.0) / max(risk_pct, EPS)
+        res = bracket.signal_trade(o, h, l, c, cs["a14"][i], i, sig)
+        if res is None:
+            continue
+        net_r = bracket.net_r(res["gross_r"], res["risk_pct"], cost_pct)
         outcomes.append(net_r)
-        if timed_out:
+        if res["timed_out"]:
             timeouts += 1
         if net_r > 0:
             wins += 1

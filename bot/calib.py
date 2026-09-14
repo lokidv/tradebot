@@ -13,6 +13,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import numpy as np
 
+import bracket
 import engine
 import market
 
@@ -25,7 +26,8 @@ except Exception:  # noqa: BLE001
 CALIB_PATH = os.path.join(os.path.dirname(__file__), "data", "calib.json")
 COST_PCT = 0.15
 REBUILD_SEC = 86400
-CALIB_VERSION = 17       # با هر تغییرِ ویژگی‌ها/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+CALIB_VERSION = 18       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+# ۱۸: براکتِ واحد (bracket.py) — برچسب‌ها حالا گپِ پشتِ حدضرر را روی قیمتِ مشاهده‌شده می‌بندند
 WF_FOLDS = 5             # تعداد فولدهای Walk-Forward
 WF_EMBARGO = 24          # fallback فقط برای ورودی‌های بدون timestamp
 MIN_BRIER_SKILL = 0.01   # حداقل ۱٪ بهبود نسبت به پیش‌بینیِ ثابتِ نرخ پایه
@@ -1415,17 +1417,9 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
     H = engine.HORIZON[tf]
     dir_X, dir_y, dir_R = [], [], []
 
-    def _barrier(i, sig, r_unit):
-        entry = o[i + 1]
-        sl = entry - sig * r_unit
-        tp = entry + sig * 1.8 * r_unit
-        for j in range(i + 1, min(i + 41, n)):
-            if (l[j] <= sl if sig == 1 else h[j] >= sl):
-                return -1.0
-            if (h[j] >= tp if sig == 1 else l[j] <= tp):
-                return 1.8
-        j_end = min(i + 40, n - 1)
-        return float(sig * (c[j_end] - entry) / r_unit)
+    def _barrier(i, sig):
+        res = bracket.signal_trade(o, h, l, c, cs["a14"][i], i, sig)
+        return None if res is None else res["gross_r"]
 
     for i in range(260, n - H - 1, 4):
         ts = ts_arr[i]
@@ -1450,9 +1444,9 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
             **common_kwargs)
         dir_X.append((long_feats, short_feats))
         dir_y.append((ts, 1.0 if ret > 0 else 0.0))
-        r_unit = max(1.3 * cs["a14"][i], 0.0025 * entry)
-        dir_R.append((_barrier(i, 1, r_unit), _barrier(i, -1, r_unit),
-                      float(r_unit / entry * 100)))       # (نتیجه لانگ، نتیجه شورت، ریسک٪)
+        lv = bracket.levels(entry, cs["a14"][i], 1)
+        dir_R.append((_barrier(i, 1), _barrier(i, -1),
+                      lv["risk_pct"]))                    # (نتیجه لانگ، نتیجه شورت، ریسک٪)
     for i in range(260, n - 42):
         if cooldown > 0:
             cooldown -= 1
@@ -1461,23 +1455,10 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
         if sig == 0:
             continue
         ts = ts_arr[i]
-        entry = o[i + 1]
-        r = max(1.3 * cs["a14"][i], 0.0025 * entry)
-        sl = entry - sig * r
-        tp = entry + sig * 1.8 * r
-        out_r = None
-        for j in range(i + 1, min(i + 41, n)):
-            hit_sl = l[j] <= sl if sig == 1 else h[j] >= sl
-            hit_tp = h[j] >= tp if sig == 1 else l[j] <= tp
-            if hit_sl:
-                out_r = -1.0
-                break
-            if hit_tp:
-                out_r = 1.8
-                break
-        if out_r is None:
-            j_end = min(i + 40, n - 1)
-            out_r = float(sig * (c[j_end] - entry) / r)
+        res = bracket.signal_trade(o, h, l, c, cs["a14"][i], i, sig)
+        if res is None:
+            continue
+        out_r = res["gross_r"]
         b, s = engine.votes_at(cs, i)
         votes = b if sig == 1 else s
         trending = cs["adx"][i] >= 22 and cs["chop"][i] < 55
@@ -1497,7 +1478,9 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
             ethbtc_m=(ethbtc_map or {}).get(ts, 0.0))
         events.append({"ts": ts, "dir": sig, "setup": setup, "feats": feats,
                        "r": round(float(out_r), 3),
-                       "risk_pct": round(float(r / entry * 100), 4),
+                       "risk_pct": round(float(res["risk_pct"]), 4),
+                       "bars_held": int(res["bars_held"]),
+                       "outcome": res["outcome"],
                        "z": float(cs["z"][i]), "votes": int(votes),
                        "trend": bool(trending), "btc": bool(btc_align),
                        "regime": engine.regime_at(cs, c, i)[0]})
