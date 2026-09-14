@@ -30,6 +30,7 @@ import calib
 import shadow
 import autotrader
 import advisor
+import gates
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
@@ -459,6 +460,12 @@ def calib_status():
     return calib.status()
 
 
+@app.get("/api/gates")
+def gates_status():
+    """قفلِ ایمنیِ سرمایه: ترکیب‌های مجاز، وضعیتِ لایو و سقف‌های ریسک (فقط‌خواندنی)."""
+    return gates.status()
+
+
 @app.get("/api/version")
 def version_info():
     """شناسهٔ دقیق کد و مدلِ در حال اجرا برای راستی‌آزمایی انتشار."""
@@ -581,6 +588,7 @@ def overview(tf: str = "1h"):
                        observe_only=a["trade"].get("observe_only", False),
                        recommendation=a["trade"].get("recommendation"),
                        authority=a["trade"].get("authority"),
+                       gate_allowed=a["trade"].get("gate_allowed", False),
                        pocket_grade=a["trade"].get("pocket_grade"),
                        pocket_size_hint=a["trade"].get("pocket_size_hint"),
                        pocket_lcb_r=a["trade"].get("pocket_lcb_r"),
@@ -629,10 +637,11 @@ def overview(tf: str = "1h"):
 
     # انتخاب مقطعی نهایی روی همهٔ فرصت‌های معتبر: فقط بهترین ۴۰٪ اجازهٔ ورود دارند.
     active = [r for r in coins if r.get("side") and r.get("tradeable")]
+    # مرتب‌سازی فقط با اعدادی که مرجعِ معتبر دارند؛ سیاستِ مردود دیگر عددی نمی‌دهد.
     active.sort(key=lambda r: (
-        r.get("policy_margin") or -99,
+        (r.get("policy_margin") if r.get("policy_trusted") and r.get("policy_margin") is not None else -99),
         r.get("signal_score") or 0,
-        r.get("edge_r") or -99,
+        (r.get("edge_r") if r.get("edge_trusted") and r.get("edge_r") is not None else -99),
     ), reverse=True)
     for rank, row in enumerate(active):
         rank_pct = 100.0 if len(active) == 1 else 100.0 * (len(active) - 1 - rank) / (len(active) - 1)

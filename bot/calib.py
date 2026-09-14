@@ -1952,15 +1952,24 @@ def predict_action(tf, long_feats, short_feats, risk_pct, cost=None, regime=None
 
 
 def _policy_untrusted_payload(pm, ps, risk_pct):
-    """وقتی سیاست ساخته شده ولی دادگاه OOS را نباخته — فقط تشخیص، نه مجوز ورود."""
+    """سیاستی که دادگاهِ OOS را نباخته — فقط تشخیص، بدونِ هیچ عددِ قابلِ‌اتکا.
+
+    عمداً هیچ امتیاز/EV/edge از سیاستِ مردود پخش نمی‌شود: وقتی شیبِ کالیبراسیون صفر
+    می‌شود، edge_sd به ۱e-۶ می‌رسد و policy_score به ±۱۰⁵ می‌پرد که فقط تابعِ ردهٔ
+    هزینهٔ نماد است — این عدد قبلاً به مرتب‌سازیِ UI و انتخابِ مقطعی نشت می‌کرد.
+    """
     tst = pm.get("test") or {}
-    edge_r = float(ps["edge_r"])
     return {
-        **ps,
+        "p_win": None, "p_win_low": None, "p_win_high": None, "p_uncertainty": None,
         "n": int(tst.get("n") or 0),
-        "avg_r": round(edge_r, 3),
-        "ev_pct": round(edge_r * float(risk_pct), 3),
-        "ev_lcb_pct": round(float(ps["edge_lcb_r"]) * float(risk_pct), 3),
+        "avg_r": None, "ev_pct": None, "ev_lcb_pct": None,
+        "edge_r": None, "edge_lcb_r": None, "edge_uncertainty_r": None,
+        "policy_score": None, "policy_margin": None,
+        "policy_test": tst,
+        "feature_zmax": ps.get("feature_zmax"),
+        "regime_stats": ps.get("regime_stats"),
+        "regime_veto": bool(ps.get("regime_veto")),
+        "regime_ok": bool(ps.get("regime_ok")),
         "reliability": "ردِ دادگاه",
         "base": pm.get("base_win"),
         "oos_lift": round(float(tst.get("uplift_r") or 0) * 100, 1),
@@ -1968,9 +1977,9 @@ def _policy_untrusted_payload(pm, ps, risk_pct):
         "source": "policy",
         "policy_trusted": False,
         "policy_pass": False,
+        "policy_court_failed": True,
         "edge_trusted": False,
-        "edge_rank_ic": (pm.get("edge_selection") or {}).get(pm.get("edge_kind"), {}).get("rank_ic"),
-        "edge_lift_r": (pm.get("edge_selection") or {}).get(pm.get("edge_kind"), {}).get("lift_r"),
+        "edge_rank_ic": None, "edge_lift_r": None,
         "authority": None,
     }
 
@@ -2045,10 +2054,10 @@ def predict(tf, feats, risk_pct, legacy=None, cost=None, regime=None):
             "base": m.get("oos_base"),                 # نرخِ پایهٔ برد — مرجعِ «کفِ نسبی»
             "oos_lift": lift, "oos_brier": m["oos_brier"], "source": "model",
             "edge_trusted": False,
-            # مدل ستاپ به‌تنهایی مجوز اتوترید نیست مگر engine با گیت EV آن را بالا بکشد
+            # مدل ستاپ هرگز مرجعِ ورود نیست (فاز ۰): فقط احتمالِ تشخیصی می‌دهد.
             "policy_trusted": False,
             "policy_pass": False,
-            "authority": "setup_model",
+            "authority": None,
         }
         if policy_diag:
             out["policy_test"] = policy_diag.get("policy_test")

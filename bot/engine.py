@@ -6,6 +6,8 @@ import math
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
+import gates
+
 TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
 HORIZON = {"15m": 48, "1h": 36, "4h": 30, "1d": 30}
 EPS = 1e-10
@@ -723,68 +725,29 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         else:
             tr.update(p_win=None, n_hist=0, avg_r_hist=None, ev_pct=None, reliability="کالیبره‌نشده")
 
-        # ── مرجع واحد تصمیم ──
-        # ۱) سیاست / انتخاب‌عملِ دادگاه‌قبول
-        # ۲) مدل ستاپِ معتبر فقط روی ستاپ رویدادی سالم (zx/sq) با EV-LCB مثبت
-        # ۳) جیبِ لبهٔ زنده (tf|setup از کارنامهٔ سایه) — مسیر حرفه‌ای وقتی سیاست مردود است
-        # غیر از این: مشاهده — نه پیشنهاد خرید/فروش
+        # ── مرجع واحد تصمیم (فاز ۰) ──
+        # فقط «سیاست نهاییِ دادگاه‌قبول» مرجع است، و ورودِ نهایی هم باید ترکیبِ
+        # پیش‌ثبت‌شده در gates.json باشد. دو مرجعِ قبلی حذف شدند:
+        #   • setup_model — مدلِ ستاپ با EV-LCB مثبت، بدونِ آزمونِ منجمد
+        #   • edge_pocket — انتخابِ پس از مشاهده روی ۱۲ سطلِ کوچک (n≥۱۸)؛ با لبهٔ صفر
+        #     احتمالِ ساختِ جیبِ کاذب ۸۳–۹۹٪ بود و از همهٔ وتوها هم معاف می‌شد.
+        # هر دو حالا فقط عددِ تشخیصی تولید می‌کنند.
         src = (stats or {}).get("source")
         auth = None
-        pocket_hit = None
         pockets = ex.get("edge_pockets") or {}
         susp_combos = ex.get("suspended_combos") or {}
         combo = f"{tf}|{setup_used}"
         combo_side = f"{tf}|{setup_used}|{tr['side']}"
+        pocket_hit = pockets.get(combo_side)
+        if pocket_hit:                              # فقط نمایش — هرگز مجوزِ ورود
+            tr["pocket_n"] = int(pocket_hit.get("n") or 0)
+            tr["pocket_avg_r"] = float(pocket_hit.get("avg_r") or 0.0)
+            tr["pocket_wr"] = pocket_hit.get("win_rate")
+            tr["pocket_lcb_r"] = pocket_hit.get("lcb_r")
+            tr["pocket_diagnostic_only"] = True
 
         if stats and src in ("policy", "action_policy") and stats.get("policy_trusted"):
             auth = "policy" if src == "policy" else "action_policy"
-        elif (stats and src == "model" and policy_applicable
-              and live_setup in ("zx", "sq")
-              and setup_used in ("zx", "sq")
-              and not stats.get("diagnostic_only")
-              and not ex.get("toxic_tf")):
-            ev_lcb = stats.get("ev_lcb_pct")
-            ev_ok = ev_lcb is not None and float(ev_lcb) > 0.0
-            p_lo = stats.get("p_win_low")
-            p_ok = p_lo is None or float(p_lo) >= 38.0
-            if ev_ok and p_ok:
-                auth = "setup_model"
-                tr["policy_trusted"] = True
-                tr["policy_pass"] = True
-                tr["policy_margin"] = float(stats.get("ev_lcb_pct") or 0.0)
-                tr["authority"] = "setup_model"
-        elif (policy_applicable and setup_used in ("zx", "sq")
-              and not ex.get("toxic_tf")
-              and combo_side not in susp_combos and combo not in susp_combos):
-            # جیب زنده: اول کلیدِ سمت‌دار، بعد کلی
-            # فقط جیب سمت‌دار — جیب کلی بدون side باعث ورود خلاف لبه می‌شد
-            pocket_hit = pockets.get(combo_side)
-            if pocket_hit and pocket_hit.get("alive", True):
-                pocket_side = pocket_hit.get("side")
-                side_ok = pocket_side is None or pocket_side == tr["side"]
-                score_now = float(cs["score_s"][-1])
-                if pocket_side is None:
-                    aligned = (d == 1 and score_now >= 0.15) or (d == -1 and score_now <= -0.15)
-                else:
-                    aligned = (d == 1 and score_now >= -0.05) or (d == -1 and score_now <= 0.05)
-                lcb_ok = pocket_hit.get("lcb_r") is None or float(pocket_hit["lcb_r"]) >= -0.05
-                if side_ok and aligned and lcb_ok:
-                    auth = "edge_pocket"
-                    tr["policy_trusted"] = True
-                    tr["policy_pass"] = True
-                    tr["policy_margin"] = float(pocket_hit.get("avg_r") or 0.0)
-                    tr["authority"] = "edge_pocket"
-                    tr["pocket_avg_r"] = float(pocket_hit.get("avg_r") or 0.0)
-                    tr["pocket_n"] = int(pocket_hit.get("n") or 0)
-                    tr["pocket_wr"] = pocket_hit.get("win_rate")
-                    tr["pocket_lcb_r"] = pocket_hit.get("lcb_r")
-                    tr["pocket_grade"] = pocket_hit.get("grade") or "B"
-                    tr["pocket_size_hint"] = float(pocket_hit.get("size_hint") or 0.65)
-                    tr["reliability"] = "زنده"
-                    if tr.get("p_win") is None and pocket_hit.get("win_rate") is not None:
-                        tr["p_win"] = float(pocket_hit["win_rate"])
-                        tr["n_hist"] = int(pocket_hit.get("n") or 0)
-                        tr["avg_r_hist"] = float(pocket_hit.get("avg_r") or 0.0)
 
         if auth is None:
             tr["viable"] = False
@@ -804,25 +767,13 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
                     if pf is not None:
                         extra += f"، PF={float(pf):.2f}"
                     extra += ")"
-                # اگر جیب زنده‌ای نزدیک است، راهنمایی بده
-                hint = ""
-                if pockets:
-                    near = [k for k in pockets if k.startswith(tf + "|")]
-                    if near:
-                        hint = f" · جیب زنده فعال: {', '.join(near[:3])}"
                 tr["status"] = ("مشاهده — سیاست نهایی این تایم‌فریم آزمون زمانی را پاس نکرده"
-                                + extra + "؛ ستاپ دیده شد ولی مجوز ورود نیست" + hint)
+                                + extra + "؛ ستاپ دیده شد ولی مجوز ورود نیست")
             elif stats and stats.get("diagnostic_only"):
                 tr["status"] = "مشاهده — آمار سطلی فقط تشخیصی است؛ مرجع تصمیم معتبر نیست"
             elif stats and src == "model":
-                why = []
-                if live_setup not in ("zx", "sq"):
-                    why.append(f"ستاپ «{SETUP_FA.get(live_setup, live_setup)}» در مسیر محدود مجاز نیست")
-                elif (stats.get("ev_lcb_pct") is None) or float(stats.get("ev_lcb_pct") or 0) <= 0:
-                    why.append(f"کران پایین EV پس از هزینه {stats.get('ev_lcb_pct') or 0:+.2f}٪ است")
-                tr["status"] = ("مشاهده — مدل ستاپ به‌تنهایی کافی نیست"
-                                + ((": " + "؛ ".join(why)) if why else "")
-                                + "؛ منتظر سیاست نهایی، EV مثبت، یا جیب زنده")
+                tr["status"] = ("مشاهده — مدل ستاپ فقط تشخیصی است؛ مجوز ورود تنها از "
+                                "سیاست نهاییِ معتبر روی ترکیبِ پیش‌ثبت‌شده می‌آید")
             elif not policy_applicable:
                 tr["status"] = "منتظر یکی از ستاپ‌های آموزش‌دیده؛ جهت یا امتیاز تکنیکال به‌تنهایی مجوز ورود نیست"
             else:
@@ -830,14 +781,13 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         elif not policy_applicable:
             tr["viable"] = False
             tr["status"] = "منتظر یکی از ستاپ‌های آموزش‌دیده؛ جهت یا امتیاز تکنیکال به‌تنهایی مجوز ورود نیست"
-        elif stats is not None and float(stats.get("feature_zmax") or 0) > 6.0 and auth in ("policy", "action_policy", "setup_model"):
+        elif stats is not None and float(stats.get("feature_zmax") or 0) > 6.0 and auth in ("policy", "action_policy"):
             tr["viable"] = False
             tr["status"] = (f"مسدود — وضعیت فعلی خارج از محدودهٔ دادهٔ آموزش است "
                             f"(فاصلهٔ ویژگی {stats['feature_zmax']:.1f}σ)")
         elif (stats is not None and stats.get("regime_veto")
               and auth in ("policy", "action_policy")):
-            # veto رژیم مالِ دادگاهِ سیاست است؛ جیب زنده از کارنامهٔ واقعی می‌آید و نباید با
-            # سیاستِ مردود دوباره کشته شود (باگِ فلج‌کنندهٔ مسیر edge_pocket).
+            # veto رژیم فقط به دادگاهِ سیاست مربوط است (تنها مرجعِ باقی‌مانده).
             tr["viable"] = False
             rs = stats.get("regime_stats") or {}
             tr["status"] = (f"مسدود — بخش آزمون مستقل در رژیم «{regime_code}» زیان ساختاری نشان داده "
@@ -846,7 +796,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             tr["viable"] = False
             tr["status"] = (f"ردِ سیاست نهایی — امتیاز ترکیبیِ احتمال/بازده "
                             f"{stats.get('policy_margin') or 0:+.2f} زیر آستانه است")
-        elif ex.get("tf_suspended") is not None and auth != "edge_pocket":
+        elif ex.get("tf_suspended") is not None:
             tr["viable"] = False
             tr["status"] = (f"معلق — بازده خالصِ زندهٔ این تایم‌فریم منفی است "
                             f"({ex['tf_suspended']:+.2f}R) — تا بهبودِ آمار، سیگنال تازه پیشنهاد نمی‌شود")
@@ -855,7 +805,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             tr["viable"] = False
             tr["status"] = (f"معلق — ترکیب زندهٔ {combo} ضعیف است "
                             f"(بازده خالص: {bad:+.2f}R)")
-        elif setup_used in suspended and auth != "edge_pocket":
+        elif setup_used in suspended:
             tr["viable"] = False
             tr["status"] = (f"معلق — عملکردِ زندهٔ ستاپ «{SETUP_FA.get(setup_used, setup_used)}» ضعیف است "
                             f"(بازده خالص: {suspended[setup_used]:+.2f}R) — تا بازآموزی بعدی خاموش")
@@ -863,16 +813,6 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             tr["viable"] = False
             tr["status"] = f"مسدود — مخالفتِ شدید با روند بیت‌کوین (z={btc_z:+.1f})"
         else:
-            if auth == "setup_model":
-                tr["status"] = (f"مجوز محدود — ستاپ {SETUP_FA.get(setup_used, setup_used)} "
-                                f"+ مدل احتمال (EV-LCB {stats.get('ev_lcb_pct') or 0:+.2f}٪)")
-            elif auth == "edge_pocket":
-                tr["status"] = (f"مجوز جیب زنده — {combo_side} "
-                                f"(درجه {tr.get('pocket_grade') or 'B'}, "
-                                f"n={tr.get('pocket_n')}, "
-                                f"میانگین {tr.get('pocket_avg_r') or 0:+.2f}R, "
-                                f"LCB {tr.get('pocket_lcb_r') if tr.get('pocket_lcb_r') is not None else '—'}, "
-                                f"WR {tr.get('pocket_wr') or '—'}٪)")
             if dir_stats:
                 dp = dir_stats["p_up"]
                 dq = dir_stats.get("p_q") or {}
@@ -883,6 +823,13 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
                     tr["direction_warning"] = f"جهت‌یاب کمکی مخالف است (احتمال رشد {dp:.0f}٪)"
                 elif neutral:
                     tr["direction_warning"] = f"جهت‌یاب کمکی خنثی است ({dp:.0f}٪)"
+        # ── قفلِ ایمنیِ سرمایه: تنها فهرستِ پیش‌ثبت‌شدهٔ gates.json اجازهٔ اجرا می‌دهد ──
+        gate_ok = gates.is_combo_allowed(tf, setup_used, tr["side"])
+        tr["gate_allowed"] = gate_ok
+        if tr["viable"] and not gate_ok:
+            tr["viable"] = False
+            tr["status"] = (f"قفل ایمنی — ترکیب {combo_side} در فهرست مجاز gates.json نیست؛ "
+                            "ورود فقط پس از پیش‌ثبت و عبور از آزمون منجمد")
         tr["tradeable"] = bool(tr["viable"])
         # ── متا-گیت (لایهٔ دوم تصمیم) — فقط روی سیگنال‌های مجوزدار ──
         if tr["tradeable"] and tr.get("side"):
@@ -896,9 +843,6 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
                 meta = meta_gate.evaluate(tr["side"], gate_extras, cs)
                 tr["meta_score"] = meta["score"]
                 tr["meta_size_mult"] = meta["size_mult"]
-                if tr.get("authority") == "edge_pocket" and tr.get("pocket_size_hint") is not None:
-                    tr["meta_size_mult"] = round(
-                        float(tr["meta_size_mult"]) * float(tr["pocket_size_hint"]), 3)
                 tr["meta_regime"] = meta.get("regime")
                 tr["meta_reasons"] = meta.get("reasons") or []
                 tr["meta_blocks"] = meta.get("blocks") or []
@@ -917,8 +861,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
                                     f"(حجم×{meta['size_mult']:.2f})")
             except Exception:  # noqa: BLE001
                 tr["meta_score"] = None
-                hint = float(tr.get("pocket_size_hint") or 1.0) if tr.get("authority") == "edge_pocket" else 1.0
-                tr["meta_size_mult"] = hint
+                tr["meta_size_mult"] = 1.0
         if not tr["tradeable"]:
             tr["recommendation"] = None
             tr["observe_only"] = True
@@ -952,23 +895,11 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
     # امتیاز ۱۲/۱۰۰ کنار «خرید A» همان ناهماهنگی بود: ستاپ دیده می‌شد ولی سیاست مردود بود.
     if tr.get("side") and tr.get("tradeable"):
         pst = tr.get("policy_test") or {}
-        auth = tr.get("authority") or ("policy" if tr.get("policy_trusted") else None)
-        if auth == "edge_pocket":
-            policy_base = 40
-            margin_comp = clamp((tr.get("pocket_avg_r") or 0.0) / 0.40, 0, 1) * 25
-            test_avg_comp = clamp((tr.get("pocket_n") or 0) / 40.0, 0, 1) * 10
-            test_pf_comp = clamp(((tr.get("pocket_wr") or 50) - 50) / 20.0, 0, 1) * 10
-        elif auth == "setup_model":
-            policy_base = 20
-            margin_comp = clamp((tr.get("ev_lcb_pct") or 0.0) / 0.40, 0, 1) * 30
-            test_avg_comp = clamp(float(tr.get("oos_lift") or 0.0) / 10.0, 0, 1) * 15
-            test_pf_comp = 0
-        else:
-            policy_base = 35
-            margin_comp = clamp((tr.get("policy_margin") or 0.0) / 1.5, 0, 1) * 25
-            test_avg_comp = clamp(float(pst.get("avg_net_r") or 0.0) / 0.40, 0, 1) * 10
-            test_pf_comp = clamp((float(pst.get("profit_factor") or 1.0) - 1.0) / 0.80, 0, 1) * 10
-        rel_comp = {"خوب": 10, "متوسط": 6, "کم": 2, "زنده": 8}.get(tr.get("reliability"), 0)
+        policy_base = 35
+        margin_comp = clamp((tr.get("policy_margin") or 0.0) / 1.5, 0, 1) * 25
+        test_avg_comp = clamp(float(pst.get("avg_net_r") or 0.0) / 0.40, 0, 1) * 10
+        test_pf_comp = clamp((float(pst.get("profit_factor") or 1.0) - 1.0) / 0.80, 0, 1) * 10
+        rel_comp = {"خوب": 10, "متوسط": 6, "کم": 2}.get(tr.get("reliability"), 0)
         grd_comp = {"A+": 10, "A": 7, "B": 4}.get(tr.get("grade"), 0)
         regime_comp = 5 if tr.get("regime_ok") else 0
         score100 = round(

@@ -1,0 +1,15 @@
+{
+ "version": 1,
+ "preregistered_at": null,
+ "preregistration_hash": null,
+ "live_allowed": false,
+ "max_risk_pct_per_trade": 0.25,
+ "max_open": 3,
+ "max_side_open": 2,
+ "heat_cap_pct": 0.75,
+ "daily_loss_halt_pct": 1.0,
+ "weekly_loss_halt_pct": 2.5,
+ "allowed_combos": [],
+ "gate_results": {},
+ "history": []
+}

@@ -195,8 +195,24 @@ class BinanceTestnet:
             return 0.0
 
 
+SAFE_BROKERS = ("local", "binance_testnet")
+
+
 def make_broker(cfg=None):
+    """تنها نقطهٔ ساختِ بروکر در کل سیستم.
+
+    هر چیزی جز شبیه‌سازِ محلی و تست‌نت، بدون مجوزِ صریحِ gates رد می‌شود؛ و آداپتورِ
+    شبکهٔ اصلی عمداً هنوز نوشته نشده است (فاز ۴ پلن)، پس حتی با مجوز هم استثنا می‌دهد.
+    """
+    import gates
     cfg = cfg or load_cfg()
-    if cfg.get("broker") == "binance_testnet" and cfg.get("api_key") and cfg.get("api_secret"):
+    kind = cfg.get("broker", "local")
+    if kind not in SAFE_BROKERS:
+        if not gates.live_allowed():
+            raise gates.GateError(
+                f"بروکر «{kind}» مجاز نیست: gates.live_allowed خاموش است یا "
+                f"متغیرِ {gates.LIVE_ACK_ENV} با نسخهٔ گیت نمی‌خواند")
+        raise NotImplementedError("آداپتورِ شبکهٔ اصلی هنوز پیاده‌سازی نشده است (فاز ۴ پلن)")
+    if kind == "binance_testnet" and cfg.get("api_key") and cfg.get("api_secret"):
         return BinanceTestnet(cfg["api_key"], cfg["api_secret"], cfg.get("leverage", 2))
     return None   # حالت شبیه‌ساز محلی

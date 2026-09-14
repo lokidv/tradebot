@@ -10,8 +10,8 @@ import time
 from collections import deque
 
 import advisor
-import edge_book
 import fill_quality
+import gates
 import market
 import paper
 
@@ -64,12 +64,8 @@ def level_params(lv):
     """فعالیت، آستانه و ظرفیت را تغییر می‌دهد؛ هرگز ربات را مجبور به معامله نمی‌کند.
     اسکن پیش‌فرض روی تایم‌فریم‌های با لبهٔ زنده (۱h اول) است — نه ۴h زیان‌ده."""
     lv = max(1, min(int(lv), 10))
-    if lv <= 3:
-        scan = ["1h"]
-    elif lv <= 6:
-        scan = ["1h", "4h"]
-    else:
-        scan = ["1h", "4h", "15m"]
+    # 15m هرگز اسکن نمی‌شود: هزینهٔ رفت‌وبرگشت ~۰٫۲R هر معامله و بازده خالصِ تاریخی −۰٫۲۱R
+    scan = ["1h"] if lv <= 3 else ["1h", "4h"]
     return {
         "level": lv,
         "min_score": round(82 - lv * 2.5),                 # ۱→۸۰، ۱۰→۵۷
@@ -80,7 +76,6 @@ def level_params(lv):
         "scan_tfs": scan,
         "allow_lean": False,
         "opens_per_cycle": 1 if lv <= 6 else 2,
-        "pocket_min_score": 52,                           # جیب زنده با آستانهٔ پایین‌تر ولی سخت‌گیرِ ترکیبی
     }
 
 
@@ -273,15 +268,12 @@ def _process_pending():
                 P = level_params(load_cfg()["level"])
                 need = P["min_score"]
                 auth = tr.get("authority") or o.get("authority")
-                if auth == "edge_pocket":
-                    need = min(need, P.get("pocket_min_score", 52))
-                veto = bool(tr.get("regime_veto")) and auth not in ("edge_pocket",)
                 bad = ((fresh or {}).get("error") or not tr.get("tradeable")
                        or tr.get("side") != o["side"]
                        or (tr.get("signal_score") or 0) < need
-                       or veto)
-                if auth != "edge_pocket" and (not tr.get("policy_trusted") or not tr.get("policy_pass")):
-                    bad = True
+                       or bool(tr.get("regime_veto"))
+                       or not tr.get("policy_trusted") or not tr.get("policy_pass")
+                       or not tr.get("gate_allowed"))
                 if bad:
                     _pending.pop(sym, None)
                     fill_quality.log_event("cancelled", symbol=sym, tf=o.get("tf"), side=o.get("side"),
@@ -523,25 +515,17 @@ def _cycle():
         with _lock:
             _status["current"] = "خاموش — منتظرِ روشن‌شدن"
         return
-    P = level_params(cfg["level"])
-    try:
-        P = dict(P)
-        P["scan_tfs"] = edge_book.scan_tfs_for(P["scan_tfs"])
-    except Exception:  # noqa: BLE001
-        pass
+    P = dict(level_params(cfg["level"]))
     ov_fn = _fns.get("overview")
     if ov_fn is None:
         return
-    health = {}
-    try:
-        health = edge_book.get_health()
-    except Exception:  # noqa: BLE001
-        pass
+    allowed = gates.allowed_combos()
     think(f"🔄 چرخهٔ {n}: پایشِ بازار روی {'/'.join(P['scan_tfs'])} "
-          f"(سطح {P['level']}, آستانه {P['min_score']}+"
-          f"{' · جیب ' + str(health.get('pocket_count', 0)) if health else ''})…")
-    if health.get("verdict") == "frozen":
-        think("🧊 هیچ جیب زنده‌ای نیست — فقط پایش؛ ورود تازه تا پیدا شدن لبهٔ معتبر متوقف می‌ماند مگر سیاست دادگاه.", "warn")
+          f"(سطح {P['level']}, آستانه {P['min_score']}+ · "
+          f"ترکیب‌های مجاز در gates: {len(allowed)})…")
+    if not allowed:
+        think("🔒 قفلِ ایمنی: هیچ ترکیبی در gates.json مجاز نیست — فقط پایش و ثبت؛ "
+              "تا پیش‌ثبت و عبور از آزمونِ منجمد هیچ پوزیشنی باز نمی‌شود.", "warn")
 
     # ۱) مدیریتِ پوزیشن‌های باز (حدضرر/هدف/حدزمانی) + خروج از ۱d سمی
     try:
@@ -674,21 +658,13 @@ def _cycle():
                 continue                                     # خلافِ باد (tf یا کلان) فقط با سیگنالِ به‌مراتب قوی‌تر
             if (c.get("cost") or 0.15) > 0.25:
                 continue                                     # کفِ نقدشوندگی: جفت‌های کم‌عمق پرهزینه/پرلغزش‌اند (درسِ SPELL/MUBARAK)
-            auth = c.get("authority")
-            if auth == "edge_pocket":
-                # جیب زنده: veto رژیمِ سیاستِ مردود را اعمال نکن
-                pass
-            elif not c.get("policy_trusted") or not c.get("policy_pass") or c.get("regime_veto"):
+            if not c.get("policy_trusted") or not c.get("policy_pass") or c.get("regime_veto"):
                 continue
+            if not c.get("gate_allowed"):
+                continue                                     # قفلِ ایمنی: ترکیبِ پیش‌ثبت‌نشده
             if c.get("market_rank_enforced") and c.get("market_rank_pct", 0) < 60:
                 continue
             need_score = P["min_score"]
-            if auth == "edge_pocket":
-                need_score = min(need_score, P.get("pocket_min_score", 52))
-                # بدون جیب در دفتر فعلی — رد (ممکن است کش کهنه باشد)
-                pk = f"{tf}|{c.get('setup') or 'zx'}|{c.get('side')}"
-                if pk not in edge_book.get_pockets():
-                    continue
             if c.get("tradeable") and (c.get("signal_score") or 0) >= need_score:
                 cands.append((c.get("entry_quality") or c.get("signal_score") or 0, tf, c, "signal"))
     cands.sort(key=lambda x: -x[0])
