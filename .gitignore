@@ -1,0 +1,20 @@
+# runtime data (large / secrets / mutable state)
+bot/data/hist/
+bot/data/calib.json
+bot/data/calib.json.tmp
+bot/data/positions.json
+bot/data/autobot.json
+bot/data/config.json
+bot/data/signals_log.json
+bot/data/fill_quality.json
+bot/data/candidates.jsonl
+bot/data/journal.jsonl
+bot/data/logs/
+bot/data/reports/
+bot/data/final_test/
+*.tmp
+bot.rar
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

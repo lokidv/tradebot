@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ctp-bot",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["bot/main.py"],
+      "port": 8787
+    }
+  ]
+}

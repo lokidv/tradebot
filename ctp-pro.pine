@@ -1,0 +1,1274 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+//  CTP Pro — پیش‌بینی روند کریپتو (نسخه ۲٫۱ — جایگزین نسخه ۲٫۰)
+//  تغییرات ۲٫۱: پروفایل سخت‌گیری تایم‌فریم، وتوی منع تعقیب، ورود در پولبک، خودتنظیمی وین‌ریت، درِیفت هم‌جهت اجماع و سقف جملات خلاف اجماع در پیش‌بینی
+//  موتور ترکیبی ۶ دسته‌ای: روند + مومنتوم + حجم + ساختار بازار + هوش مصنوعی kNN + تایم بالاتر
+//  سیگنال‌های کم‌تعداد و پُراطمینان با دروازه رژیم، هیسترزیس z و وتوهای ساختاری
+//  پیش‌بینی مسیر آینده قیمت: درِیفت گروهی میراشده در فضای لگاریتمی + مخروط اطمینان
+//  قرارداد بدون ری‌پینت: سیگنال‌ها فقط پس از بسته‌شدن کندل صادر می‌شوند و هرگز تغییر نمی‌کنند.
+//  ساختار بازار با تأخیر چند کندل تأیید می‌شود (پیوت‌ها به‌اندازه R کندل تأخیر دارند).
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("CTP Pro — پیش‌بینی روند کریپتو", shorttitle = "CTP Pro", overlay = true,
+     max_bars_back       = 1000,
+     max_labels_count    = 500,
+     max_lines_count     = 100,
+     max_boxes_count     = 60,
+     max_polylines_count = 10)
+
+// ─────────────────────────────── ثابت‌ها و توابع کمکی ───────────────────────────────
+float EPS = 1e-10
+color COL_BULL   = #26A69A
+color COL_GOLD   = #FFB300
+color COL_BEAR   = #FF5252
+color COL_BEARX  = #D50000
+color COL_BULL_B = #4DB6AC
+color COL_BEAR_B = #EF9A9A
+color COL_NEUT   = #787B86
+color COL_FC     = #2962FF
+string NO_REPAINT_TXT = "سیگنال‌ها فقط پس از بسته‌شدن کندل صادر می‌شوند و هرگز تغییر نمی‌کنند (بدون ری‌پینت). ساختار بازار با تأخیر چند کندل تأیید می‌شود."
+
+f_clamp(float x, float lo, float hi) =>
+    math.max(lo, math.min(hi, x))
+clamp(float x) =>
+    math.max(-1.0, math.min(1.0, x))
+clamp01(float x) =>
+    math.max(0.0, math.min(1.0, x))
+
+// ─────────────────────────────── ورودی‌ها ───────────────────────────────
+grpSig = "سیگنال‌ها"
+minVotes     = input.int(4,     "حداقل رأی برای سیگنال",        minval = 3,   maxval = 6,               group = grpSig, tooltip = "تعداد دسته‌هایی که باید هم‌جهت باشند (از ۶ دسته)")
+zLen         = input.int(200,   "پنجره نرمال‌سازی امتیاز",       minval = 50,  maxval = 500,             group = grpSig, tooltip = "طول محاسبه z-score امتیاز ترکیبی")
+zTrig        = input.float(2.0, "آستانه صدور سیگنال (z)",       minval = 1.0, maxval = 4.0, step = 0.25, group = grpSig, tooltip = "سیگنال فقط وقتی امتیاز ۲ انحراف معیار از نرمال فاصله بگیرد")
+zExit        = input.float(0.5, "آستانه آزادسازی (هیسترزیس)",   minval = 0.0, maxval = 2.0,             group = grpSig, tooltip = "امتیاز باید تا این سطح برگردد تا سیگنال بعدی مسلح شود")
+trigWindow   = input.int(8,     "پنجره صدور پس از مسلح‌شدن",     minval = 1,   maxval = 30,              group = grpSig, tooltip = "پس از عبور z از آستانه، تا این تعداد کندل فرصت هست که بقیه شرط‌ها (رأی‌ها، پایداری، رژیم، وتوها) هم‌تراز شوند و سیگنال صادر شود — حداکثر یک سیگنال در هر چرخه مسلح‌شدن")
+scoreFloor   = input.float(0.25,"کف مطلق امتیاز",               minval = 0.1, maxval = 0.6,             group = grpSig, tooltip = "جلوگیری از سیگنال در بازار مرده با انحراف معیار کوچک")
+persistBars  = input.int(2,     "پایداری شرط (کندل)",           minval = 1,   maxval = 3,               group = grpSig, tooltip = "شرط باید این تعداد کندل متوالی برقرار بماند")
+cooldownBars = input.int(10,    "فاصله حداقلی بین سیگنال‌ها",    minval = 0,   maxval = 50,              group = grpSig, tooltip = "پس از هر سیگنال این تعداد کندل سیگنال جدید صادر نمی‌شود")
+profileMode  = input.string("خودکار (پیشنهادی)", "پروفایل سخت‌گیری", options = ["فعال", "خیلی فعال", "خودکار (پیشنهادی)", "سخت‌گیر", "متعادل", "آزاد"], group = grpSig, tooltip = "خودکار (پیش‌فرض): سخت‌گیری متناسب با تایم‌فریم. حالت‌های فعال تعداد سیگنال را زیاد می‌کنند اما برای اجرای واقعی پیش‌فرض امنی نیستند. آزاد: دقیقاً مقادیر دستی شما. آمار بک‌تست با تغییر پروفایل از نو محاسبه می‌شود.")
+kStretch     = input.float(2.0,  "حد کشیدگی از کرنل (×ATR)", minval = 1.0, maxval = 4.0, step = 0.1, group = grpSig, tooltip = "اگر قیمت بیش از این مقدار ATR از کرنل فاصله گرفته باشد، سیگنال هم‌جهت (تعقیب حرکت کشیده) صادر نمی‌شود")
+rsiExhaust   = input.float(25.0, "آستانه اشباع RSI (وتوی کشیدگی)", minval = 15.0, maxval = 35.0, group = grpSig, tooltip = "فروش با RSI زیر این مقدار و خرید با RSI بالای (۱۰۰ منهای این مقدار) وتو می‌شود")
+pbMode       = input.string("فقط B", "ورود در پولبک", options = ["خاموش", "فقط B", "همه درجه‌ها"], group = grpSig, tooltip = "به‌جای صدور فوری، ستاپ مسلح می‌شود و فقط وقتی قیمت به نزدیکی کرنل برگردد صادر می‌شود")
+pbAtrMult    = input.float(0.5, "فاصله پولبک تا کرنل (×ATR)", minval = 0.1, maxval = 1.5, step = 0.1, group = grpSig)
+pbMaxWait    = input.int(10,    "حداکثر انتظار پولبک (کندل)",  minval = 3,   maxval = 30, group = grpSig)
+alertB       = input.bool(false, "هشدار برای درجه B", group = grpSig, tooltip = "پیش‌فرض خاموش: فقط A و A+ هشدار می‌دهند؛ نشانگر B همچنان روی چارت رسم می‌شود")
+
+grpML = "هوش مصنوعی (kNN لورنتزی)"
+useML      = input.bool(true,  "فعال‌سازی موتور kNN",        group = grpML)
+neighborsK = input.int(8,      "تعداد همسایه‌ها (k)",         minval = 3,   maxval = 16,   group = grpML)
+mlMaxBars  = input.int(2000,   "عمق حافظه یادگیری",          minval = 500, maxval = 4000, group = grpML)
+minPred    = input.int(3,      "حداقل قدرت پیش‌بینی kNN",     minval = 1,   maxval = 8,    group = grpML, tooltip = "قدر مطلق مجموع رأی همسایه‌ها باید حداقل این مقدار باشد")
+
+grpTr = "روند"
+emaFastLen  = input.int(50,    "EMA سریع",           minval = 10,  maxval = 100,               group = grpTr)
+emaSlowLen  = input.int(200,   "EMA کند",            minval = 100, maxval = 400,               group = grpTr)
+stFactor    = input.float(3.0, "ضریب سوپرترند",      minval = 1.0, maxval = 6.0, step = 0.25,  group = grpTr)
+stAtrLen    = input.int(10,    "ATR سوپرترند",       minval = 5,   maxval = 20,                group = grpTr)
+kernelH     = input.float(8.0, "پهنای باند کرنل",    minval = 3.0, maxval = 20.0,              group = grpTr)
+kernelAlpha = input.float(1.0, "آلفای کرنل",         minval = 0.5, maxval = 10.0,              group = grpTr)
+kernelLen   = input.int(50,    "طول کرنل",           minval = 25,  maxval = 100,               group = grpTr)
+kernelLag   = input.int(2,     "تأخیر کرنل دوم",     minval = 1,   maxval = 3,                 group = grpTr)
+
+grpMom = "مومنتوم"
+rsiLen   = input.int(14, "دوره RSI",     minval = 2, group = grpMom)
+macdFast = input.int(12, "MACD سریع",    minval = 2, group = grpMom)
+macdSlow = input.int(26, "MACD کند",     minval = 5, group = grpMom)
+macdSig  = input.int(9,  "MACD سیگنال",  minval = 2, group = grpMom)
+
+grpVol = "حجم"
+useCVD       = input.bool(true,   "دلتای حجم از تایم پایین‌تر", group = grpVol, tooltip = "در تاریخچه دور به‌صورت خودکار از تقریب کندلی استفاده می‌شود")
+flowSlopeLen = input.int(14,      "طول شیب جریان حجم",   minval = 5,   group = grpVol)
+flowZWin     = input.int(100,     "پنجره z جریان حجم",   minval = 20,  group = grpVol)
+rvolLen      = input.int(20,      "دوره حجم نسبی",       minval = 5,   group = grpVol)
+rvolMin      = input.float(0.7,   "حداقل حجم نسبی",      minval = 0.0, maxval = 1.5, group = grpVol)
+
+grpStr = "ساختار بازار"
+pivLenMinor    = input.int(5,       "طول پیوت فرعی",              minval = 3,   maxval = 10,  group = grpStr)
+pivLenMajor    = input.int(10,      "طول پیوت اصلی",              minval = 8,   maxval = 20,  group = grpStr)
+bosAtrBuf      = input.float(0.1,   "حاشیه شکست (×ATR)",          minval = 0.0, maxval = 0.5, group = grpStr)
+obMaxPerSide   = input.int(8,       "حداکثر اردربلاک هر سمت",     minval = 2,   maxval = 10,  group = grpStr)
+obMitigation   = input.string("۵۰٪", "نحوه ابطال ناحیه",           options = ["۵۰٪", "کامل"],   group = grpStr)
+obExpiry       = input.int(500,     "انقضای اردربلاک (کندل)",     minval = 50,  group = grpStr)
+sweepWickRatio = input.float(0.5,   "نسبت سایه برای سوئیپ",       minval = 0.3, maxval = 0.8, group = grpStr)
+srTolMult      = input.float(0.5,   "تلورانس خوشه‌بندی (×ATR)",   minval = 0.2, maxval = 1.0, group = grpStr)
+srMaxLevels    = input.int(8,       "حداکثر سطوح حمایت/مقاومت",   minval = 2,   maxval = 8,   group = grpStr)
+headroomMin    = input.float(1.0,   "حداقل فضای آزاد تا مقاومت (×ATR)", minval = 0.5, maxval = 2.0, group = grpStr)
+
+grpHtf = "تایم‌فریم بالاتر"
+htf1Mult   = input.int(4,        "ضریب تایم بایاس",          minval = 2, maxval = 8,  group = grpHtf)
+htf2Mult   = input.int(16,       "ضریب تایم رژیم",           minval = 8, maxval = 32, group = grpHtf)
+htf1Manual = input.timeframe("", "تایم بایاس دستی (اختیاری)", group = grpHtf)
+htf2Manual = input.timeframe("", "تایم رژیم دستی (اختیاری)",  group = grpHtf)
+htfStrict  = input.bool(false,   "حالت سخت‌گیرانه",           group = grpHtf, tooltip = "در حالت سخت‌گیرانه هر دو تایم بالاتر باید هم‌جهت باشند")
+
+grpReg = "رژیم بازار"
+adxLen      = input.int(14,     "دوره ADX",          minval = 2,    group = grpReg)
+adxMin      = input.float(20,   "حداقل ADX",         minval = 15,   maxval = 30,   group = grpReg)
+chopLen     = input.int(14,     "دوره چاپینس",       minval = 5,    group = grpReg)
+chopMax     = input.float(55,   "سقف چاپینس",        minval = 45,   maxval = 61.8, group = grpReg)
+atrPctBlock = input.int(95,     "سقف صدک نوسان",     minval = 80,   maxval = 99,   group = grpReg)
+useHurst    = input.bool(true,  "فیلتر هرست",        group = grpReg)
+
+grpFc = "پیش‌بینی مسیر قیمت"
+fcOn         = input.bool(true,    "نمایش پیش‌بینی",        group = grpFc)
+fcHorizon    = input.int(30,       "افق پیش‌بینی (کندل)",   minval = 5,   maxval = 200,              group = grpFc)
+trendTrust   = input.float(0.5,    "اعتماد به روند",        minval = 0.0, maxval = 1.0, step = 0.05, group = grpFc, tooltip = "بالاتر = میرایی کندتر مسیر پیش‌بینی")
+zInner       = input.float(1.0,    "z باند داخلی",          minval = 0.5, maxval = 2.0,              group = grpFc)
+zOuter       = input.float(1.645,  "z باند بیرونی",         minval = 1.0, maxval = 3.0,              group = grpFc)
+atrFloorMult = input.float(1.0,    "کف پهنای باند (×ATR)",  minval = 0.0, maxval = 2.0,              group = grpFc)
+skewMax      = input.float(0.25,   "حداکثر چولگی باند",     minval = 0.0, maxval = 0.3,              group = grpFc)
+bendK        = input.float(0.3,    "اصلاح اشباع RSI",       minval = 0.0, maxval = 0.6,              group = grpFc)
+kalmanL      = input.int(20,       "طول فیلتر کالمن",       minval = 5,   maxval = 50,               group = grpFc)
+
+grpW = "یادگیری وزن‌ها"
+adaptiveW = input.bool(true,   "وزن‌دهی تطبیقی دسته‌ها",  group = grpW)
+etaLearn  = input.float(0.10,  "سرعت یادگیری",           minval = 0.02, maxval = 0.30, step = 0.01, group = grpW)
+wFloor    = input.float(0.03,  "کف وزن هر دسته",         minval = 0.01, maxval = 0.10,              group = grpW)
+outcomeH  = input.int(6,       "افق ارزیابی (کندل)",     minval = 4,    maxval = 8,                 group = grpW)
+
+grpBt = "بک‌تست داخلی"
+btTpMult      = input.float(1.5,    "هدف (×ATR)",              minval = 0.5, maxval = 4.0, group = grpBt)
+btSlMult      = input.float(1.0,    "حد ضرر (×ATR)",           minval = 0.5, maxval = 3.0, group = grpBt)
+btMaxHold     = input.int(40,       "حداکثر نگهداری (کندل)",   minval = 10,  maxval = 100, group = grpBt)
+btTimeoutMode = input.string("خنثی", "شمارش انقضا",             options = ["خنثی", "باخت"], group = grpBt, tooltip = "آمار با تغییر تنظیمات از نو محاسبه می‌شود.")
+btShowMarks   = input.bool(false,   "نمایش نتیجه روی چارت",    group = grpBt)
+autoThrottle  = input.bool(true, "خودتنظیمی بر اساس وین‌ریت", group = grpBt, tooltip = "درجه‌ای که با حداقل ۶ سیگنال بسته‌شده وین‌ریت زیر ۳۵٪ داشته باشد، هشدارش معلق و نشانگرش کوچک می‌شود (آمار همچنان به‌روزرسانی می‌شود)")
+
+grpUI = "داشبورد و نمایش"
+dashOn        = input.bool(true,        "نمایش داشبورد",   group = grpUI)
+dashPos       = input.string("بالا-راست", "موقعیت داشبورد",  options = ["بالا-راست", "بالا-چپ", "پایین-راست", "پایین-چپ", "مخفی"], group = grpUI)
+dashSize      = input.string("کوچک",     "اندازه داشبورد",  options = ["کوچک", "معمولی"], group = grpUI)
+showKernel    = input.bool(true,  "نمایش کرنل",                        group = grpUI)
+showST        = input.bool(false, "نمایش سوپرترند",                    group = grpUI)
+showOB        = input.bool(true,  "نمایش اردربلاک‌ها",                  group = grpUI)
+showSR        = input.bool(true,  "نمایش حمایت/مقاومت",                group = grpUI)
+showSweeps    = input.bool(true,  "نمایش سوئیپ نقدینگی",               group = grpUI)
+showVWAP      = input.bool(false, "نمایش VWAP",                        group = grpUI)
+showExitHints = input.bool(true,  "هشدار خروج (عبور قیمت از کرنل)",    group = grpUI)
+jsonAlerts    = input.bool(false, "هشدار با فرمت JSON (وب‌هوک)",       group = grpUI)
+
+// ─────────────────────────────── توابع پایه ───────────────────────────────
+// کرنل گویا-درجه‌دو، فرم علّی نقطه پایانی (بدون ری‌پینت)
+f_kernel(series float src, simple int n, simple float h, simple float a) =>
+    float num = 0.0
+    float den = 0.0
+    for i = 0 to n - 1
+        kw = math.pow(1.0 + (i * i) / (2.0 * a * h * h), -a)
+        num += src[i] * kw
+        den += kw
+    num / den
+
+// نردبان خودکار تایم‌فریم بالاتر
+f_autoHtf(simple int _mult) =>
+    int sec = timeframe.in_seconds(timeframe.period)
+    string res = timeframe.isseconds or timeframe.isminutes ? timeframe.from_seconds(math.min(sec * _mult, 604800)) : timeframe.isdaily ? (_mult <= 4 ? "W" : "M") : timeframe.isweekly ? (_mult <= 4 ? "M" : "3M") : (_mult <= 4 ? "3M" : "12M")
+    res
+
+htf1 = htf1Manual != "" ? htf1Manual : f_autoHtf(htf1Mult)
+htf2 = htf2Manual != "" ? htf2Manual : f_autoHtf(htf2Mult)
+htfValid1 = timeframe.in_seconds(htf1) > timeframe.in_seconds(timeframe.period)
+htfValid2 = timeframe.in_seconds(htf2) > timeframe.in_seconds(timeframe.period)
+
+// ── پروفایل سخت‌گیری: پارامترهای مؤثر (ورودی‌ها تغییر نمی‌کنند) ──
+int  tfSec   = timeframe.in_seconds(timeframe.period)
+bool isLowTF = tfSec < 900                 // زیر ۱۵ دقیقه
+bool isMidTF = tfSec >= 900 and tfSec < 3600
+f_profile() =>
+    int   mv = minVotes
+    float zt = zTrig
+    int   pb = persistBars
+    int   cd = cooldownBars
+    bool  ba = true                        // هشدار درجه B مجاز؟
+    if profileMode == "خودکار (پیشنهادی)"
+        if isLowTF
+            mv := math.max(minVotes, 5)
+            zt := zTrig + 0.5
+            pb := math.max(persistBars, 3)
+            cd := cooldownBars * 2
+            ba := false
+        else if isMidTF
+            mv := math.max(minVotes, 4)
+            zt := zTrig + 0.25
+    else if profileMode == "سخت‌گیر"
+        mv := math.max(minVotes, 5)
+        zt := math.max(zTrig, 2.5)
+        pb := 3
+        cd := math.max(cooldownBars, 20)
+        ba := false
+    else if profileMode == "متعادل"
+        mv := math.max(minVotes, 4)
+        zt := math.max(zTrig, 2.0)
+        pb := math.max(persistBars, 2)
+        cd := math.max(cooldownBars, 10)
+    else if profileMode == "فعال"
+        mv := math.min(minVotes, 3)
+        zt := math.min(zTrig, 1.5)
+        pb := math.min(persistBars, 2)
+        cd := math.min(cooldownBars, 6)
+    else if profileMode == "خیلی فعال"
+        mv := math.min(minVotes, 3)
+        zt := math.min(zTrig, 1.2)
+        pb := 1
+        cd := math.min(cooldownBars, 3)
+    [mv, zt, pb, cd, ba]
+[minVotesEff, zTrigEff, persistEff, cooldownEff, bAlertsOn] = f_profile()
+
+// سری‌های مشترک (یک‌بار محاسبه، همه‌جا استفاده)
+atr14    = ta.atr(14)
+atr50    = ta.atr(50)
+logClose = math.log(close)
+logRet   = math.log(close / close[1])
+rsi14    = ta.rsi(close, rsiLen)
+
+// ─────────────────────────────── موتور رژیم بازار ───────────────────────────────
+[diP, diM, adx] = ta.dmi(adxLen, adxLen)
+chopRaw = 100 * math.log10(math.sum(ta.tr(true), chopLen) / math.max(ta.highest(high, chopLen) - ta.lowest(low, chopLen), EPS)) / math.log10(chopLen)
+chop    = ta.sma(chopRaw, 3)
+atrPct  = ta.percentrank(atr14 / close, 252)
+// تخمین‌گر هرست (انتشار دو-لَگ)
+d1 = ta.stdev(logClose - logClose[4], 100)
+d2 = ta.stdev(logClose - logClose[16], 100)
+hurst  = d1 > EPS and d2 > EPS ? clamp01((math.log(d2) - math.log(d1)) / math.log(4)) : 0.5
+hurstS = ta.sma(hurst, 10)
+
+// وزن‌های پیوسته رژیم
+adxW      = clamp01((adx - 15) / 25)
+chopW     = clamp01((61.8 - chop) / (61.8 - 38.2))
+trendW    = 0.5 * adxW + 0.5 * chopW
+hurstMult = useHurst ? clamp01((hurstS - 0.40) / 0.25) : 1.0
+
+// دروازه سخت سیگنال (فقط صدور سیگنال را می‌بندد، نه نمایش داشبورد را)
+// در پروفایل‌های فعال شرط «شتاب ADX» حذف می‌شود و در «خیلی فعال» کف ADX و سقف چاپینس هم نرم‌تر است
+bool  activeProf = profileMode == "فعال" or profileMode == "خیلی فعال"
+float adxMinEff  = profileMode == "خیلی فعال" ? math.max(adxMin - 5, 10) : adxMin
+adxOk    = adx >= adxMinEff and (activeProf or adx > adx[3])
+chopOk   = chop < (profileMode == "خیلی فعال" ? chopMax + 5 : chopMax)
+volOk    = nz(atrPct, 50) < atrPctBlock
+regimeOk = adxOk and chopOk and volOk
+
+// ضریب اطمینان رژیم
+confRegime = (0.4 + 0.6 * trendW) * (nz(atrPct, 50) >= 90 ? 0.6 : 1.0)
+
+// ─────────────────────────────── دسته ۱: روند ───────────────────────────────
+emaF = ta.ema(close, emaFastLen)
+emaS = ta.ema(close, emaSlowLen)
+stackN = close > emaF and emaF > emaS ? 1.0 : close < emaF and emaF < emaS ? -1.0 : close > emaS ? 0.3 : close < emaS ? -0.3 : 0.0
+[stVal, stDir] = ta.supertrend(stFactor, stAtrLen)      // در v6: جهت منفی = روند صعودی
+stN = stDir < 0 ? 1.0 : -1.0
+yhat1 = f_kernel(close, kernelLen, kernelH, kernelAlpha)
+yhat2 = f_kernel(close, kernelLen, math.max(kernelH - kernelLag, 0.5), kernelAlpha)
+kSlopeN = clamp((yhat1 - yhat1[2]) / math.max(0.5 * atr14, EPS))
+sTrend  = clamp(0.40 * stackN + 0.30 * stN + 0.30 * kSlopeN)
+vTrend  = sTrend >= 0.30 ? 1 : sTrend <= -0.30 ? -1 : 0
+
+// ─────────────────────────────── دسته ۲: مومنتوم ───────────────────────────────
+rsiN = clamp((rsi14 - 50) / 25)
+[macdLine, macdSignal, macdHist] = ta.macd(close, macdFast, macdSlow, macdSig)
+histN = clamp(macdHist / math.max(0.5 * atr14, EPS))
+sMom = clamp(0.6 * rsiN + 0.4 * histN)
+vMom = sMom >= 0.30 ? 1 : sMom <= -0.30 ? -1 : 0
+
+// ─────────────────────────────── دسته ۳: حجم (CVD + OBV + RVOL) ───────────────────────────────
+string ltf = timeframe.isseconds ? "1S" : not timeframe.isintraday ? "60" : timeframe.multiplier <= 60 ? "1" : timeframe.multiplier <= 240 ? "5" : "60"
+f_delta() =>
+    high == low ? 0.0 : volume * (2 * (close - low) / (high - low) - 1)
+deltaArr = request.security_lower_tf(syminfo.tickerid, ltf, f_delta())
+fallbackDelta = high == low ? 0.0 : volume * (2 * (close - low) / (high - low) - 1)
+barDelta = array.size(deltaArr) > 0 ? array.sum(deltaArr) : fallbackDelta   // پوشش تاریخچه دور
+cvd = ta.cum(nz(barDelta))
+cvdSlope = ta.linreg(cvd, flowSlopeLen, 0) - ta.linreg(cvd, flowSlopeLen, 1)
+cvdZ = f_clamp((cvdSlope - ta.sma(cvdSlope, flowZWin)) / math.max(ta.stdev(cvdSlope, flowZWin), EPS), -3, 3)
+obvSlope = ta.linreg(ta.obv, flowSlopeLen, 0) - ta.linreg(ta.obv, flowSlopeLen, 1)
+obvZ = f_clamp((obvSlope - ta.sma(obvSlope, flowZWin)) / math.max(ta.stdev(obvSlope, flowZWin), EPS), -3, 3)
+// حجم نسبی با خط پایه میانه (مقاوم به اسپایک)
+rvol = volume / math.max(ta.percentile_nearest_rank(volume, rvolLen, 50), EPS)
+// z حجم لگاریتمی برای تشخیص اسپایک/اشباع
+lv = math.log(volume + 1)
+volZ = (lv - ta.sma(lv, 50)) / math.max(ta.stdev(lv, 50), EPS)
+sVol = useCVD ? clamp((0.6 * cvdZ + 0.4 * obvZ) / 2) : clamp(obvZ / 2)
+vVol = sVol >= 0.30 and rvol >= 1.0 ? 1 : sVol <= -0.30 and rvol >= 1.0 ? -1 : 0
+// نردبان اطمینان حجم نسبی
+rvolMult = rvol < 0.7 ? 0.0 : rvol < 1.0 ? 0.5 : rvol < 1.5 ? 1.0 : rvol < 3.0 ? 1.25 : 1.0
+
+// VWAP لنگری (فقط زمینه: وتوی اشباع + داشبورد)
+anchorCond = timeframe.isintraday ? timeframe.change("D") : timeframe.isdaily ? timeframe.change("M") : timeframe.change("12M")
+[vwapM, vUp2, vDn2] = ta.vwap(hlc3, anchorCond, 2.0)
+vwapZ = (close - vwapM) / math.max((vUp2 - vwapM) / 2, EPS)
+var int barsSinceAnchor = 0
+if barstate.isconfirmed
+    barsSinceAnchor := anchorCond ? 0 : barsSinceAnchor + 1
+vwapZeff = barsSinceAnchor < 10 ? 0.0 : vwapZ
+
+// ─────────────────────────────── دسته ۴: ساختار بازار ───────────────────────────────
+// (الف) موتور پیوت — دو نمونه: فرعی و اصلی
+phM = ta.pivothigh(high, pivLenMinor, pivLenMinor)
+plM = ta.pivotlow(low,  pivLenMinor, pivLenMinor)
+phJ = ta.pivothigh(high, pivLenMajor, pivLenMajor)
+plJ = ta.pivotlow(low,  pivLenMajor, pivLenMajor)
+
+// (ب) ماشین حالت BOS/CHoCH — یک تابع، دو نمونه مستقل (وضعیت var جدا برای هر فراخوانی)
+f_structure(float ph, float pl, float buf) =>
+    var int   trendS   = 0
+    var float lastHi   = na
+    var float lastLo   = na
+    var bool  hiBroken = false
+    var bool  loBroken = false
+    bool brkUp = false
+    bool brkDn = false
+    bool chUp  = false
+    bool chDn  = false
+    if barstate.isconfirmed
+        if not na(ph)
+            lastHi   := ph
+            hiBroken := false
+        if not na(pl)
+            lastLo   := pl
+            loBroken := false
+        brkUp := not hiBroken and not na(lastHi) and close > lastHi + buf
+        brkDn := not loBroken and not na(lastLo) and close < lastLo - buf
+        if brkUp
+            chUp     := trendS <= 0
+            hiBroken := true
+            trendS   := 1
+        if brkDn
+            chDn     := trendS >= 0
+            loBroken := true
+            trendS   := -1
+    [trendS, brkUp, brkDn, chUp, chDn]
+
+bosBuf = bosAtrBuf * atr14
+[structMinor, brkUpM, brkDnM, chochUpM, chochDnM] = f_structure(phM, plM, bosBuf)
+[structMajor, brkUpJ, brkDnJ, chochUpJ, chochDnJ] = f_structure(phJ, plJ, bosBuf)
+chDnAgeMinor = nz(ta.barssince(chochDnM), 100000)
+chDnAgeMajor = nz(ta.barssince(chochDnJ), 100000)
+chUpAgeMinor = nz(ta.barssince(chochUpM), 100000)
+chUpAgeMajor = nz(ta.barssince(chochUpJ), 100000)
+
+// (ج) اردربلاک‌ها — فقط روی رویداد شکست ساختار فرعی
+var array<float> obBullTop = array.new<float>()
+var array<float> obBullBot = array.new<float>()
+var array<int>   obBullBar = array.new<int>()
+var array<box>   obBullBox = array.new<box>()
+var array<float> obBearTop = array.new<float>()
+var array<float> obBearBot = array.new<float>()
+var array<int>   obBearBar = array.new<int>()
+var array<box>   obBearBox = array.new<box>()
+
+if brkUpM
+    for k = 1 to 20
+        if close[k] < open[k]
+            float obT = math.max(open[k], close[k])
+            float obB = low[k]
+            array.push(obBullTop, obT)
+            array.push(obBullBot, obB)
+            array.push(obBullBar, bar_index - k)
+            if showOB
+                array.push(obBullBox, box.new(bar_index - k, obT, bar_index, obB, border_color = color.new(COL_BULL, 60), bgcolor = color.new(COL_BULL, 85)))
+            break
+    if array.size(obBullTop) > obMaxPerSide
+        array.shift(obBullTop)
+        array.shift(obBullBot)
+        array.shift(obBullBar)
+        if showOB
+            box.delete(array.shift(obBullBox))
+if brkDnM
+    for k = 1 to 20
+        if close[k] > open[k]
+            float obT = high[k]
+            float obB = math.min(open[k], close[k])
+            array.push(obBearTop, obT)
+            array.push(obBearBot, obB)
+            array.push(obBearBar, bar_index - k)
+            if showOB
+                array.push(obBearBox, box.new(bar_index - k, obT, bar_index, obB, border_color = color.new(COL_BEAR, 60), bgcolor = color.new(COL_BEAR, 85)))
+            break
+    if array.size(obBearTop) > obMaxPerSide
+        array.shift(obBearTop)
+        array.shift(obBearBot)
+        array.shift(obBearBar)
+        if showOB
+            box.delete(array.shift(obBearBox))
+
+// ابطال / انقضا / امتداد اردربلاک‌ها (هر کندل تاییدشده)
+if barstate.isconfirmed and array.size(obBullTop) > 0
+    for i = array.size(obBullTop) - 1 to 0
+        float t_ = array.get(obBullTop, i)
+        float b_ = array.get(obBullBot, i)
+        float mitLvl = obMitigation == "۵۰٪" ? (t_ + b_) / 2 : b_
+        if close < mitLvl or bar_index - array.get(obBullBar, i) > obExpiry
+            array.remove(obBullTop, i)
+            array.remove(obBullBot, i)
+            array.remove(obBullBar, i)
+            if showOB
+                box.delete(array.remove(obBullBox, i))
+        else if showOB
+            box.set_right(array.get(obBullBox, i), bar_index)
+if barstate.isconfirmed and array.size(obBearTop) > 0
+    for i = array.size(obBearTop) - 1 to 0
+        float t_ = array.get(obBearTop, i)
+        float b_ = array.get(obBearBot, i)
+        float mitLvl = obMitigation == "۵۰٪" ? (t_ + b_) / 2 : t_
+        if close > mitLvl or bar_index - array.get(obBearBar, i) > obExpiry
+            array.remove(obBearTop, i)
+            array.remove(obBearBot, i)
+            array.remove(obBearBar, i)
+            if showOB
+                box.delete(array.remove(obBearBox, i))
+        else if showOB
+            box.set_right(array.get(obBearBox, i), bar_index)
+
+// نزدیکی و خطر ناحیه مقابل
+float obProxL = 0.0
+bool  obHazardL = false
+if array.size(obBullTop) > 0
+    for i = 0 to array.size(obBullTop) - 1
+        float t_ = array.get(obBullTop, i)
+        if array.get(obBullBot, i) < close
+            obProxL := math.max(obProxL, math.max(0.0, 1.0 - math.max(close - t_, 0.0) / math.max(1.5 * atr14, EPS)))
+if array.size(obBearTop) > 0
+    for i = 0 to array.size(obBearTop) - 1
+        if array.get(obBearBot, i) <= close + atr14 and array.get(obBearTop, i) >= close
+            obHazardL := true
+float obProxS = 0.0
+bool  obHazardS = false
+if array.size(obBearTop) > 0
+    for i = 0 to array.size(obBearTop) - 1
+        float b_ = array.get(obBearBot, i)
+        if array.get(obBearTop, i) > close
+            obProxS := math.max(obProxS, math.max(0.0, 1.0 - math.max(b_ - close, 0.0) / math.max(1.5 * atr14, EPS)))
+if array.size(obBullTop) > 0
+    for i = 0 to array.size(obBullTop) - 1
+        if array.get(obBullTop, i) >= close - atr14 and array.get(obBullBot, i) <= close
+            obHazardS := true
+
+// (د) سوئیپ نقدینگی — روی سوئینگ‌های فرعی جارونشده
+var array<float> swLoPx  = array.new<float>()
+var array<int>   swLoBar = array.new<int>()
+var array<bool>  swLoSw  = array.new<bool>()
+var array<float> swHiPx  = array.new<float>()
+var array<int>   swHiBar = array.new<int>()
+var array<bool>  swHiSw  = array.new<bool>()
+var array<label> sweepLbls = array.new<label>()
+bool sweepBullEv = false
+bool sweepBearEv = false
+if barstate.isconfirmed
+    if not na(plM)
+        array.unshift(swLoPx, plM)
+        array.unshift(swLoBar, bar_index - pivLenMinor)
+        array.unshift(swLoSw, false)
+        if array.size(swLoPx) > 20
+            array.pop(swLoPx)
+            array.pop(swLoBar)
+            array.pop(swLoSw)
+    if not na(phM)
+        array.unshift(swHiPx, phM)
+        array.unshift(swHiBar, bar_index - pivLenMinor)
+        array.unshift(swHiSw, false)
+        if array.size(swHiPx) > 20
+            array.pop(swHiPx)
+            array.pop(swHiBar)
+            array.pop(swHiSw)
+    float rng = high - low
+    if array.size(swLoPx) > 0
+        for i = 0 to array.size(swLoPx) - 1
+            if not array.get(swLoSw, i)
+                float p_ = array.get(swLoPx, i)
+                if low < p_ and close > p_ and (math.min(open, close) - low) > sweepWickRatio * rng and bar_index - array.get(swLoBar, i) < 200
+                    array.set(swLoSw, i, true)
+                    sweepBullEv := true
+                    if showSweeps
+                        array.push(sweepLbls, label.new(bar_index, low, "▲", yloc = yloc.belowbar, style = label.style_none, textcolor = COL_BULL, size = size.small))
+                        if array.size(sweepLbls) > 50
+                            label.delete(array.shift(sweepLbls))
+    if array.size(swHiPx) > 0
+        for i = 0 to array.size(swHiPx) - 1
+            if not array.get(swHiSw, i)
+                float p_ = array.get(swHiPx, i)
+                if high > p_ and close < p_ and (high - math.max(open, close)) > sweepWickRatio * rng and bar_index - array.get(swHiBar, i) < 200
+                    array.set(swHiSw, i, true)
+                    sweepBearEv := true
+                    if showSweeps
+                        array.push(sweepLbls, label.new(bar_index, high, "▼", yloc = yloc.abovebar, style = label.style_none, textcolor = COL_BEAR, size = size.small))
+                        if array.size(sweepLbls) > 50
+                            label.delete(array.shift(sweepLbls))
+sweepBullAge = nz(ta.barssince(sweepBullEv), 100000)
+sweepBearAge = nz(ta.barssince(sweepBearEv), 100000)
+
+// (ه) واگرایی RSI روی پیوت‌های تاییدشده
+rsiAtPiv = rsi14[pivLenMinor]
+var float prevPlPx  = na
+var float prevPlOsc = na
+var int   prevPlBar = na
+var float prevPhPx  = na
+var float prevPhOsc = na
+var int   prevPhBar = na
+bool regBullEv = false
+bool hidBullEv = false
+bool regBearEv = false
+bool hidBearEv = false
+var float regBearPx  = na
+var bool  regBearBrk = true
+var float hidBullPx  = na
+var bool  hidBullBrk = true
+var float regBullPx  = na
+var bool  regBullBrk = true
+var float hidBearPx  = na
+var bool  hidBearBrk = true
+if barstate.isconfirmed
+    if not na(plM)
+        int curBar = bar_index - pivLenMinor
+        if not na(prevPlPx)
+            int gap = curBar - prevPlBar
+            if gap >= 5 and gap <= 60
+                if plM < prevPlPx and rsiAtPiv >= prevPlOsc + 2.0
+                    regBullEv := true
+                    regBullPx := plM
+                    regBullBrk := false
+                if plM > prevPlPx and rsiAtPiv <= prevPlOsc - 2.0
+                    hidBullEv := true
+                    hidBullPx := plM
+                    hidBullBrk := false
+        prevPlPx  := plM
+        prevPlOsc := rsiAtPiv
+        prevPlBar := curBar
+    if not na(phM)
+        int curBar = bar_index - pivLenMinor
+        if not na(prevPhPx)
+            int gap = curBar - prevPhBar
+            if gap >= 5 and gap <= 60
+                if phM > prevPhPx and rsiAtPiv <= prevPhOsc - 2.0
+                    regBearEv := true
+                    regBearPx := phM
+                    regBearBrk := false
+                if phM < prevPhPx and rsiAtPiv >= prevPhOsc + 2.0
+                    hidBearEv := true
+                    hidBearPx := phM
+                    hidBearBrk := false
+        prevPhPx  := phM
+        prevPhOsc := rsiAtPiv
+        prevPhBar := curBar
+    // شکسته‌شدن اکسترمم واگرایی
+    if not na(regBearPx) and high > regBearPx
+        regBearBrk := true
+    if not na(hidBearPx) and high > hidBearPx
+        hidBearBrk := true
+    if not na(regBullPx) and low < regBullPx
+        regBullBrk := true
+    if not na(hidBullPx) and low < hidBullPx
+        hidBullBrk := true
+regBearActive = nz(ta.barssince(regBearEv), 100000) <= 10 and not regBearBrk
+regBullActive = nz(ta.barssince(regBullEv), 100000) <= 10 and not regBullBrk
+hidBullActive = nz(ta.barssince(hidBullEv), 100000) <= 10 and not hidBullBrk
+hidBearActive = nz(ta.barssince(hidBearEv), 100000) <= 10 and not hidBearBrk
+
+// (و) خوشه‌بندی حمایت/مقاومت — فقط روی رویداد پیوت جدید
+var array<float> srPx  = array.new<float>()
+var array<int>   srBar = array.new<int>()
+var array<float> levPx    = array.new<float>()
+var array<int>   levTouch = array.new<int>()
+var array<line>  levLn    = array.new<line>()
+if barstate.isconfirmed and (not na(phM) or not na(plM))
+    if not na(phM)
+        array.unshift(srPx, phM)
+        array.unshift(srBar, bar_index - pivLenMinor)
+    if not na(plM)
+        array.unshift(srPx, plM)
+        array.unshift(srBar, bar_index - pivLenMinor)
+    while array.size(srPx) > 30
+        array.pop(srPx)
+        array.pop(srBar)
+    while array.size(srBar) > 0 and bar_index - array.get(srBar, array.size(srBar) - 1) > 500
+        array.pop(srPx)
+        array.pop(srBar)
+    float tol = srTolMult * atr50
+    array.clear(levPx)
+    array.clear(levTouch)
+    int n = array.size(srPx)
+    if n > 1
+        for i = 0 to n - 1
+            float pi_ = array.get(srPx, i)
+            float sum_ = pi_
+            int cnt_ = 1
+            for j = 0 to n - 1
+                if j != i and math.abs(array.get(srPx, j) - pi_) <= tol
+                    sum_ += array.get(srPx, j)
+                    cnt_ += 1
+            if cnt_ >= 2
+                float lvl = sum_ / cnt_
+                bool dup = false
+                if array.size(levPx) > 0
+                    for q = 0 to array.size(levPx) - 1
+                        if math.abs(array.get(levPx, q) - lvl) <= tol
+                            dup := true
+                            if cnt_ > array.get(levTouch, q)
+                                array.set(levPx, q, lvl)
+                                array.set(levTouch, q, cnt_)
+                if not dup and array.size(levPx) < srMaxLevels
+                    array.push(levPx, lvl)
+                    array.push(levTouch, cnt_)
+    if showSR
+        if array.size(levLn) > 0
+            for q = 0 to array.size(levLn) - 1
+                line.delete(array.get(levLn, q))
+        array.clear(levLn)
+        if array.size(levPx) > 0
+            for q = 0 to array.size(levPx) - 1
+                array.push(levLn, line.new(bar_index - 1, array.get(levPx, q), bar_index, array.get(levPx, q), extend = extend.right, color = color.new(COL_NEUT, 40), width = math.min(array.get(levTouch, q), 3)))
+
+// سنجه‌های مکانی حمایت/مقاومت
+float supBelow = na
+float resAbove = na
+if array.size(levPx) > 0
+    for q = 0 to array.size(levPx) - 1
+        float lp = array.get(levPx, q)
+        if lp < close and (na(supBelow) or lp > supBelow)
+            supBelow := lp
+        if lp > close and (na(resAbove) or lp < resAbove)
+            resAbove := lp
+nearSupportL = not na(supBelow) and (close - supBelow) < 1.0 * atr14
+nearResistS  = not na(resAbove) and (resAbove - close) < 1.0 * atr14
+headroomL = na(resAbove) ? 1.0e9 : (resAbove - close) / math.max(atr14, EPS)
+headroomS = na(supBelow) ? 1.0e9 : (close - supBelow) / math.max(atr14, EPS)
+
+// (ز) خروجی دسته ساختار
+sStruct = clamp(0.6 * structMinor + 0.4 * structMajor)
+vStruct = sStruct >= 0.5 ? 1 : sStruct <= -0.5 ? -1 : 0
+
+// ─────────────────────────────── دسته ۵: هوش مصنوعی (kNN لورنتزی) ───────────────────────────────
+// ویژگی‌ها (۵ عدد)
+f1 = ta.rsi(close, 14) / 100
+f5 = ta.rsi(close, 9) / 100
+f4 = adx / 100
+wtAp  = hlc3
+wtEsa = ta.ema(wtAp, 10)
+wtDd  = ta.ema(math.abs(wtAp - wtEsa), 10)
+wtCi  = (wtAp - wtEsa) / math.max(0.015 * wtDd, EPS)
+wtRaw = ta.ema(wtCi, 11)
+// تبدیل ایستا و کران‌دار: مقیاس ویژگی با گذشت زمان عوض نمی‌شود.
+f2 = (math.max(-1.0, math.min(1.0, wtRaw / 100.0)) + 1.0) / 2.0
+cciRaw = ta.ema(ta.cci(close, 20), 3)
+f3 = (math.max(-1.0, math.min(1.0, cciRaw / 200.0)) + 1.0) / 2.0
+
+// حافظه یادگیری: ویژگی‌ها هر کندل تاییدشده؛ برچسب‌ها ۴ کندل دیرتر (بازده پیش‌رو)
+var array<float> f1A = array.new<float>()
+var array<float> f2A = array.new<float>()
+var array<float> f3A = array.new<float>()
+var array<float> f4A = array.new<float>()
+var array<float> f5A = array.new<float>()
+var array<float> yA  = array.new<float>()
+if barstate.isconfirmed and not (na(f1) or na(f2) or na(f3) or na(f4) or na(f5))
+    array.push(f1A, f1)
+    array.push(f2A, f2)
+    array.push(f3A, f3)
+    array.push(f4A, f4)
+    array.push(f5A, f5)
+    if array.size(f1A) > 4
+        array.push(yA, math.sign(close - close[4]))
+    if array.size(yA) > mlMaxBars
+        array.shift(yA)
+    if array.size(f1A) > mlMaxBars + 4
+        array.shift(f1A)
+        array.shift(f2A)
+        array.shift(f3A)
+        array.shift(f4A)
+        array.shift(f5A)
+
+// حلقه پیش‌بینی: نگه‌داری دقیق k همسایهٔ نزدیک با گام زمانی ۴
+float prediction = 0.0
+float predictionNorm = 0.0
+if useML and bar_index >= 200 and array.size(yA) > 20
+    dists = array.new<float>()
+    preds = array.new<float>()
+    int iMax = math.min(mlMaxBars - 1, array.size(yA) - 1)
+    for i = 0 to iMax by 4
+        float d = math.log(1 + math.abs(f1 - array.get(f1A, i))) + math.log(1 + math.abs(f2 - array.get(f2A, i))) + math.log(1 + math.abs(f3 - array.get(f3A, i))) + math.log(1 + math.abs(f4 - array.get(f4A, i))) + math.log(1 + math.abs(f5 - array.get(f5A, i)))
+        if array.size(dists) < neighborsK
+            array.push(dists, d)
+            array.push(preds, array.get(yA, i))
+        else
+            int worstIdx = 0
+            float worstDist = array.get(dists, 0)
+            for k = 1 to array.size(dists) - 1
+                if array.get(dists, k) > worstDist
+                    worstDist := array.get(dists, k)
+                    worstIdx := k
+            if d < worstDist
+                array.set(dists, worstIdx, d)
+                array.set(preds, worstIdx, array.get(yA, i))
+    prediction := array.sum(preds)
+    predictionNorm := prediction / math.max(array.size(preds), 1)
+mlActive = useML and bar_index >= 200
+sML = mlActive ? predictionNorm : 0.0
+vML = mlActive ? (prediction >= minPred ? 1 : prediction <= -minPred ? -1 : 0) : 0
+
+// ─────────────────────────────── دسته ۶: تایم‌فریم بالاتر ───────────────────────────────
+// همه ta.* داخل بسته محاسبه می‌شوند و با [1] کندل بسته‌شده برمی‌گردد (بدون ری‌پینت)
+f_htfBundle() =>
+    emaF_ = ta.ema(close, 50)
+    emaS_ = ta.ema(close, 200)
+    [stV_, stD_] = ta.supertrend(3.0, 10)
+    r_ = ta.rsi(close, 14)
+    [emaF_[1], emaS_[1], emaF_[2], stD_[1], r_[1], close[1]]
+
+[hEmaF1, hEmaS1, hEmaF1p, hStDir1, hRsi1, hClose1] = request.security(syminfo.tickerid, htf1, f_htfBundle(), lookahead = barmerge.lookahead_on)
+[hEmaF2, hEmaS2, hEmaF2p, hStDir2, hRsi2, hClose2] = request.security(syminfo.tickerid, htf2, f_htfBundle(), lookahead = barmerge.lookahead_on)
+
+f_bias(float hC, float hEf, float hEs, float hEfp, float hSt, float hR) =>
+    int b = 0
+    if not (na(hC) or na(hEs))
+        emaBias = hC > hEf and hEf > hEs ? 1 : hC < hEf and hEf < hEs ? -1 : 0
+        stComp  = hSt < 0 ? 1 : -1
+        rsiZone = hR > 55 ? 1 : hR < 45 ? -1 : 0
+        sc = stComp + emaBias + rsiZone
+        b := sc >= 2 ? 1 : sc <= -2 ? -1 : 0
+    b
+
+bias1 = htfValid1 ? f_bias(hClose1, hEmaF1, hEmaS1, hEmaF1p, hStDir1, hRsi1) : 0
+bias2 = htfValid2 ? f_bias(hClose2, hEmaF2, hEmaS2, hEmaF2p, hStDir2, hRsi2) : 0
+htfLoading    = htfValid1 and na(hClose1)
+htfOverbought = nz(hRsi1, 50) > 78
+htfOversold   = nz(hRsi1, 50) < 22
+sHTF = clamp((bias1 + 0.5 * bias2) / 1.5)
+vHTF = bias1
+
+// ─────────────────────────────── امتیاز ترکیبی تطبیقی و z ───────────────────────────────
+var array<float> w = array.from(adaptiveW ? 1.0 / 6 : 0.22, adaptiveW ? 1.0 / 6 : 0.14, adaptiveW ? 1.0 / 6 : 0.16, adaptiveW ? 1.0 / 6 : 0.18, adaptiveW ? 1.0 / 6 : 0.18, adaptiveW ? 1.0 / 6 : 0.12)
+// به‌روزرسانی وزن‌ها به سبک Hedge با نتیجه سررسیده (بدون نگاه به آینده)
+if barstate.isconfirmed and adaptiveW and bar_index > zLen
+    float yOut = nz(math.sign(close - close[outcomeH]))
+    if yOut != 0.0
+        pastS = array.from(nz(sTrend[outcomeH]), nz(sMom[outcomeH]), nz(sVol[outcomeH]), nz(sStruct[outcomeH]), nz(sML[outcomeH]), nz(sHTF[outcomeH]))
+        for i = 0 to 5
+            array.set(w, i, array.get(w, i) * math.exp(etaLearn * math.sign(array.get(pastS, i)) * yOut))
+        float tot = array.sum(w)
+        for i = 0 to 5
+            array.set(w, i, array.get(w, i) / math.max(tot, EPS))
+        // کف دقیق وزن: دسته‌های کف‌خورده روی wFloor ثابت می‌مانند و کسری فقط از سهمِ بالای کفِ بقیه کم می‌شود (جمع = ۱)
+        float excess  = 0.0
+        float freeSum = 0.0
+        for i = 0 to 5
+            float wi = array.get(w, i)
+            if wi < wFloor
+                excess += wFloor - wi
+                array.set(w, i, wFloor)
+            else
+                freeSum += wi - wFloor
+        if excess > 0.0 and freeSum > EPS
+            for i = 0 to 5
+                float wj = array.get(w, i)
+                if wj > wFloor
+                    array.set(w, i, wFloor + (wj - wFloor) * (1.0 - excess / freeSum))
+
+curS = array.from(nz(sTrend), nz(sMom), nz(sVol), nz(sStruct), nz(sML), nz(sHTF))
+float rawScore = 0.0
+for i = 0 to 5
+    rawScore += array.get(w, i) * array.get(curS, i)
+scoreSmooth = ta.ema(rawScore, 3)
+zMean  = ta.sma(scoreSmooth, zLen)
+zStd   = ta.stdev(scoreSmooth, zLen)
+zScore = zStd > EPS ? (scoreSmooth - zMean) / zStd : 0.0
+
+// ─────────────────────────────── موتور سیگنال ───────────────────────────────
+// رأی‌ها
+bullVotes = (vTrend == 1 ? 1 : 0) + (vMom == 1 ? 1 : 0) + (vVol == 1 ? 1 : 0) + (vStruct == 1 ? 1 : 0) + (vML == 1 ? 1 : 0) + (vHTF == 1 ? 1 : 0)
+bearVotes = (vTrend == -1 ? 1 : 0) + (vMom == -1 ? 1 : 0) + (vVol == -1 ? 1 : 0) + (vStruct == -1 ? 1 : 0) + (vML == -1 ? 1 : 0) + (vHTF == -1 ? 1 : 0)
+
+// ماشین حالت هیسترزیس + پنجره صدور: لازم نیست همه شرط‌ها دقیقاً روی کندل عبور z هم‌تراز باشند
+var int  armState = 0
+var int  armBar   = na
+var bool armUsed  = false
+if barstate.isconfirmed and bar_index > zLen
+    if armState == 0
+        if zScore >= zTrigEff and scoreSmooth >= scoreFloor
+            armState := 1
+            armBar   := bar_index
+            armUsed  := false
+        else if zScore <= -zTrigEff and scoreSmooth <= -scoreFloor
+            armState := -1
+            armBar   := bar_index
+            armUsed  := false
+    else if armState == 1 and zScore <= zExit
+        armState := 0
+    else if armState == -1 and zScore >= -zExit
+        armState := 0
+bool trigWinOpen = not armUsed and not na(armBar) and bar_index - armBar < trigWindow
+bool longTrig  = armState == 1  and trigWinOpen and zScore >= zTrigEff - 0.25 and scoreSmooth >= scoreFloor
+bool shortTrig = armState == -1 and trigWinOpen and zScore <= -(zTrigEff - 0.25) and scoreSmooth <= -scoreFloor
+
+// پایداری شرط
+bullRawCond = scoreSmooth > 0 and bullVotes >= minVotesEff
+bearRawCond = scoreSmooth < 0 and bearVotes >= minVotesEff
+persistOkL = math.sum(bullRawCond ? 1 : 0, persistEff) == persistEff
+persistOkS = math.sum(bearRawCond ? 1 : 0, persistEff) == persistEff
+
+// دروازه‌های سخت
+var int lastSigBar = na
+cooldownOk = na(lastSigBar) or bar_index - lastSigBar >= cooldownEff
+// حداکثر یک رأی مخالف تحمل می‌شود (یک دسته خنثی-مخالف نباید کل ستاپ را بکشد؛ درجه‌های A/A+ همچنان ۵-۶ رأی می‌خواهند)
+gateL = regimeOk and rvol >= rvolMin and longTrig and persistOkL and bullVotes >= minVotesEff and bearVotes <= 1 and vML >= 0 and bias1 >= 0 and (not htfStrict or bias2 >= 0) and cooldownOk
+gateS = regimeOk and rvol >= rvolMin and shortTrig and persistOkS and bearVotes >= minVotesEff and bullVotes <= 1 and vML <= 0 and bias1 <= 0 and (not htfStrict or bias2 <= 0) and cooldownOk
+
+// وتوی منع تعقیب: قیمت نسبت به کرنل چند ATR کشیده شده؟ (در صدور فوری و پرشدن پولبک اعمال می‌شود، نه در مسلح‌شدن ستاپ)
+stretchAtr = (close - yhat1) / math.max(atr14, EPS)
+noChaseS   = stretchAtr <= -kStretch or rsi14 < rsiExhaust
+noChaseL   = stretchAtr >=  kStretch or rsi14 > 100 - rsiExhaust
+
+// وتوهای ساختاری
+exhaustBear = volZ > 3 and vwapZeff > 2 and (high - math.max(close, open)) > 0.6 * (high - low)
+exhaustBull = volZ > 3 and vwapZeff < -2 and (math.min(close, open) - low) > 0.6 * (high - low)
+vetoL = (chDnAgeMinor <= 10 or chDnAgeMajor <= 10) or headroomL < headroomMin or obHazardL or sweepBearAge <= 5 or regBearActive or exhaustBear or htfOverbought
+vetoS = (chUpAgeMinor <= 10 or chUpAgeMajor <= 10) or headroomS < headroomMin or obHazardS or sweepBullAge <= 5 or regBullActive or exhaustBull or htfOversold
+
+// تقویت‌کننده‌ها
+bLong  = (sweepBullAge <= 10 ? 1 : 0) + (obProxL >= 0.5 ? 1 : 0) + (hidBullActive ? 1 : 0) + (nearSupportL ? 1 : 0) + (volZ >= 1.5 and close > open ? 1 : 0)
+bShort = (sweepBearAge <= 10 ? 1 : 0) + (obProxS >= 0.5 ? 1 : 0) + (hidBearActive ? 1 : 0) + (nearResistS ? 1 : 0) + (volZ >= 1.5 and close < open ? 1 : 0)
+
+// آبشار نوسانی اخیر (کاهش یک درجه)
+cascadeRecent = nz(ta.barssince(ta.tr > 3 * atr14[1]), 100000) < 5
+
+// درجه‌بندی
+f_gradeL() =>
+    int g = bullVotes >= minVotesEff and (bias1 == 1 or (bias1 == 0 and bias2 == 1)) and (bLong >= 1 or bullVotes >= 5) ? 0 : -1
+    g := bullVotes >= 5 and bias1 == 1 ? 1 : g
+    g := bullVotes == 6 and bias1 == 1 and bias2 == 1 and zScore >= zTrigEff + 0.5 and bLong >= 1 and trendW >= 0.5 ? 2 : g
+    g
+f_gradeS() =>
+    int g = bearVotes >= minVotesEff and (bias1 == -1 or (bias1 == 0 and bias2 == -1)) and (bShort >= 1 or bearVotes >= 5) ? 0 : -1
+    g := bearVotes >= 5 and bias1 == -1 ? 1 : g
+    g := bearVotes == 6 and bias1 == -1 and bias2 == -1 and zScore <= -(zTrigEff + 0.5) and bShort >= 1 and trendW >= 0.5 ? 2 : g
+    g
+
+// ─────────────────────────────── بک‌تستر داخلی (سه‌مانعی) ───────────────────────────────
+var array<int>   sigBarA   = array.new<int>()
+var array<int>   sigDirA   = array.new<int>()
+var array<int>   sigGradeA = array.new<int>()
+var array<float> sigTpA    = array.new<float>()
+var array<float> sigSlA    = array.new<float>()
+var array<float> sigEntryA = array.new<float>()
+var array<int> wins     = array.new<int>(3, 0)
+var array<int> losses   = array.new<int>(3, 0)
+var array<int> timeouts = array.new<int>(3, 0)
+var array<label> btLbls = array.new<label>()
+
+// حل‌وفصل سیگنال‌های باز — ترتیب اجباری: برخورد هم‌زمان TP و SL = باخت (محافظه‌کارانه)
+if barstate.isconfirmed and array.size(sigBarA) > 0
+    for i = array.size(sigBarA) - 1 to 0
+        int sb = array.get(sigBarA, i)
+        if sb < bar_index
+            int dI = array.get(sigDirA, i)
+            int gI = array.get(sigGradeA, i)
+            float tpI = array.get(sigTpA, i)
+            float slI = array.get(sigSlA, i)
+            bool hitTp = dI == 1 ? high >= tpI : low <= tpI
+            bool hitSl = dI == 1 ? low <= slI : high >= slI
+            bool expired = bar_index - sb >= btMaxHold
+            bool resolved = true
+            if hitSl
+                array.set(losses, gI, array.get(losses, gI) + 1)
+                if btShowMarks
+                    array.push(btLbls, label.new(bar_index, high, "✘", yloc = yloc.abovebar, style = label.style_none, textcolor = COL_BEAR, size = size.tiny))
+                    if array.size(btLbls) > 50
+                        label.delete(array.shift(btLbls))
+            else if hitTp
+                array.set(wins, gI, array.get(wins, gI) + 1)
+                if btShowMarks
+                    array.push(btLbls, label.new(bar_index, low, "✔", yloc = yloc.belowbar, style = label.style_none, textcolor = COL_BULL, size = size.tiny))
+                    if array.size(btLbls) > 50
+                        label.delete(array.shift(btLbls))
+            else if expired
+                if btTimeoutMode == "باخت"
+                    array.set(losses, gI, array.get(losses, gI) + 1)
+                else
+                    array.set(timeouts, gI, array.get(timeouts, gI) + 1)
+                if btShowMarks
+                    array.push(btLbls, label.new(bar_index, high, "•", yloc = yloc.abovebar, style = label.style_none, textcolor = COL_NEUT, size = size.tiny))
+                    if array.size(btLbls) > 50
+                        label.delete(array.shift(btLbls))
+            else
+                resolved := false
+            if resolved
+                array.remove(sigBarA, i)
+                array.remove(sigDirA, i)
+                array.remove(sigGradeA, i)
+                array.remove(sigTpA, i)
+                array.remove(sigSlA, i)
+                array.remove(sigEntryA, i)
+
+f_wr(int g) =>
+    int denom = array.get(wins, g) + array.get(losses, g)
+    denom > 0 ? 100.0 * array.get(wins, g) / denom : float(na)
+f_n(int g) =>
+    array.get(wins, g) + array.get(losses, g)
+f_expR(int g) =>
+    float wrv = f_wr(g)
+    na(wrv) ? float(na) : (wrv * btTpMult - (100 - wrv) * btSlMult) / 100
+f_gradeSuspended(int g) =>
+    autoThrottle and g >= 0 and f_n(g) >= 6 and f_wr(g) < 35.0
+
+// ─────────────────────────────── صدور سیگنال ───────────────────────────────
+bool fireLong  = false
+bool fireShort = false
+int  gradeCode = -1
+var int  lastDirSig    = 0
+var bool exitHintShown = true
+// حالت انتظار پولبک (بدون ری‌پینت: فقط روی کندل تاییدشده)
+var int pbDir   = 0
+var int pbGrade = -1
+var int pbBar   = na
+if barstate.isconfirmed and bar_index > zLen
+    // (الف) حل‌وفصل ستاپ در انتظار پولبک
+    if pbDir != 0
+        bool  pbExpired = bar_index - pbBar >= pbMaxWait
+        bool  pbAgree   = pbDir == 1 ? (scoreSmooth > 0 and bullVotes >= minVotesEff - 1 and bearVotes <= 1) : (scoreSmooth < 0 and bearVotes >= minVotesEff - 1 and bullVotes <= 1)
+        float distK     = (close - yhat1) / math.max(atr14, EPS)
+        bool  pbTouched = pbDir == 1 ? distK <= pbAtrMult : distK >= -pbAtrMult
+        if pbExpired or not pbAgree
+            pbDir := 0
+        else if pbTouched and cooldownOk and not (pbDir == 1 ? vetoL or noChaseL : vetoS or noChaseS)
+            fireLong  := pbDir == 1
+            fireShort := pbDir == -1
+            gradeCode := pbGrade
+            pbDir     := 0
+    // (ب) ستاپ جدید — وتوی کشیدگی فقط صدور فوری را می‌بندد، نه مسلح‌شدن پولبک را
+    if not (fireLong or fireShort) and gateL and not vetoL
+        int g = f_gradeL()
+        if g >= 0
+            if headroomL >= 1.0 and headroomL < 2.0
+                g := math.max(g - 1, 0)
+            if cascadeRecent
+                g := math.max(g - 1, 0)
+            bool pbApplies = pbMode == "همه درجه‌ها" or (pbMode == "فقط B" and g == 0)
+            if pbApplies and pbDir == 0
+                pbDir   := 1
+                pbGrade := g
+                pbBar   := bar_index
+                armUsed := true
+            else if not pbApplies and not noChaseL
+                fireLong  := true
+                gradeCode := g
+                pbDir     := 0
+                armUsed   := true
+    if not (fireLong or fireShort) and gateS and not vetoS
+        int g = f_gradeS()
+        if g >= 0
+            if headroomS >= 1.0 and headroomS < 2.0
+                g := math.max(g - 1, 0)
+            if cascadeRecent
+                g := math.max(g - 1, 0)
+            bool pbApplies = pbMode == "همه درجه‌ها" or (pbMode == "فقط B" and g == 0)
+            if pbApplies and pbDir == 0
+                pbDir   := -1
+                pbGrade := g
+                pbBar   := bar_index
+                armUsed := true
+            else if not pbApplies and not noChaseS
+                fireShort := true
+                gradeCode := g
+                pbDir     := 0
+                armUsed   := true
+
+fireLongStrong  = fireLong and gradeCode >= 1
+fireShortStrong = fireShort and gradeCode >= 1
+
+// دروازه واحد هشدارها: تعلیق وین‌ریت + مجوز درجه B (ورودی کاربر × پروفایل تایم‌فریم)
+bool fireSuspended = (fireLong or fireShort) and f_gradeSuspended(gradeCode)
+bool bAlertAllowed = alertB and bAlertsOn
+fireLongOk        = fireLong  and not fireSuspended and (gradeCode >= 1 or bAlertAllowed)
+fireShortOk       = fireShort and not fireSuspended and (gradeCode >= 1 or bAlertAllowed)
+fireLongStrongOk  = fireLongStrong  and not fireSuspended
+fireShortStrongOk = fireShortStrong and not fireSuspended
+
+if fireLong or fireShort
+    int dirI = fireLong ? 1 : -1
+    float tpPrice = close + dirI * btTpMult * atr14
+    float slPrice = close - dirI * btSlMult * atr14
+    array.push(sigBarA, bar_index)
+    array.push(sigDirA, dirI)
+    array.push(sigGradeA, gradeCode)
+    array.push(sigTpA, tpPrice)
+    array.push(sigSlA, slPrice)
+    array.push(sigEntryA, close)
+    lastSigBar    := bar_index
+    lastDirSig    := dirI
+    exitHintShown := false
+    string gradeStr = gradeCode == 2 ? "A+" : gradeCode == 1 ? "A" : "B"
+    bool sigSuspended = f_gradeSuspended(gradeCode)
+    if fireLong
+        color bgc = gradeCode == 2 ? COL_GOLD : gradeCode == 1 ? COL_BULL : COL_BULL_B
+        label.new(bar_index, low, "▲ خرید " + gradeStr + (sigSuspended ? " ⏸" : ""), yloc = yloc.belowbar, style = label.style_label_up, color = color.new(bgc, sigSuspended ? 60 : 0), textcolor = color.white, size = sigSuspended ? size.tiny : size.small)
+    else
+        color bgc = gradeCode == 2 ? COL_BEARX : gradeCode == 1 ? COL_BEAR : COL_BEAR_B
+        label.new(bar_index, high, "▼ فروش " + gradeStr + (sigSuspended ? " ⏸" : ""), yloc = yloc.abovebar, style = label.style_label_down, color = color.new(bgc, sigSuspended ? 60 : 0), textcolor = color.white, size = sigSuspended ? size.tiny : size.small)
+    // هشدار پویا
+    float wrOfGrade = f_n(gradeCode) >= 5 ? f_wr(gradeCode) : float(na)
+    string sideFa = fireLong ? "خرید" : "فروش"
+    string sideEn = fireLong ? "long" : "short"
+    string msg = jsonAlerts ? '{"side":"' + sideEn + '","grade":"' + gradeStr + '","symbol":"' + syminfo.ticker + '","tf":"' + timeframe.period + '","entry":' + str.tostring(close) + ',"tp":' + str.tostring(tpPrice) + ',"sl":' + str.tostring(slPrice) + '}' : "CTP Pro | " + gradeStr + " " + sideFa + " | " + syminfo.ticker + " " + timeframe.period + " | ورود " + str.tostring(close, format.mintick) + " | هدف " + str.tostring(tpPrice, format.mintick) + " | حدضرر " + str.tostring(slPrice, format.mintick) + (na(wrOfGrade) ? "" : " | وین‌ریت " + str.tostring(wrOfGrade, "#") + "%")
+    if fireLongOk or fireShortOk
+        alert(msg, alert.freq_once_per_bar_close)
+
+// اشاره خروج (عبور قیمت از کرنل پس از سیگنال)
+crossDnK = ta.crossunder(close, yhat1) or ta.crossunder(yhat2, yhat1)
+crossUpK = ta.crossover(close, yhat1) or ta.crossover(yhat2, yhat1)
+var array<label> exitLbls = array.new<label>()
+if showExitHints and barstate.isconfirmed and not exitHintShown and lastDirSig != 0 and bar_index > lastSigBar
+    if lastDirSig == 1 and crossDnK
+        array.push(exitLbls, label.new(bar_index, high, "• خروج؟", yloc = yloc.abovebar, style = label.style_none, textcolor = COL_NEUT, size = size.small))
+        if array.size(exitLbls) > 50
+            label.delete(array.shift(exitLbls))
+        exitHintShown := true
+    else if lastDirSig == -1 and crossUpK
+        array.push(exitLbls, label.new(bar_index, low, "• خروج؟", yloc = yloc.belowbar, style = label.style_none, textcolor = COL_NEUT, size = size.small))
+        if array.size(exitLbls) > 50
+            label.delete(array.shift(exitLbls))
+        exitHintShown := true
+
+// ─────────────────────────────── موتور پیش‌بینی مسیر قیمت ───────────────────────────────
+// فیلتر آلفا-بتا (کالمن‌گونه) روی لگاریتم قیمت
+var float kalLvl = na
+var float kalVel = 0.0
+kalAlpha = 2.0 * (2 * kalmanL - 1) / (kalmanL * (kalmanL + 1))
+kalBeta  = 6.0 / (kalmanL * (kalmanL + 1))
+if barstate.isconfirmed
+    if na(kalLvl)
+        kalLvl := logClose
+    else
+        float kalPred = kalLvl + kalVel
+        float kalErr  = logClose - kalPred
+        kalLvl := kalPred + kalAlpha * kalErr
+        kalVel := kalVel + kalBeta * kalErr
+
+// تخمین‌گرهای درِیفت (لگاریتمی، هر کندل)
+slope50  = ta.linreg(logClose, 50, 0) - ta.linreg(logClose, 50, 1)
+slope150 = ta.linreg(logClose, 150, 0) - ta.linreg(logClose, 150, 1)
+linDrift = (slope50 + slope150) / 2
+kDrift   = (yhat1 - yhat1[2]) / (2 * math.max(yhat1, EPS))
+sigBar1  = ta.stdev(logRet, 100)
+logRetW  = f_clamp(logRet, -4 * sigBar1, 4 * sigBar1)
+momDrift = trendW * ta.sma(logRetW, 20) + (1 - trendW) * ta.sma(logRetW, 100)
+
+// ترکیب گروهی + توافق تخمین‌گرها
+wLfc   = 0.20 + 0.15 * trendW
+wMfc   = 0.15 + 0.20 * trendW
+wKalFc = 0.15
+wKfc   = 1.0 - wLfc - wMfc - wKalFc
+disFc  = math.abs(linDrift - momDrift) + math.abs(linDrift - kDrift) + math.abs(kDrift - momDrift)
+agree  = 1.0 / (1.0 + disFc / (sigBar1 + EPS))
+drift0 = (wLfc * linDrift + wKfc * kDrift + wMfc * momDrift + wKalFc * kalVel) * agree
+
+// تعدیل رژیم و تایم بالاتر
+htfAgree   = math.sign(drift0) * bias1 >= 0 ? 1.0 : 0.4
+// اجماع داشبورد: جهت و قدرت (ترکیب z و رأی‌ها) — هر کندل، بدون شرط
+int   consDir   = zScore > 0.5 ? 1 : zScore < -0.5 ? -1 : 0
+int   consVotes = consDir == 1 ? bullVotes : consDir == -1 ? bearVotes : 0
+float consStr   = consDir == 0 ? 0.0 : clamp01(math.abs(zScore) / zTrigEff) * clamp01(consVotes * 1.0 / minVotesEff)
+// مولفه درِیفت هم‌جهت با امتیاز داشبورد (میرایی phi را در حلقه به ارث می‌برد)
+float gammaScore = 0.35
+float scoreDrift = gammaScore * clamp(scoreSmooth) * sigBar1
+driftFinal = drift0 * trendW * hurstMult * htfAgree + scoreDrift
+
+// پارامترهای مسیر میراشده و مخروط اطمینان
+phi       = 0.88 + 0.09 * (0.5 * trendW + 0.5 * trendTrust)
+anchorLog = math.log(ta.ema(close, 200))
+baseLog   = na(kalLvl) ? logClose : kalLvl
+mrKBase   = math.min(0.15 + (hurstS < 0.45 ? 0.15 : 0.0) + (chop > 61.8 ? 0.10 : 0.0), 0.40)
+// بازگشت به میانگین وقتی خلاف اجماع قوی است تضعیف می‌شود؛ میرایی رژیم متقارن (مانند درِیفت)
+bool mrOpposes = consDir != 0 and math.sign(anchorLog - baseLog) == -consDir
+mrK       = mrKBase * (mrOpposes ? 1.0 - consStr : 1.0) * (1.0 - 0.5 * trendW)
+excessRsi = rsi14 > 70 ? (rsi14 - 70) / 30 : rsi14 < 30 ? (rsi14 - 30) / 30 : 0.0
+bool bendOpposes = consDir != 0 and excessRsi * consDir > 0
+bendKeff  = (adxW > 0.7 ? bendK / 2 : bendK) * (bendOpposes ? 1.0 - 0.6 * consStr : 1.0)
+// واریانس EWMA (ریسک‌متریکس)
+var float ewVar = na
+if barstate.isconfirmed
+    ewVar := 0.94 * nz(ewVar, sigBar1 * sigBar1) + 0.06 * logRetW * logRetW
+sigmaUsed = 0.6 * math.sqrt(nz(ewVar, sigBar1 * sigBar1)) + 0.4 * sigBar1
+volMultFc = 1 + math.max(nz(atrPct, 50) - 50, 0) / 50 * 0.6
+sigmaC    = math.min(sigmaUsed * volMultFc, 3.0 * sigBar1)
+skewFc    = skewMax * clamp(scoreSmooth)
+
+// رسم مسیر و مخروط — فقط تزئینی، فقط روی آخرین کندل، از داده کندل بسته‌شده
+var polyline plMid = na
+var polyline plIn  = na
+var polyline plOut = na
+var label    lbFc  = na
+var float fcTargetPx = na
+var float fcChgPct   = na
+H = math.min(fcHorizon, 200)
+if barstate.islast
+    polyline.delete(plMid)
+    polyline.delete(plIn)
+    polyline.delete(plOut)
+    label.delete(lbFc)
+    fcTargetPx := na
+    fcChgPct   := na
+    int idx = barstate.isconfirmed ? 0 : 1
+    float b0    = baseLog[idx]
+    float dft   = driftFinal[idx]
+    float phiV  = phi[idx]
+    float mrKv  = mrK[idx]
+    float anchV = anchorLog[idx]
+    float exc   = excessRsi[idx]
+    float bKe   = bendKeff[idx]
+    float sb1   = sigBar1[idx]
+    float sgC   = sigmaC[idx]
+    float skw   = skewFc[idx]
+    float atrV  = atr14[idx]
+    int   consD = nz(consDir[idx])
+    float consS = nz(consStr[idx])
+    // مهار سطح شروع مسیر به قیمت کندل بسته‌شده (جبران تأخیر گذرای کالمن در حرکات تند)
+    b0 := na(b0) ? b0 : f_clamp(b0, logClose[idx] - 1.5 * sb1, logClose[idx] + 1.5 * sb1)
+    bool fcReady = not (na(b0) or na(dft) or na(phiV) or na(mrKv) or na(anchV) or na(sgC) or na(atrV) or na(sb1))
+    if fcOn and fcReady
+        int stepT  = math.max(1, H / 40)
+        int nSteps = math.ceil(H * 1.0 / stepT)
+        ptsMid = array.new<chart.point>()
+        ptsIn  = array.new<chart.point>()
+        ptsOut = array.new<chart.point>()
+        dnInV  = array.new<float>()
+        dnOutV = array.new<float>()
+        tA     = array.new<int>()
+        for k = 0 to nSteps
+            int t = math.min(k * stepT, H)
+            float dampSum  = dft * phiV * (1 - math.pow(phiV, t)) / (1 - phiV)
+            float mrTerm   = mrKv * (anchV - b0) * (1 - math.pow(0.98, t))
+            float bendTerm = -exc * bKe * sb1 * (1 - math.pow(0.85, t)) / 0.15
+            // سقف سخت: جملات خلاف اجماع حداکثر ۴۰٪ درِیفت هم‌جهت؛ هرچه اجماع قوی‌تر، سقف تنگ‌تر (تا ۱۶٪)
+            float ctrRaw = mrTerm + bendTerm
+            float ctrAdj = ctrRaw
+            if consD != 0 and ctrRaw * consD < 0
+                float capMag = 0.40 * (1.0 - 0.6 * consS) * math.abs(dampSum)
+                ctrAdj := math.sign(ctrRaw) * math.min(math.abs(ctrRaw), capMag)
+            float midV = math.exp(b0 + dampSum + ctrAdj)
+            float sq   = math.sqrt(t)
+            float hwUp = math.max(midV * (math.exp(zInner * sgC * sq) - 1), atrFloorMult * atrV * sq)
+            float hwDn = math.max(midV * (1 - math.exp(-zInner * sgC * sq)), atrFloorMult * atrV * sq)
+            array.push(ptsMid, chart.point.from_index(bar_index + t, midV))
+            array.push(ptsIn,  chart.point.from_index(bar_index + t, midV + hwUp * (1 + skw)))
+            float hwOutUp = math.max(midV * (math.exp(zOuter * sgC * sq) - 1), hwUp * (1 + skw))
+            array.push(ptsOut, chart.point.from_index(bar_index + t, midV + hwOutUp))
+            array.push(dnInV,  midV - hwDn * (1 - skw))
+            float hwOutDn = math.max(midV * (1 - math.exp(-zOuter * sgC * sq)), hwDn * (1 - skw))
+            array.push(dnOutV, midV - hwOutDn)
+            array.push(tA, t)
+            if t == H
+                fcTargetPx := midV
+        for k = array.size(tA) - 1 to 0
+            int t = array.get(tA, k)
+            array.push(ptsIn,  chart.point.from_index(bar_index + t, array.get(dnInV, k)))
+            array.push(ptsOut, chart.point.from_index(bar_index + t, array.get(dnOutV, k)))
+        plOut := polyline.new(ptsOut, closed = true, line_color = color.new(COL_FC, 90), fill_color = color.new(COL_FC, 88))
+        plIn  := polyline.new(ptsIn,  closed = true, line_color = color.new(COL_FC, 82), fill_color = color.new(COL_FC, 78))
+        plMid := polyline.new(ptsMid, curved = stepT <= 5, line_color = COL_FC, line_width = 2)
+        fcChgPct := 100 * (fcTargetPx / close[idx] - 1)
+        lbFc := label.new(bar_index + H, fcTargetPx, "هدف پیش‌بینی: " + str.tostring(fcTargetPx, format.mintick) + " (" + (fcChgPct >= 0 ? "+" : "") + str.tostring(fcChgPct, "#.##") + "%)", style = label.style_label_left, color = color.new(COL_FC, 70), textcolor = color.white, size = size.small)
+
+// ─────────────────────────────── نمایش روی چارت ───────────────────────────────
+plot(showKernel ? yhat1 : na, "کرنل", color = kSlopeN > 0 ? COL_BULL : COL_BEAR, linewidth = 2)
+plot(showST ? stVal : na, "سوپرترند", color = stDir < 0 ? color.new(COL_BULL, 40) : color.new(COL_BEAR, 40), style = plot.style_linebr)
+plot(showVWAP ? vwapM : na, "VWAP", color = color.new(COL_FC, 30))
+plot(showVWAP ? vUp2 : na, "VWAP +2σ", color = color.new(COL_FC, 75))
+plot(showVWAP ? vDn2 : na, "VWAP -2σ", color = color.new(COL_FC, 75))
+
+// ─────────────────────────────── داشبورد فارسی ───────────────────────────────
+f_glyph(int v) =>
+    v > 0 ? "▲" : v < 0 ? "▼" : "•"
+f_vCol(int v) =>
+    v > 0 ? COL_BULL : v < 0 ? COL_BEAR : COL_NEUT
+f_wrStr(int g) =>
+    string s = f_n(g) >= 5 ? str.tostring(f_wr(g), "#") + "% (" + str.tostring(f_n(g)) + ")" : "—"
+    f_gradeSuspended(g) ? s + " | معلق" : s
+f_wrBg(int g) =>
+    f_n(g) < 5 ? color.new(COL_NEUT, 80) : f_wr(g) >= 60 ? color.new(COL_BULL, 70) : f_wr(g) >= 45 ? color.new(color.orange, 70) : color.new(COL_BEAR, 70)
+f_wrTip(int g) =>
+    float e = f_expR(g)
+    na(e) ? "نمونه ناکافی" : "امید ریاضی: " + str.tostring(e, "#.##") + "R"
+
+dashPosition = switch dashPos
+    "بالا-راست"  => position.top_right
+    "بالا-چپ"    => position.top_left
+    "پایین-راست" => position.bottom_right
+    "پایین-چپ"   => position.bottom_left
+    => position.top_right
+var table tb = table.new(dashPosition, 3, 13, border_width = 1, frame_color = color.new(color.gray, 60))
+
+if dashOn and dashPos != "مخفی" and barstate.islast
+    txtSz = dashSize == "کوچک" ? size.small : size.normal
+    color hdrBg = color.new(COL_FC, 70)
+    // ردیف ۰: عنوان
+    table.cell(tb, 0, 0, "CTP Pro", text_color = color.white, bgcolor = hdrBg, text_size = txtSz, tooltip = NO_REPAINT_TXT)
+    table.cell(tb, 1, 0, syminfo.ticker, text_color = color.white, bgcolor = hdrBg, text_size = txtSz)
+    table.cell(tb, 2, 0, timeframe.period, text_color = color.white, bgcolor = hdrBg, text_size = txtSz)
+    // ردیف ۱: رژیم بازار
+    string regimeTxt = nz(atrPct, 50) >= 90 ? "پرنوسان" : trendW >= 0.55 ? "روند" : trendW <= 0.35 ? "رِنج / خنثی" : "انتقالی"
+    color regimeBg = nz(atrPct, 50) >= 90 ? color.new(COL_BEAR, 70) : trendW >= 0.55 ? color.new(COL_BULL, 70) : color.new(color.orange, 70)
+    table.cell(tb, 0, 1, "رژیم بازار", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 1, regimeTxt, text_color = chart.fg_color, bgcolor = regimeBg, text_size = txtSz)
+    table.cell(tb, 2, 1, "ADX " + str.tostring(adx, "#.#") + " | CHOP " + str.tostring(chop, "#.#"), text_color = chart.fg_color, bgcolor = regimeBg, text_size = txtSz)
+    // ردیف‌های ۲ تا ۷: دسته‌ها (نماد رأی + وزن)
+    table.cell(tb, 0, 2, "روند", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 2, f_glyph(vTrend), text_color = f_vCol(vTrend), text_size = txtSz)
+    table.cell(tb, 2, 2, str.tostring(array.get(w, 0) * 100, "#") + "%", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 0, 3, "مومنتوم", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 3, f_glyph(vMom), text_color = f_vCol(vMom), text_size = txtSz)
+    table.cell(tb, 2, 3, str.tostring(array.get(w, 1) * 100, "#") + "%", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 0, 4, "حجم", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 4, f_glyph(vVol), text_color = f_vCol(vVol), text_size = txtSz)
+    table.cell(tb, 2, 4, str.tostring(array.get(w, 2) * 100, "#") + "%", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 0, 5, "ساختار", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 5, f_glyph(vStruct), text_color = f_vCol(vStruct), text_size = txtSz)
+    table.cell(tb, 2, 5, str.tostring(array.get(w, 3) * 100, "#") + "%", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 0, 6, "هوش مصنوعی", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 6, f_glyph(vML) + " " + str.tostring(prediction, "#"), text_color = f_vCol(vML), text_size = txtSz)
+    table.cell(tb, 2, 6, str.tostring(array.get(w, 4) * 100, "#") + "%", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 0, 7, "تایم بالاتر", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 7, f_glyph(vHTF) + " " + htf1, text_color = f_vCol(vHTF), text_size = txtSz)
+    table.cell(tb, 2, 7, htfLoading ? "در حال بارگذاری HTF" : str.tostring(array.get(w, 5) * 100, "#") + "%", text_color = chart.fg_color, text_size = txtSz)
+    // ردیف ۸: امتیاز z و رأی‌ها
+    table.cell(tb, 0, 8, "امتیاز z", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 8, str.tostring(zScore, "#.##"), text_color = zScore > 0 ? COL_BULL : zScore < 0 ? COL_BEAR : COL_NEUT, text_size = txtSz)
+    string domGlyph = bullVotes > bearVotes ? "▲" : bearVotes > bullVotes ? "▼" : "•"
+    int    domVotes = math.max(bullVotes, bearVotes)
+    color  domCol   = bullVotes > bearVotes ? COL_BULL : bearVotes > bullVotes ? COL_BEAR : COL_NEUT
+    table.cell(tb, 2, 8, "رأی‌ها: " + domGlyph + " " + str.tostring(domVotes) + "/6", text_color = domCol, text_size = txtSz, tooltip = "▲ " + str.tostring(bullVotes) + "  |  ▼ " + str.tostring(bearVotes) + "  |  حد نصاب: " + str.tostring(minVotesEff))
+    // ردیف ۹: وضعیت و اطمینان
+    string statusTxt = "آماده"
+    if not volOk
+        statusTxt := "نوسان شدید — صدک ATR " + str.tostring(nz(atrPct, 50), "#")
+    else if not chopOk
+        statusTxt := "چاپینس بالا (" + str.tostring(chop, "#.#") + ")"
+    else if adx < adxMinEff
+        statusTxt := "فیلتر رِنج فعال — ADX پایین"
+    else if not adxOk
+        statusTxt := "ADX در حال افت — بدون شتاب روند"
+    else if rvol < rvolMin
+        statusTxt := "حجم کم"
+    else if (scoreSmooth < 0 and noChaseS) or (scoreSmooth > 0 and noChaseL)
+        statusTxt := "کشیدگی زیاد — منتظر پولبک"
+    else if pbDir != 0
+        statusTxt := "در انتظار پولبک — " + (pbDir == 1 ? "خرید" : "فروش")
+    else if not cooldownOk
+        statusTxt := "در فاصله سیگنال"
+    int confPct = math.round(100 * clamp01(math.abs(zScore) / 3 * confRegime * rvolMult))
+    table.cell(tb, 0, 9, "وضعیت", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 9, statusTxt, text_color = chart.fg_color, bgcolor = statusTxt == "آماده" ? color.new(COL_BULL, 75) : color.new(color.orange, 75), text_size = txtSz)
+    table.cell(tb, 2, 9, str.tostring(confPct) + "٪", text_color = chart.fg_color, text_size = txtSz)
+    // ردیف ۱۰: وین‌ریت زنده هر درجه
+    table.cell(tb, 0, 10, "وین‌ریت", text_color = chart.fg_color, text_size = txtSz, tooltip = "آمار با تغییر تنظیمات از نو محاسبه می‌شود.")
+    table.cell(tb, 1, 10, "A+: " + f_wrStr(2), text_color = chart.fg_color, bgcolor = f_wrBg(2), text_size = txtSz, tooltip = f_wrTip(2))
+    table.cell(tb, 2, 10, "A: " + f_wrStr(1) + " | B: " + f_wrStr(0), text_color = chart.fg_color, bgcolor = f_wrBg(1), text_size = txtSz, tooltip = f_wrTip(1) + " | " + f_wrTip(0))
+    // ردیف ۱۱: پیش‌بینی
+    table.cell(tb, 0, 11, "پیش‌بینی", text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 1, 11, na(fcTargetPx) ? "—" : "هدف: " + str.tostring(fcTargetPx, format.mintick), text_color = chart.fg_color, text_size = txtSz)
+    table.cell(tb, 2, 11, na(fcChgPct) ? "—" : (fcChgPct >= 0 ? "+" : "") + str.tostring(fcChgPct, "#.#") + "% | اعتماد: " + str.tostring(math.round(100 * agree * trendW)) + "%", text_color = chart.fg_color, text_size = txtSz)
+    // ردیف ۱۲: هشدار تایم‌فریم پایین
+    if isLowTF
+        color warnBg = color.new(color.orange, 25)
+        table.cell(tb, 0, 12, "⚠", text_color = color.white, bgcolor = warnBg, text_size = txtSz)
+        table.cell(tb, 1, 12, "تایم‌فریم خیلی پایین — نویز بالا", text_color = color.white, bgcolor = warnBg, text_size = txtSz, tooltip = "مقادیر مؤثر: رأی ≥ " + str.tostring(minVotesEff) + " | z ≥ " + str.tostring(zTrigEff, "#.##") + " | پایداری " + str.tostring(persistEff) + " کندل | فاصله " + str.tostring(cooldownEff) + " کندل")
+        table.cell(tb, 2, 12, profileMode == "خودکار (پیشنهادی)" ? "سخت‌گیری خودکار فعال" : profileMode, text_color = color.white, bgcolor = warnBg, text_size = txtSz)
+
+// ─────────────────────────────── هشدارهای ایستا (سازگار با نسخه قدیم) ───────────────────────────────
+alertcondition(fireLongOk,        "سیگنال خرید",             "CTP Pro: سیگنال خرید تاییدشده")
+alertcondition(fireShortOk,       "سیگنال فروش",             "CTP Pro: سیگنال فروش تاییدشده")
+alertcondition(fireLongStrongOk,  "سیگنال خرید قوی (A/A+)",  "CTP Pro: سیگنال خرید قوی تاییدشده")
+alertcondition(fireShortStrongOk, "سیگنال فروش قوی (A/A+)",  "CTP Pro: سیگنال فروش قوی تاییدشده")

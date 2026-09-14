@@ -1,0 +1,1355 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>میز فرمان CTP — پایش ۴۰ ارز برتر</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070B10; --surface:#0D131C; --surface2:#121B27; --raise:#16202E;
+    --line:#1C2938; --line2:#27374B;
+    --ink:#E3EAF4; --dim:#69809A; --faint:#3E5064; --mid:#69809A;
+    --up:#2BD9A0; --up-dim:rgba(43,217,160,.12);
+    --dn:#FF5C7A; --dn-dim:rgba(255,92,122,.12);
+    --brass:#E8B44C; --brass-dim:rgba(232,180,76,.12);
+    --blue:#58A6FF; --r:14px; --r2:9px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0}
+  html{scrollbar-color:var(--line2) var(--bg)}
+  ::-webkit-scrollbar{width:10px;height:10px} ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:6px}
+  body{background:var(--bg); color:var(--ink); font:14px/1.6 "Vazirmatn","Segoe UI",Tahoma,sans-serif}
+  .num{font-family:"JetBrains Mono",Consolas,monospace; direction:ltr; unicode-bidi:embed; letter-spacing:-.02em}
+  a{color:var(--blue)}
+  :focus-visible{outline:2px solid var(--brass); outline-offset:2px; border-radius:4px}
+  .up{color:var(--up)} .dn{color:var(--dn)} .mid{color:var(--dim)}
+  .err{color:var(--dn)} .loading{color:var(--dim); text-align:center; padding:22px}
+  .note{color:var(--dim); font-size:12px; line-height:1.9}
+
+  /* ─── سربرگ ─── */
+  header{display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+         padding:12px 24px; background:linear-gradient(180deg, var(--surface) 0%, rgba(13,19,28,.92) 100%);
+         border-bottom:1px solid var(--line); position:sticky; top:0; z-index:40; backdrop-filter:blur(8px)}
+  .brand{display:flex; align-items:center; gap:11px}
+  .mark{width:36px; height:36px; border-radius:10px; display:grid; place-items:center; font-size:17px;
+        background:linear-gradient(135deg, var(--brass-dim), transparent); border:1px solid rgba(232,180,76,.35); color:var(--brass)}
+  .brand h1{font-size:16px; font-weight:800; letter-spacing:-.01em}
+  .brand .sub{font-size:11px; color:var(--dim)}
+  .tabs{display:flex; background:var(--surface2); border:1px solid var(--line); border-radius:11px; padding:3px; gap:2px}
+  .tabs button{background:transparent; color:var(--dim); border:0; padding:7px 17px; border-radius:8px;
+               cursor:pointer; font:600 13px "Vazirmatn"; transition:all .15s}
+  .tabs button:hover{color:var(--ink)}
+  .tabs button.on{background:var(--raise); color:var(--brass); box-shadow:0 1px 6px rgba(0,0,0,.4)}
+  .hgroup{display:flex; align-items:center; gap:8px; margin-inline-start:auto; flex-wrap:wrap}
+  .pill{background:var(--surface2); border:1px solid var(--line); color:var(--dim);
+        border-radius:20px; padding:5px 13px; font-size:12px; white-space:nowrap}
+  .pill b{color:var(--ink)}
+  .gear{background:var(--surface2); border:1px solid var(--line); color:var(--ink); border-radius:10px;
+        padding:7px 14px; cursor:pointer; font:600 12.5px "Vazirmatn"; transition:border-color .15s}
+  .gear:hover{border-color:var(--brass)}
+
+  /* ─── ریل نبض موتور ─── */
+  .pulse{display:flex; align-items:center; gap:11px; flex-wrap:wrap; padding:7px 24px;
+         font-size:12px; color:var(--dim); border-bottom:1px solid var(--line);
+         background:linear-gradient(90deg, var(--brass-dim), transparent 42%)}
+  .pulse b{color:var(--ink); font-weight:600}
+  .pulse .sep{opacity:.3}
+  .led{width:9px; height:9px; border-radius:50%; background:var(--up); flex:none;
+       box-shadow:0 0 0 0 rgba(43,217,160,.5); animation:beat 2.2s infinite}
+  .led.busy{background:var(--brass); box-shadow:0 0 0 0 rgba(232,180,76,.5); animation-duration:.7s}
+  @keyframes beat{70%{box-shadow:0 0 0 9px transparent} 100%{box-shadow:0 0 0 0 transparent}}
+  /* ── نوارِ بارگذاریِ بالای صفحه (مثل GitHub/YouTube) ── */
+  #topbar{position:fixed; top:0; left:0; height:3px; width:0; z-index:100;
+          background:linear-gradient(90deg, var(--brass), var(--up)); box-shadow:0 0 8px var(--brass);
+          opacity:0; transition:width .3s ease, opacity .3s}
+  #topbar.on{opacity:1}
+  /* ── بنرِ ساختِ کالیبراسیون ── */
+  .calbanner{margin-bottom:14px; background:linear-gradient(135deg, var(--brass-dim), var(--surface));
+             border:1px solid rgba(232,180,76,.4); border-radius:14px; padding:14px 18px}
+  .calbanner .top{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:9px}
+  .calbanner .top b{color:var(--brass)}
+  .edgebanner{margin-bottom:14px; border-radius:14px; padding:12px 16px; border:1px solid rgba(120,160,140,.35);
+              background:linear-gradient(135deg, rgba(40,70,55,.45), var(--surface))}
+  .edgebanner.frozen{border-color:rgba(180,90,70,.45); background:linear-gradient(135deg, rgba(80,35,30,.4), var(--surface))}
+  .edgebanner .top{display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:6px}
+  .edgebanner .chips{display:flex; flex-wrap:wrap; gap:6px}
+  .edgebanner .chip{font-size:12px; padding:3px 8px; border-radius:8px; background:var(--surface2); border:1px solid rgba(255,255,255,.06)}
+  .prog{position:relative; height:12px; background:var(--surface2); border-radius:7px; overflow:hidden}
+  .prog i{position:absolute; inset:0 auto 0 0; border-radius:7px;
+          background:linear-gradient(90deg, var(--brass), var(--up)); transition:width .5s ease;
+          background-size:200% 100%; animation:shimmer 1.5s linear infinite}
+  @keyframes shimmer{0%{background-position:200% 0} 100%{background-position:-200% 0}}
+  @media (prefers-reduced-motion: reduce){ .prog i{animation:none} }
+
+  main{max-width:1560px; margin:0 auto; padding:18px 24px 60px}
+
+  /* ─── کارت‌های خلاصه ─── */
+  /* ── پنل کیف‌پول ── */
+  .wallet{display:grid; grid-template-columns:1.4fr repeat(auto-fit, minmax(120px,1fr)); gap:12px; margin-bottom:12px;
+          background:linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
+          border:1px solid var(--line2); border-radius:16px; padding:16px 18px;
+          box-shadow:0 10px 40px rgba(0,0,0,.3)}
+  .wallet .hero{border-inline-end:1px solid var(--line); padding-inline-end:16px}
+  .wallet .hero .eq{font-size:30px; font-weight:800; letter-spacing:-.02em; line-height:1.1}
+  .wallet .hero .lbl{font-size:12px; color:var(--dim); margin-bottom:3px}
+  .wallet .hero .ret{font-size:13px; margin-top:3px}
+  .wallet .wc .lbl{font-size:11px; color:var(--dim); margin-bottom:4px}
+  .wallet .wc .v{font-size:17px; font-weight:700}
+  .wallet .wc .v small{font-size:10px; color:var(--dim); font-weight:400}
+  @media (max-width:720px){ .wallet{grid-template-columns:1fr 1fr} .wallet .hero{border-inline-end:0; grid-column:1/-1; border-bottom:1px solid var(--line); padding-bottom:12px} }
+  /* ── پنلِ ربات معامله‌گر خودکار ── */
+  .botpanel{margin-bottom:14px; background:linear-gradient(135deg, rgba(88,166,255,.07), var(--surface));
+            border:1px solid rgba(88,166,255,.35); border-radius:16px; padding:16px 18px}
+  .bp-head{display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px}
+  .bp-title{font-size:15px; display:flex; align-items:center; gap:8px}
+  .bp-dot{width:9px; height:9px; border-radius:50%; background:var(--faint); flex:none}
+  .bp-dot.on{background:var(--up); box-shadow:0 0 0 0 rgba(43,217,160,.5); animation:beat 1.6s infinite}
+  .bp-grid{display:grid; grid-template-columns:minmax(230px,1fr) minmax(260px,1.6fr); gap:18px}
+  @media (max-width:760px){ .bp-grid{grid-template-columns:1fr} }
+  .botpanel input[type=range]{width:100%; accent-color:var(--blue); margin:6px 0 4px}
+  .bp-current{background:var(--surface2); border:1px solid var(--line); border-radius:10px; padding:9px 13px;
+              font-size:13px; min-height:40px; color:var(--ink)}
+  .bp-current.on{border-color:rgba(88,166,255,.4)}
+  .bp-chips{display:flex; gap:7px; flex-wrap:wrap; margin-top:8px}
+  .bp-chips .pill{font-size:11.5px; padding:4px 11px}
+  .bp-log{margin-top:12px; max-height:190px; overflow:auto; background:var(--surface2);
+          border:1px solid var(--line); border-radius:10px; padding:8px 12px; font-size:12px; line-height:1.9}
+  .bp-log .th{border-bottom:1px dashed var(--line); padding:2px 0}
+  .bp-log .th:last-child{border-bottom:0}
+  .bp-log .tt{font-family:"JetBrains Mono"; color:var(--faint); font-size:10px; margin-inline-end:7px; direction:ltr; unicode-bidi:embed}
+  .bp-log .k-open{color:var(--up)} .bp-log .k-close{color:var(--dn)} .bp-log .k-warn{color:var(--brass)}
+  .stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(172px,1fr)); gap:10px; margin-bottom:14px}
+  .stat{background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:12px 15px;
+        transition:border-color .15s}
+  .stat:hover{border-color:var(--line2)}
+  .stat .lbl{font-size:11px; color:var(--dim); margin-bottom:5px}
+  .stat .val{font-size:17px; font-weight:800; letter-spacing:-.01em}
+  .stat .val small{font-size:11px; color:var(--dim); font-weight:400}
+
+  /* ─── نوار فیلتر ─── */
+  .fbar{display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-bottom:12px}
+  .fbar input[type=search]{background:var(--surface); border:1px solid var(--line); color:var(--ink);
+        border-radius:10px; padding:8px 14px; width:210px; font:13px "Vazirmatn"}
+  .fbar input[type=search]::placeholder{color:var(--faint)}
+  .fchip{background:var(--surface); color:var(--dim); border:1px solid var(--line); border-radius:20px;
+         padding:5px 14px; cursor:pointer; font-size:12px; user-select:none; transition:all .13s}
+  .fchip:hover{color:var(--ink); border-color:var(--line2)}
+  .fchip.on{background:var(--up-dim); color:var(--up); border-color:rgba(43,217,160,.45)}
+  .fhint{color:var(--faint); font-size:11px; margin-inline-start:auto}
+
+  /* ─── جدول ─── */
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:var(--r); overflow:auto;
+        box-shadow:0 8px 30px rgba(0,0,0,.25)}
+  table{border-collapse:collapse; width:100%; min-width:1180px}
+  thead th{font-size:11px; font-weight:600; color:var(--dim); text-align:center; padding:11px 9px;
+           border-bottom:1px solid var(--line2); background:var(--surface); position:sticky; top:0; z-index:5;
+           cursor:pointer; user-select:none; white-space:nowrap}
+  thead th:hover{color:var(--ink)}
+  thead th .arrow{font-size:9px; color:var(--brass)}
+  tbody td{padding:9px; border-bottom:1px solid var(--line); text-align:center; font-size:13px}
+  tbody tr{transition:background .13s; cursor:pointer}
+  tbody tr:hover{background:rgba(88,166,255,.05)}
+  tbody tr:last-child td{border-bottom:0}
+  .sym{text-align:right !important; font-weight:800; font-size:13.5px}
+  .sym small{color:var(--faint); font-weight:400; font-size:10px}
+  .spark{vertical-align:middle; opacity:.9}
+  .bar{position:relative; width:96px; height:7px; background:var(--surface2); border-radius:4px; margin:0 auto 3px; overflow:hidden}
+  .bar i{position:absolute; top:0; height:100%; border-radius:4px; transition:width .5s ease}
+  .grade{padding:3px 10px; border-radius:7px; font-size:11.5px; font-weight:700; white-space:nowrap}
+  .gAp{background:var(--brass-dim); color:var(--brass); border:1px solid rgba(232,180,76,.4)}
+  .gA{background:var(--up-dim); color:var(--up); border:1px solid rgba(43,217,160,.35)}
+  .gB{background:rgba(88,166,255,.1); color:var(--blue); border:1px solid rgba(88,166,255,.3)}
+  .gMuted{background:rgba(139,148,158,.12); color:var(--dim); border:1px solid rgba(139,148,158,.25)}
+  .gNone{color:var(--faint)}
+  .chip{padding:2.5px 10px; border-radius:20px; font-size:11px; white-space:nowrap}
+  .trend{background:var(--up-dim); color:var(--up)} .range-r{background:var(--brass-dim); color:var(--brass)}
+  .vol{background:var(--dn-dim); color:var(--dn)} .trans{background:rgba(88,166,255,.1); color:var(--blue)}
+  .btn{border:0; border-radius:9px; padding:8px 15px; cursor:pointer; font:700 12.5px "Vazirmatn"; transition:filter .12s, transform .08s}
+  .btn:active{transform:translateY(1px)}
+  .btn.long{background:var(--up); color:#04281C} .btn.short{background:var(--dn); color:#33060F}
+  .btn.long:hover,.btn.short:hover{filter:brightness(1.12)}
+  .btn.gray{background:var(--surface2); color:var(--dim); border:1px solid var(--line); cursor:default; font-weight:500}
+  .btn.close{background:var(--dn-dim); color:var(--dn); border:1px solid rgba(255,92,122,.35); cursor:pointer; width:100%}
+  .btn.mini{padding:3px 10px; font-size:11px; background:var(--surface2); border:1px solid var(--line2); color:var(--blue); cursor:pointer; border-radius:7px}
+  /* ═══ ناوبریِ اپ: صفحه‌های مجزا ═══ */
+  .appnav{position:sticky; top:0; z-index:60; display:flex; gap:6px; padding:8px 22px;
+          background:color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter:blur(10px);
+          border-bottom:1px solid var(--line)}
+  .anav{display:flex; align-items:center; gap:7px; padding:8px 16px; border-radius:11px; cursor:pointer;
+        background:transparent; border:1px solid transparent; color:var(--dim);
+        font:inherit; font-size:13.5px; transition:all .15s}
+  .anav:hover{background:var(--surface); color:var(--ink)}
+  .anav.on{background:var(--surface); border-color:var(--line2); color:var(--ink); font-weight:700;
+           box-shadow:0 2px 10px rgba(0,0,0,.25)}
+  .abadge{min-width:19px; padding:1px 6px; border-radius:99px; background:var(--blue); color:#fff;
+          font-size:10.5px; font-weight:800; text-align:center}
+  .adot{width:8px; height:8px; border-radius:50%; background:var(--line2); display:inline-block}
+  .adot.on{background:var(--up); box-shadow:0 0 7px var(--up)}
+  .page{display:none}
+  .page.on{display:block; animation:pageIn .18s ease}
+  @keyframes pageIn{from{opacity:0; transform:translateY(5px)}to{opacity:1; transform:none}}
+
+  .advice{margin:7px 0 4px; padding:7px 10px; border-radius:9px; background:var(--surface2);
+          border:1px solid var(--line); border-inline-start:3px solid var(--mid); font-size:12px}
+  .advice b{display:block; font-size:12px; margin-bottom:2px}
+  .advice small{display:block; line-height:1.7; font-size:10.5px}
+  .advice.hot{animation:advPulse 2s infinite}
+  @keyframes advPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,92,122,0)}50%{box-shadow:0 0 0 3px rgba(255,92,122,.18)}}
+  .skel td{height:44px; background:linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%);
+           background-size:600px 100%; animation:sk 1.2s infinite linear}
+  @keyframes sk{0%{background-position:-300px 0}100%{background-position:300px 0}}
+
+  h2{font-size:14.5px; font-weight:800; margin:26px 2px 10px; display:flex; align-items:center; gap:9px}
+  .posmeta{font-size:12px; color:var(--dim); font-weight:400}
+  .posmeta b{color:var(--ink)}
+
+  /* ─── کارت پوزیشن ─── */
+  .posgrid{display:grid; grid-template-columns:repeat(auto-fill, minmax(255px,1fr)); gap:11px}
+  .pos{background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:13px 15px;
+       transition:border-color .15s}
+  .pos:hover{border-color:var(--line2)}
+  .pos .row{display:flex; justify-content:space-between; align-items:center; margin:3.5px 0; font-size:12.5px}
+  .pos .row span{color:var(--dim)}
+  .range{position:relative; height:6px; border-radius:4px; margin:9px 0 3px; direction:ltr;
+         background:linear-gradient(90deg, var(--dn-dim), var(--surface2) 30%, var(--surface2) 70%, var(--up-dim))}
+  .range i{position:absolute; top:-3px; width:3px; height:12px; background:var(--brass); border-radius:2px;
+           box-shadow:0 0 7px rgba(232,180,76,.8)}
+  .range .re{position:absolute; top:-2px; width:1px; height:10px; background:var(--dim); opacity:.6}
+  .rlbl{display:flex; justify-content:space-between; font-size:10px; color:var(--faint); direction:ltr; font-family:"JetBrains Mono"}
+
+  /* ─── کشوها و مودال‌ها ─── */
+  .drawer{position:fixed; inset:0; background:rgba(4,7,11,.68); backdrop-filter:blur(3px); z-index:60;
+          display:none; align-items:flex-start; justify-content:center; overflow:auto; padding:34px 14px}
+  .drawer.open{display:flex}
+  .sheet{background:var(--surface); border:1px solid var(--line2); border-radius:18px; padding:22px;
+         width:min(1080px,97vw); box-shadow:0 30px 80px rgba(0,0,0,.6); animation:pop .18s ease}
+  @keyframes pop{from{transform:translateY(10px); opacity:.6} to{transform:none; opacity:1}}
+  .closebtn{float:left; background:var(--surface2); border:1px solid var(--line); color:var(--dim);
+            border-radius:8px; padding:5px 12px; cursor:pointer; font:12px "Vazirmatn"}
+  .closebtn:hover{color:var(--ink)}
+  .sheet h3{font-size:16px; font-weight:800; margin-bottom:2px}
+  .sheet .sub{color:var(--dim); font-size:12px}
+  .tfgrid{display:grid; grid-template-columns:repeat(auto-fit, minmax(300px,1fr)); gap:12px; margin-top:16px}
+  .tfcard{background:var(--surface2); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px}
+  .tfcard h4{display:flex; justify-content:space-between; align-items:center; font-size:13.5px; margin-bottom:10px}
+  .divider{border-top:1px dashed var(--line2); margin:10px 0}
+  .kv{display:flex; justify-content:space-between; align-items:center; gap:10px; margin:5px 0; font-size:12.5px}
+  .kv > span{color:var(--dim)}
+  .comp{display:grid; grid-template-columns:74px 1fr 40px; align-items:center; gap:8px; margin:3.5px 0; font-size:11.5px}
+  .comp label{color:var(--dim)}
+  .sizebox{display:flex; align-items:center; gap:8px; margin-top:11px; flex-wrap:wrap}
+  .sizebox input,.cfgin{background:var(--raise); border:1px solid var(--line2); color:var(--ink);
+       border-radius:8px; padding:7px 11px; font:13px "JetBrains Mono"; width:110px}
+  select.cfgin{font-family:"Vazirmatn"; width:auto}
+  .toast{position:fixed; bottom:26px; right:26px; z-index:99; background:var(--raise); color:var(--ink);
+         border:1px solid var(--up); border-radius:12px; padding:12px 20px; font-size:13px; display:none;
+         box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  .star{cursor:pointer; opacity:.35; transition:opacity .12s; font-size:12px}
+  .star.on{opacity:1}
+  .star:hover{opacity:.8}
+  body.dense tbody td{padding:5px 7px; font-size:12px}
+  body.dense .spark{display:none}
+  body.dense .bar{height:5px}
+  .lateBtn{background:var(--brass-dim) !important; color:var(--brass) !important;
+           border:1px solid rgba(232,180,76,.4) !important; cursor:pointer !important; font-weight:700 !important}
+  #eqCurve svg{vertical-align:middle}
+  @media (prefers-reduced-motion: reduce){ .led,.skel td{animation:none} .bar i{transition:none} .sheet{animation:none} }
+</style>
+</head>
+<body>
+<div id="topbar"></div>
+
+<header>
+  <div class="brand">
+    <div class="mark">⌁</div>
+    <div><h1>میز فرمان CTP</h1><div class="sub">پایش ۲۰۰ ارز برتر · مدل آماری کالیبره</div></div>
+  </div>
+  <nav class="tabs" id="tfTabs">
+    <button data-tf="15m">۱۵ دقیقه</button>
+    <button data-tf="1h" class="on">۱ ساعت</button>
+    <button data-tf="4h">۴ ساعت</button>
+    <button data-tf="1d">روزانه</button>
+  </nav>
+  <div class="hgroup">
+    <span class="pill" id="versionPill" title="نسخهٔ دقیق کد و مدل در حال اجرا">نسخه: در حال بررسی…</span>
+    <span class="pill" id="updated">در حال اتصال…</span>
+    <span class="pill" id="walletPill" title="کیف‌پول دمو">💰 موجودی: <b class="num" id="wBalance">—</b>$</span>
+    <span class="pill" id="btcPill">BTC: —</span>
+    <span class="pill" id="brokerPill">حساب: شبیه‌ساز محلی</span>
+    <button class="gear" onclick="openSettings()">⚙️ تنظیمات</button>
+  </div>
+</header>
+
+<nav class="appnav" id="appnav">
+  <button class="anav on" data-page="market" onclick="showPage('market')">📊 <span>بازار</span></button>
+  <button class="anav" data-page="portfolio" onclick="showPage('portfolio')">💼 <span>پوزیشن‌ها</span> <span class="abadge" id="navPosBadge">0</span></button>
+  <button class="anav" data-page="bot" onclick="showPage('bot')">🤖 <span>ربات</span> <span class="adot" id="navBotDot"></span></button>
+  <button class="anav" onclick="openSettings()">⚙️ <span>تنظیمات</span></button>
+</nav>
+
+<div class="pulse">
+  <span class="led" id="led"></span>
+  <span id="pulseText">موتور زنده — ۴۰ ارز × ۴ تایم‌فریم × ۱۸ ویژگی × ۶ ستاپ</span>
+  <span class="sep">|</span><span>بسته‌شدن کندل: <b class="num" id="candleCd">—</b></span>
+  <span class="sep">|</span><span>تحلیل بعدی: <b class="num" id="refreshCd">—</b></span>
+  <span class="sep">|</span><span id="engineCred">در حال خواندن اعتبارنامه مدل‌ها…</span>
+</div>
+
+<main>
+  <div id="calibBanner"></div>
+  <div id="edgeBanner"></div>
+
+  <!-- ═══ صفحهٔ ربات ═══ -->
+  <section class="page" id="page-bot">
+  <div class="botpanel" id="botPanel">
+    <div class="bp-head">
+      <div class="bp-title">🤖 <b>ربات معامله‌گرِ خودکار</b> <span class="bp-dot" id="botDot"></span> <span class="mid" id="botStateTxt">خاموش</span></div>
+      <button class="btn long" id="botToggle" onclick="botToggle()">▶ روشن کردن</button>
+    </div>
+    <div class="bp-grid">
+      <div>
+        <div class="kv"><span>ضریبِ فعالیت (۱=گزیده‌کار، ۱۰=فعال‌ترین)</span><b class="num" id="botLvlNum">5</b></div>
+        <input type="range" id="botSlider" min="1" max="10" value="5" step="1"
+               oninput="botLvlPreview(this.value)" onchange="botSet({level:Number(this.value)})">
+        <div class="note" id="botLvlDesc">—</div>
+      </div>
+      <div>
+        <div class="kv" style="margin-bottom:5px"><span>💭 الان دارد به چه فکر می‌کند</span><small class="mid num" id="botCycleInfo"></small></div>
+        <div class="bp-current" id="botCurrent">خاموش — روشنش کنید تا شروع به پایشِ بازار کند.</div>
+        <div class="bp-chips" id="botStats"></div>
+      </div>
+    </div>
+    <div class="bp-log" id="botLog"><span class="mid">جریانِ افکار اینجا ظاهر می‌شود…</span></div>
+  </div>
+  </section>
+
+  <!-- ═══ صفحهٔ بازار ═══ -->
+  <section class="page on" id="page-market">
+  <div class="stats" id="statsRow"></div>
+
+  <div class="fbar">
+    <input type="search" id="q" placeholder="جستجوی ارز — کلید /" oninput="VIEW.q=this.value.trim().toUpperCase();renderTable()">
+    <span class="fchip on" data-f="all" onclick="setFilter(this)">همه</span>
+    <span class="fchip" data-f="predict" onclick="setFilter(this)">🎯 پیش‌بینی جهت</span>
+    <span class="fchip" data-f="ok" onclick="setFilter(this)">سیگنالِ تأییدشده ✅</span>
+    <span class="fchip" data-f="sided" onclick="setFilter(this)">سیگنال‌دار</span>
+    <span class="fchip" data-f="blocked" onclick="setFilter(this)">مسدود</span>
+    <span class="fchip" data-f="waiting" onclick="setFilter(this)">منتظر</span>
+    <span class="fchip" data-f="long" onclick="setFilter(this)">لانگ ▲</span>
+    <span class="fchip" data-f="short" onclick="setFilter(this)">شورت ▼</span>
+    <span class="fchip" data-f="watch" onclick="setFilter(this)">⭐ منتخب</span>
+    <span class="fchip" id="pageChip" onclick="VIEW.showAll=!VIEW.showAll;saveView();renderTable()">۵۰ برتر</span>
+    <span class="fchip" id="densChip" onclick="toggleDensity()">فشرده</span>
+    <span class="fchip" onclick="exportCSV()">⬇ CSV</span>
+    <span class="fchip" id="notifChip" onclick="toggleNotif()">🔔 اعلان</span>
+    <span class="fchip" id="soundChip" onclick="toggleSound()">🔊 صدا</span>
+    <span class="fhint">مرتب‌سازی: کلیک روی عنوان ستون · جستجو: کلید /</span>
+  </div>
+  <div id="tfTrustNote" class="note" style="margin:-4px 2px 10px"></div>
+
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th style="text-align:right" data-k="name">ارز</th>
+        <th data-k="price">قیمت</th>
+        <th data-k="chg24h">۲۴س <span class="arrow"></span></th>
+        <th data-k="score">امتیاز <span class="arrow">▼</span></th>
+        <th>رأی‌ها</th>
+        <th>درجه / ستاپ</th>
+        <th data-k="p_up">احتمال رشد <span class="arrow"></span></th>
+        <th data-k="target_pct">هدف پیش‌بینی <span class="arrow"></span></th>
+        <th data-k="rr">R:R</th>
+        <th data-k="ev_pct">EV پس از هزینه <span class="arrow"></span></th>
+        <th data-k="p_win">وین‌ریت ستاپ</th>
+        <th>رژیم</th>
+        <th data-k="signal_score">اقدام / امتیاز سیگنال <span class="arrow"></span></th>
+      </tr></thead>
+      <tbody id="rows">
+        <tr class="skel"><td colspan="13"></td></tr>
+        <tr class="skel"><td colspan="13"></td></tr>
+        <tr class="skel"><td colspan="13"></td></tr>
+        <tr class="skel"><td colspan="13"></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note" id="liveStats" style="margin-top:10px">📡 عملکرد زنده سیگنال‌ها: در حال بارگذاری…</p>
+  </section>
+
+  <!-- ═══ صفحهٔ پوزیشن‌ها ═══ -->
+  <section class="page" id="page-portfolio">
+  <div class="wallet" id="walletHero"></div>
+
+  <h2>💼 پوزیشن‌های دمو باز <span class="pill" id="openCount">0</span> <span class="posmeta" id="posMeta"></span>
+      <button class="gear" id="closeAllBtn" style="display:none; margin-inline-start:auto; font-size:11.5px" onclick="closeAll()">بستن همه</button></h2>
+  <div class="posgrid" id="openPos"></div>
+
+  <h2>📜 تاریخچه بسته‌شده <span id="eqCurve"></span>
+      <span class="fchip" style="margin-inline-start:auto" onclick="exportHistCSV()">⬇ CSV تاریخچه</span></h2>
+  <div class="posgrid" id="closedPos"></div>
+
+  <p class="note" style="margin-top:18px">⚠️ همه پوزیشن‌ها «دمو» هستند و هیچ معامله واقعی انجام نمی‌شود. احتمال‌های ✓ از وین‌ریت واقعی ستاپ‌های مشابه در ~۳۰۰۰ کندل تاریخی ۴۰ ارز کالیبره شده‌اند؛ هیچ‌کدام قطعیت نیستند. ستاپ‌های با ارزش انتظاری منفی، خلاف بیت‌کوین یا خلاف مدل جهت‌یاب خودکار مسدود می‌شوند. مسئولیت تصمیم واقعی با شماست.</p>
+  </section>
+</main>
+
+<!-- کشوی جزئیات ارز -->
+<div class="drawer" id="drawer" onclick="if(event.target===this)closeDrawer()">
+  <div class="sheet">
+    <button class="closebtn" onclick="closeDrawer()">✕ بستن</button>
+    <h3 id="dTitle">—</h3>
+    <span class="sub" id="dSub">تحلیل هم‌زمان چهار تایم‌فریم</span>
+    <div class="tfgrid" id="dGrid"></div>
+  </div>
+</div>
+
+<!-- تنظیمات -->
+<div class="drawer" id="settings" onclick="if(event.target===this)closeSettings()">
+  <div class="sheet" style="width:min(560px,96vw)">
+    <button class="closebtn" onclick="closeSettings()">✕ بستن</button>
+    <h3>⚙️ تنظیمات</h3>
+    <p class="note">هر دو حالت حساب کاملاً دمو هستند و هیچ پول واقعی جابه‌جا نمی‌شود.</p>
+
+    <div class="kv" style="margin:14px 0 8px"><span>حالت اجرا</span>
+      <select id="cfgBroker" class="cfgin" onchange="document.getElementById('tnFields').style.display=this.value==='binance_testnet'?'block':'none'">
+        <option value="local">شبیه‌ساز محلی — بدون نیاز به کلید</option>
+        <option value="binance_testnet">تست‌نت بایننس فیوچرز — حس واقعی صرافی</option>
+      </select>
+    </div>
+    <div id="tnFields" style="display:none">
+      <div class="kv"><span>API Key</span><input id="cfgKey" class="cfgin" style="width:280px" placeholder="کلید تست‌نت"></div>
+      <div class="kv"><span>API Secret</span><input id="cfgSecret" class="cfgin" style="width:280px" type="password" placeholder="سکرت تست‌نت"></div>
+      <div class="kv"><span>اهرم (۱ تا ۱۰)</span><input id="cfgLev" class="cfgin" type="number" value="2" min="1" max="10" style="width:80px"></div>
+      <p class="note">📌 کلید رایگان: ثبت‌نام در <b>testnet.binancefuture.com</b> → تب API Key پایین صفحه. موجودی مجازی خودکار داده می‌شود؛ حدضرر/هدف سمت صرافی نگه داشته می‌شود حتی وقتی برنامه بسته است. کلیدها فقط در همین کامپیوتر ذخیره می‌شوند.</p>
+    </div>
+    <button class="btn long" style="margin-top:10px" onclick="saveConfig()">ذخیره و تست اتصال</button>
+    <div id="cfgStatus" class="note" style="margin-top:10px"></div>
+
+    <hr style="border-color:var(--line); margin:18px 0">
+    <h3>💰 پیش‌فرض حجم معامله</h3>
+    <div class="kv" style="margin-top:8px"><span>روش تعیین حجم</span>
+      <select id="tsMode" class="cfgin" onchange="saveTS({mode:this.value});toast('ذخیره شد')">
+        <option value="size">حجم ثابت دلاری</option>
+        <option value="risk">حجم از روی ریسک (پیشنهادی)</option>
+      </select></div>
+    <div class="kv"><span>حجم پیش‌فرض ($)</span><input id="tsSize" class="cfgin" type="number" min="10" style="width:100px" onchange="saveTS({size:Number(this.value)||500});toast('ذخیره شد')"></div>
+    <div class="kv"><span>ریسک هر معامله ($)</span><input id="tsRisk" class="cfgin" type="number" min="1" style="width:100px" onchange="saveTS({risk:Number(this.value)||20});toast('ذخیره شد')"></div>
+    <p class="note">در حالت «از روی ریسک»، حجم هر پوزیشن خودکار طوری محاسبه می‌شود که اگر حدضرر بخورد فقط همین مقدار ضرر کنید — استاندارد حرفه‌ای مدیریت سرمایه.</p>
+
+    <hr style="border-color:var(--line); margin:18px 0">
+    <h3>📐 کالیبراسیون آماری</h3>
+    <p class="note">احتمال‌ها و EV از وین‌ریت واقعی سیگنال‌های تاریخی ~۳۰۰۰ کندلی ۴۰ ارز برتر ساخته می‌شوند و روزی یک‌بار خودکار تازه می‌شوند.</p>
+    <div id="calStatus" class="note">—</div>
+    <button class="gear" style="margin-top:8px" onclick="rebuildCalib()">🔄 بازکالیبراسیون دستی</button>
+
+    <hr style="border-color:var(--line); margin:18px 0">
+    <h3>💰 کیف‌پول دمو</h3>
+    <div class="kv" style="margin-top:8px"><span>موجودی اولیه ($)</span><input id="wStart" class="cfgin" type="number" min="100" step="100" style="width:120px"></div>
+    <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
+      <button class="gear" onclick="setBalance()">تنظیم موجودی اولیه</button>
+      <button class="btn short" style="cursor:pointer" onclick="resetWallet(false)">♻️ ریست کامل کیف‌پول</button>
+      <button class="gear" onclick="resetWallet(true)">پاک‌کردن پوزیشن‌های باز (حفظ تاریخچه)</button>
+    </div>
+    <p class="note">ریست کامل: همهٔ پوزیشن‌ها و تاریخچه پاک و موجودی به مقدار اولیه بازمی‌گردد — از صفر شروع می‌کنید.</p>
+    <div id="wStats" class="note" style="margin-top:6px"></div>
+  </div>
+</div>
+
+<!-- مودال معامله -->
+<div class="drawer" id="tmodal" onclick="if(event.target===this)closeTModal()">
+  <div class="sheet" style="width:min(450px,95vw)">
+    <button class="closebtn" onclick="closeTModal()">✕ بستن</button>
+    <h3 id="tmTitle">پوزیشن دمو</h3>
+    <div class="kv" style="margin-top:10px"><span>جهت / ستاپ / درجه</span><b id="tmSide">—</b></div>
+    <div class="kv"><span>ورود / حدضرر / هدف</span><b class="num" id="tmLevels" style="font-size:12px">—</b></div>
+    <div class="kv"><span>احتمال برد / EV</span><b class="num" id="tmStats">—</b></div>
+    <div class="kv"><span>حجم این پوزیشن ($)</span><input id="tmSize" class="cfgin" type="number" min="10" step="10" style="width:130px" oninput="tmRisk()"></div>
+    <div class="note" id="tmRiskLine" style="margin-top:6px">—</div>
+    <div style="display:flex; gap:8px; margin-top:14px">
+      <button class="btn long" id="tmGo" onclick="tmConfirm()" style="flex:1">باز کردن پوزیشن</button>
+      <button class="gear" onclick="tmSetRisk()">حجم برای ریسک <b class="num" id="tmRiskDef">20</b>$</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════ پایه ═══════════ */
+let TF = "1h";
+const $ = s => document.querySelector(s);
+const fmt = (x, d=2) => x==null ? "—" : Number(x).toLocaleString("en-US", {maximumFractionDigits:d});
+const px = x => x==null ? "—" : Number(x).toLocaleString("en-US", {maximumFractionDigits: x>=100?2 : x>=1?4 : 6});
+const pct = x => x==null ? "—" : (x>=0?"+":"") + Number(x).toFixed(2) + "%";
+const cls = x => x>0 ? "up" : x<0 ? "dn" : "mid";
+const regimeCls = r => r==="رونددار" ? "trend" : r==="رنج" ? "range-r" : r==="پرنوسان" ? "vol" : "trans";
+const gradeHtml = (g, side, tradeable) => {
+  if(!g || !side) return `<span class="gNone">—</span>`;
+  // ستاپِ دیده‌شده بدون مجوز ورود دیگر «خرید A» خوانده نمی‌شود (ناهماهنگی قدیمی UI)
+  if(tradeable === false)
+    return `<span class="grade gMuted" title="ستاپ مشاهده شد؛ ورود مجاز نیست">ستاپ ${g}</span>`;
+  return `<span class="grade ${g==="A+"?"gAp":g==="A"?"gA":"gB"}">${side==="long"?"خرید":"فروش"} ${g}</span>`;
+};
+const scoreBar = s => {
+  const w = Math.min(Math.abs(s)*50, 50);
+  return `<div class="bar"><i style="${s>=0?"left":"right"}:50%;width:${w}%;background:${s>=0?"var(--up)":"var(--dn)"}"></i></div>`;
+};
+function toast(msg, ok=true){
+  const t = $("#toast");
+  t.textContent = msg; t.style.display = "block";
+  t.style.borderColor = ok ? "var(--up)" : "var(--dn)";
+  setTimeout(()=> t.style.display="none", 3600);
+}
+
+/* ═══════════ ساعت‌ها و نبض ═══════════ */
+const TF_MIN = {"15m":15, "1h":60, "4h":240, "1d":1440};
+let nextRefresh = Date.now() + 30000;
+function fmtCd(ms){
+  const s = Math.max(Math.floor(ms/1000), 0), h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60;
+  return (h ? h + ":" : "") + String(m).padStart(2,"0") + ":" + String(ss).padStart(2,"0");
+}
+setInterval(()=>{
+  const now = Date.now(), per = TF_MIN[TF]*60000;
+  $("#candleCd").textContent = fmtCd(per - (now % per));
+  $("#refreshCd").textContent = fmtCd(nextRefresh - now);
+  // رفرش خودکار دقیقاً بعد از بسته‌شدن کندل — لحظه‌ای که سیگنال‌ها واقعاً عوض می‌شوند
+  const bnd = Math.floor(now / per);
+  if(window._bnd != null && window._bnd !== bnd) setTimeout(loadOverview, 5000);
+  window._bnd = bnd;
+}, 1000);
+
+/* ═══════════ نوارِ بارگذاریِ بالا ═══════════ */
+const nprog = (()=>{
+  const el = () => $("#topbar"); let active = 0, timer = null;
+  function tick(){ const e = el(); if(!e) return; const cur = parseFloat(e.style.width)||0; if(cur < 90) e.style.width = (cur + (90-cur)*0.15) + "%"; }
+  return {
+    start(){ active++; const e = el(); if(!e) return; e.classList.add("on"); if(active===1){ e.style.width="8%"; timer = setInterval(tick, 300); } },
+    done(){ active = Math.max(0, active-1); if(active>0) return; const e = el(); if(!e) return; clearInterval(timer); e.style.width="100%"; setTimeout(()=>{ e.classList.remove("on"); e.style.width="0"; }, 350); }
+  };
+})();
+async function jget(url){                        // fetch با نوارِ پیشرفت
+  nprog.start();
+  try{ return await (await fetch(url)).json(); }
+  finally{ nprog.done(); }
+}
+
+/* ═══════════ بنرِ ساختِ کالیبراسیون ═══════════ */
+async function loadCalibBanner(){
+  try{
+    const d = await (await fetch("/api/calib/status")).json();
+    const el = $("#calibBanner");
+    if(d.building){
+      const pctN = d.total ? Math.round(d.done/d.total*100) : 0;
+      el.innerHTML = `<div class="calbanner">
+        <div class="top"><span>🧠 <b>هستهٔ هوش مصنوعی در حال آموزش</b> — ${d.progress||"…"}</span>
+             <span class="num">${d.done||0}/${d.total||0} · ${pctN}٪</span></div>
+        <div class="prog"><i style="width:${Math.max(pctN,3)}%"></i></div>
+        <p class="note" style="margin-top:7px">سیاست نهاییِ احتمال/بازده روی سه پنجرهٔ زمانیِ جدا طراحی و آزموده می‌شود. تا اتمام test مستقل، ورود تازه مسدود است؛ چارت و پایش پوزیشن‌های قبلی فعال می‌ماند.</p></div>`;
+      if(!window._calibTimer) window._calibTimer = setInterval(loadCalibBanner, 4000);
+    } else {
+      el.innerHTML = "";
+      if(window._calibTimer){ clearInterval(window._calibTimer); window._calibTimer = null; loadEngineCred(); loadOverview(); }
+    }
+  }catch(e){}
+}
+
+async function loadEngineCred(){
+  try{
+    const d = await (await fetch("/api/calib/status")).json();
+    if(!d.models) return;
+    const parts = Object.entries(d.models).map(([tf,m])=>{
+      const action = m.action_trusted;
+      if(!action && !m.policy_trusted) return null;
+      const n = action ? m.action_n : m.policy_n;
+      const avg = action ? m.action_avg_net_r : m.policy_avg_net_r;
+      const pf = action ? m.action_profit_factor : m.policy_profit_factor;
+      return `<b>${tf}</b>: ${action?"انتخاب عمل":"ستاپ"} ✅ n=${n}، میانگین ${fmt(avg,2)}R، PF=${fmt(pf,2)}`;
+    }).filter(Boolean);
+    const ev = Object.values(d.events||{}).reduce((a,b)=>a+b,0);
+    let macro = "";
+    try{
+      const ov = window.OV;
+      if(ov && ov.btc_macro){
+        const r = ov.btc_macro;
+        macro = ` · رژیم کلان <b>${r.regime||"—"}</b> (BTC vs SMA100 ${fmt(r.btc_vs_sma100,1)}٪)`;
+      }
+      if(ov && ov.edge_pockets && Object.keys(ov.edge_pockets).length){
+        macro += ` · جیب زنده: ${Object.keys(ov.edge_pockets).join("، ")}`;
+      }
+    }catch(e){}
+    $("#engineCred").innerHTML = parts.length
+      ? `سیاست‌های تأییدشده روی test زمانیِ دست‌نخورده: ${parts.join(" · ")} — از ${ev.toLocaleString("fa-IR")} رویداد${macro}`
+      : `حالت جیب‌زنده + متا-گیت — سیاست نهایی دادگاه را پاس نکرده · ${ev.toLocaleString("fa-IR")} رویداد${macro}`;
+  }catch(e){}
+}
+
+async function loadEdgeHealth(){
+  try{
+    const d = await (await fetch("/api/edge-health")).json();
+    const el = $("#edgeBanner");
+    if(!el || !d.ok){ if(el) el.innerHTML = ""; return; }
+    const h = d.health || {}, fq = d.fill_quality || {};
+    const pockets = h.pockets || {};
+    const keys = Object.keys(pockets);
+    const frozen = h.verdict === "frozen";
+    const chips = keys.map(k=>{
+      const p = pockets[k]||{};
+      return `<span class="chip"><b>${k}</b> · ${p.grade||"B"} · n=${p.n} · ${fmt(p.avg_r,2)}R · LCB ${fmt(p.lcb_r,2)}</span>`;
+    }).join("") || `<span class="chip">جیب فعالی نیست</span>`;
+    const fillLine = fq.n
+      ? `پر شدن صبور ۱۴روز: ${fq.filled||0}/${fq.n} (${fmt(fq.fill_rate_pct,0)}٪)`
+        + (fq.avg_slip_r!=null ? ` · لغزش میانگین ${fmt(fq.avg_slip_r,2)}R` : "")
+      : "هنوز دادهٔ پر شدن صبور ثبت نشده";
+    el.innerHTML = `<div class="edgebanner${frozen?" frozen":""}">
+      <div class="top">
+        <span>📐 <b>سلامت جیب لبه</b> — ${h.advice||"—"}</span>
+        <span class="num">${h.verdict||"—"} · اسکن: ${(d.scan_hint||[]).join("/")||"—"}</span>
+      </div>
+      <div class="chips">${chips}</div>
+      <p class="note" style="margin-top:8px;margin-bottom:0">${fillLine}</p>
+    </div>`;
+  }catch(e){}
+}
+
+async function loadVersion(){
+  try{
+    const d = await (await fetch("/api/version", {cache:"no-store"})).json();
+    const model = d.model_version==null ? "در حال ساخت" : `مدل v${d.model_version}`;
+    const state = d.model_building ? " · آموزش…" : d.model_stale ? " · کهنه" : "";
+    $("#versionPill").innerHTML = `برنامه <b>v${d.app_version}</b> · هسته <b>${d.ai_core_version}</b> · ${model}${state}`;
+    $("#versionPill").title = `انتشار ${d.release_date} — مدل موردنیاز v${d.required_model_version}`;
+  }catch(e){
+    $("#versionPill").textContent = "نسخه: نامشخص";
+  }
+}
+
+/* ═══════════ تنظیمات محلی حجم/ریسک ═══════════ */
+function TS(){ try{ return JSON.parse(localStorage.tsets||"{}"); }catch(e){ return {}; } }
+function saveTS(p){ localStorage.tsets = JSON.stringify(Object.assign(TS(), p)); }
+function defSizeFor(riskPct){
+  const s = TS();
+  if((s.mode||"size")==="risk" && riskPct) return Math.max(Math.round((s.risk||20)/riskPct*100), 10);
+  return s.size || 500;
+}
+
+/* ═══════════ جدول اصلی ═══════════ */
+let VIEW = {q:"", filter:"all", sort:"score", dir:-1, showAll:false};
+try{ Object.assign(VIEW, JSON.parse(localStorage.view||"{}"), {q:""}); }catch(e){}
+function saveView(){ localStorage.view = JSON.stringify({filter:VIEW.filter, sort:VIEW.sort, dir:VIEW.dir, showAll:VIEW.showAll, tf:TF}); }
+const WATCH = new Set(function(){ try{ return JSON.parse(localStorage.watch||"[]"); }catch(e){ return []; } }());
+function toggleWatch(sym){
+  WATCH.has(sym) ? WATCH.delete(sym) : WATCH.add(sym);
+  localStorage.watch = JSON.stringify([...WATCH]);
+  renderTable();
+}
+function toggleDensity(){
+  document.body.classList.toggle("dense");
+  localStorage.dense = document.body.classList.contains("dense") ? "1" : "";
+  $("#densChip").classList.toggle("on", document.body.classList.contains("dense"));
+}
+function toggleNotif(){
+  const on = localStorage.notif !== "1";
+  if(on && "Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
+  localStorage.notif = on ? "1" : "";
+  $("#notifChip").classList.toggle("on", on);
+  toast(on ? "اعلان سیگنال جدید فعال شد" : "اعلان خاموش شد");
+}
+function toggleSound(){
+  const on = localStorage.sound !== "1";
+  localStorage.sound = on ? "1" : "";
+  $("#soundChip").classList.toggle("on", on);
+  if(on) beep();
+  toast(on ? "صدای سیگنال فعال شد" : "صدا خاموش شد");
+}
+function beep(){
+  try{
+    const a = new (window.AudioContext||window.webkitAudioContext)();
+    const o = a.createOscillator(), g = a.createGain();
+    o.connect(g); g.connect(a.destination);
+    o.frequency.value = 880; g.gain.value = .08;
+    o.start(); o.stop(a.currentTime + .18);
+  }catch(e){}
+}
+function notifyNewSignals(coins){
+  const ok = new Set(coins.filter(c=>c.tradeable).map(c=>c.symbol));
+  if(window.prevOK){
+    const fresh = [...ok].filter(s=>!window.prevOK.has(s));
+    if(fresh.length){
+      if(localStorage.sound==="1") beep();
+      if(localStorage.notif==="1" && "Notification" in window && Notification.permission==="granted"){
+        fresh.slice(0,3).forEach(s=>{
+          const c = coins.find(x=>x.symbol===s);
+          new Notification(`سیگنال جدید: ${c.name} ${c.side==="long"?"خرید ▲":"فروش ▼"}`,
+            {body:`${c.setup_fa||""} · درجه ${c.grade||"—"} · EV-LCB ${c.ev_lcb_pct!=null?c.ev_lcb_pct+"%":"—"} · رتبه ${c.market_rank_pct!=null?c.market_rank_pct+"%":"—"} (${TF})`});
+        });
+      }
+      toast(`🔔 ${fresh.length} سیگنال جدید: ${fresh.map(s=>s.replace("USDT","")).join("، ")}`);
+    }
+  }
+  window.prevOK = ok;
+}
+function exportCSV(){
+  const rows = window.LASTROWS||[];
+  if(!rows.length){ toast("چیزی برای خروجی نیست", false); return; }
+  const head = "symbol,price,chg24h,score,z,side,setup,grade,p_up,target_pct,rr,ev_pct,ev_lcb_pct,p_win,p_win_low,p_win_high,edge_r,edge_lcb_r,market_rank_pct,n_hist,regime,status";
+  const body = rows.map(c=>[c.symbol,c.price,c.chg24h,c.score,c.z,c.side||"",c.setup_fa||"",c.grade||"",c.p_up,c.target_pct,c.rr||"",c.ev_pct??"",c.ev_lcb_pct??"",c.p_win??"",c.p_win_low??"",c.p_win_high??"",c.edge_r??"",c.edge_lcb_r??"",c.market_rank_pct??"",c.n_hist||"",c.regime,(c.status||"").replace(/,/g,"،")].join(","));
+  dl("ctp-overview-"+TF+".csv", [head].concat(body).join("\n"));
+}
+function exportHistCSV(){
+  const rows = window.CLOSED||[];
+  if(!rows.length){ toast("تاریخچه‌ای نیست", false); return; }
+  const head = "symbol,tf,side,setup,grade,entry,exit,pnl_pct,pnl_usdt,size,reason,opened_at";
+  const body = rows.map(p=>[p.symbol,p.tf,p.side,p.setup||"",p.grade||"",p.entry,p.exit_price,p.pnl_pct,p.pnl_usdt,p.size_usdt,(p.close_reason||"").replace(/,/g,"،"),p.opened_at].join(","));
+  dl("ctp-trades.csv", [head].concat(body).join("\n"));
+}
+function dl(name, text){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿"+text], {type:"text/csv;charset=utf-8"}));
+  a.download = name; a.click();
+  toast("فایل CSV دانلود شد");
+}
+function spark(vals, up){
+  if(!vals || vals.length<2) return "";
+  const min=Math.min(...vals), max=Math.max(...vals), w=62, h=18, rng=(max-min)||1;
+  const pts=vals.map((v,i)=>`${(i/(vals.length-1)*w).toFixed(1)},${(h-((v-min)/rng)*(h-2)-1).toFixed(1)}`).join(" ");
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${pts}" fill="none" stroke="${up?"var(--up)":"var(--dn)"}" stroke-width="1.3"/></svg>`;
+}
+function rowHtml(c){
+  if(c.error) return `<tr><td class="sym">${c.name}</td><td colspan="12" class="err">${c.error}</td></tr>`;
+  return `<tr onclick="openDetail('${c.symbol}')">
+    <td class="sym"><span class="star ${WATCH.has(c.symbol)?"on":""}" onclick="event.stopPropagation();toggleWatch('${c.symbol}')">⭐</span> ${c.name} <small>USDT</small></td>
+    <td class="num">${px(c.price)}<br>${spark(c.spark, c.chg24h>=0)}</td>
+    <td class="num ${cls(c.chg24h)}">${pct(c.chg24h)}</td>
+    <td>${scoreBar(c.score)}<small class="num ${cls(c.score)}">${fmt(c.score,2)} | z ${fmt(c.z,1)}</small></td>
+    <td class="num"><span class="up">▲${c.votes_bull}</span> <span class="dn">▼${c.votes_bear}</span></td>
+    <td>${gradeHtml(c.grade, c.side, c.tradeable)}${c.setup_fa?`<br><small class="mid">${c.setup_fa}</small>`:""}</td>
+    <td class="num ${c.p_up>=55?"up":c.p_up<=45?"dn":"mid"}"><b>${fmt(c.p_up,0)}٪</b>${c.p_calibrated?` <small title="کالیبره از فراوانی واقعی تاریخ">✓</small>`:""}</td>
+    <td class="num">${c.side && c.tp && c.price
+        ? (()=>{const tpP=(c.tp/c.price-1)*100; return `<span class="${cls(tpP)}">${pct(tpP)}</span><br><small class="mid">هدف معامله ${px(c.tp)}</small>`;})()
+        : `<span class="${cls(c.target_pct)}">${pct(c.target_pct)}</span>${(c.p_up>=55 && c.target_pct<0) || (c.p_up<=45 && c.target_pct>0) ? ` <small title="مدل جهت‌یاب و مسیر درِیفت اختلاف دارند — به احتمال کالیبره اعتماد کنید">⚠</small>` : ""}<br><small class="mid">${px(c.target)}</small>`}</td>
+    <td class="num">${c.rr ? fmt(c.rr,1) : "—"}</td>
+    <td class="num ${c.ev_lcb_pct!=null?cls(c.ev_lcb_pct):""}">${c.ev_pct!=null ? `<b>${pct(c.ev_pct)}</b>${c.ev_lcb_pct!=null?`<br><small title="کران پایین با لحاظ عدم‌قطعیت">LCB ${pct(c.ev_lcb_pct)}</small>`:""}` : "—"}</td>
+    <td class="num">${c.p_win!=null ? `${fmt(c.p_win,0)}٪ <small>(${c.n_hist})</small>${c.p_win_low!=null?`<br><small class="mid">${fmt(c.p_win_low,0)}–${fmt(c.p_win_high,0)}٪ · ${c.reliability||"—"}</small>`:""}` : (c.win_rate!=null ? fmt(c.win_rate,0)+"٪ ("+c.bt_n+")" : "—")}</td>
+    <td><span class="chip ${regimeCls(c.regime)}">${c.regime}</span>${c.market_rank_pct!=null?`<br><small class="mid">رتبه بازار ${fmt(c.market_rank_pct,0)}٪</small>`:""}${c.btc_align===false?`<br><small class="dn">⛔ BTC مخالف</small>`:""}</td>
+    <td>${actionCell(c)}</td>
+  </tr>`;
+}
+function actionCell(c){
+  // سیگنالِ پرمیومِ تأییدشده (از همهٔ دروازه‌ها گذشته)
+  if(c.side && c.tradeable){
+    return `<button class="btn ${c.side}" onclick="event.stopPropagation();openTradeModal('${c.symbol}')">پوزیشن ${c.side==="long"?"خرید ▲":"فروش ▼"} ✅</button>
+      ${c.signal_score!=null?`<div style="margin-top:4px" title="امتیاز سیگنال"><b class="num" style="color:${c.signal_score>=75?"var(--up)":c.signal_score>=60?"var(--brass)":c.signal_score>=45?"var(--blue)":"var(--dim)"}">${c.signal_score}</b><small class="mid">/۱۰۰ · ${c.signal_tier||""}</small></div>`:""}
+      ${c.meta_confluence!=null?`<div style="margin-top:2px"><small class="mid">متا ${fmt(c.meta_score*100,0)}٪ · تلاقی ${c.meta_confluence}${c.meta_size_mult!=null?` · حجم×${fmt(c.meta_size_mult,2)}`:""}</small></div>`:""}`;
+  }
+  // ستاپ دیده شده ولی مرجع تصمیم مجوز نداده — دیگر مثل سیگنال خرید نشان نده
+  if(c.side && !c.tradeable){
+    const short = (c.status||"مشاهده").split("—")[0].trim();
+    return `<div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+      <span class="btn gray" style="min-width:104px">مشاهده · ${c.setup_fa||"ستاپ"}</span>
+      <small class="mid" style="font-size:10px" title="${(c.status||"").replace(/"/g,"&quot;")}">${short}</small>
+    </div>`;
+  }
+  // در غیر این صورت: همیشه پیش‌بینیِ جهت را نشان بده (خواستهٔ اصلی — بالا یا پایین)
+  const p = c.p_up==null ? 50 : c.p_up;
+  const dir = p>=52 ? "long" : p<=48 ? "short" : "neutral";
+  const conf = dir==="long" ? p : dir==="short" ? 100-p : 0;
+  if(dir==="neutral") return `<button class="btn gray" title="بدونِ جهتِ روشن">خنثی</button>`;
+  const late = (c.status||"").indexOf("دیررسیده")===0;
+  const col = dir==="long" ? "var(--up)" : "var(--dn)";
+  const lbl = dir==="long" ? "لانگ ▲" : "شورت ▼";
+  const trust = window.OV && window.OV.tf_trust;
+  const weak = trust && (!trust.setup_ok || !trust.edge_ok);   // هر دو مدلِ مستقل باید معتبر باشند
+  return `<div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+    <span class="btn gray" style="min-width:104px;color:${col}">${lbl} ${fmt(conf,0)}٪</span>
+    <small class="mid" style="font-size:10px">${late?"دیررسیده · ":""}${weak?"فقط پیش‌بینی؛ مدل دوگانه تأیید نکرد":"فقط پیش‌بینی؛ شرایط ورود کامل نیست"}</small>
+  </div>`;
+}
+async function openLean(sym, side, p, tradeable){
+  const c = ((window.OV||{}).coins||[]).find(x=>x.symbol===sym);
+  const nm = sym.replace("USDT","");
+  if(tradeable){ openTradeModal(sym); return; }
+  const trust = window.OV && window.OV.tf_trust;
+  const weak = trust && (!trust.setup_ok || !trust.edge_ok);
+  let msg = `پیش‌بینیِ جهتِ ${nm} روی ${TF}: ${side==="long"?"صعودی (لانگ)":"نزولی (شورت)"} با احتمالِ ${fmt(side==="long"?p:100-p,0)}٪.\n\n`;
+  msg += tradeable ? "" : "⚠️ این یک پیش‌بینیِ جهت است ولی از دروازهٔ ارزش‌انتظاری/ریسک عبور نکرده (سیگنالِ پرمیوم نیست).\n";
+  if(weak) msg += "⚠️ مدلِ این تایم‌فریم در آزمونِ صادقانه لبه نداشت — قوی‌ترین پیش‌بینی‌ها روی تایم روزانه‌اند.\n";
+  msg += "\nپوزیشن دموی " + (side==="long"?"خرید":"فروش") + " با مسئولیت خودم باز شود؟";
+  if(!confirm(msg)) return;
+  const size = defSizeFor(c && c.risk_pct ? c.risk_pct : 2);
+  await openPos(sym, TF, size, false, false, side);   // side دستی → بک‌اند حدها را می‌سازد
+}
+function leanDir(c){ const p=c.p_up==null?50:c.p_up; return p>=52?"long":p<=48?"short":"neutral"; }
+function leanConf(c){ const p=c.p_up==null?50:c.p_up; return Math.abs(p-50); }
+function renderTable(){
+  const d = window.OV;
+  if(!d) return;
+  let rows = d.coins.filter(c=>!c.error);
+  if(VIEW.q) rows = rows.filter(c=>c.symbol.toUpperCase().includes(VIEW.q));
+  const F = VIEW.filter;
+  if(F==="ok") rows = rows.filter(c=>c.tradeable);
+  else if(F==="predict") rows = rows.filter(c=>leanDir(c)!=="neutral");   // پیش‌بینیِ جهت
+  else if(F==="sided") rows = rows.filter(c=>c.side);
+  else if(F==="blocked") rows = rows.filter(c=>c.side && !c.tradeable);
+  else if(F==="waiting") rows = rows.filter(c=>!c.side);
+  else if(F==="long") rows = rows.filter(c=>c.side==="long");
+  else if(F==="short") rows = rows.filter(c=>c.side==="short");
+  else if(F==="watch") rows = rows.filter(c=>WATCH.has(c.symbol));
+  if(F==="predict"){                       // در حالتِ پیش‌بینی: مرتب بر اساس اطمینانِ جهت (قوی‌ترین‌ها اول)
+    rows.sort((a,b)=>leanConf(b)-leanConf(a));
+  } else {
+    const k = VIEW.sort;
+    rows.sort((a,b)=>{
+      if(k==="name") return VIEW.dir * a.name.localeCompare(b.name);
+      const av = a[k]!=null ? (k==="score"?Math.abs(a[k]):a[k]) : -Infinity;
+      const bv = b[k]!=null ? (k==="score"?Math.abs(b[k]):b[k]) : -Infinity;
+      return VIEW.dir * (av - bv);
+    });
+  }
+  const total = rows.length;
+  if(!VIEW.showAll && total > 50) rows = rows.slice(0, 50);
+  $("#pageChip").textContent = VIEW.showAll ? `همه (${total})` : `۵۰ برتر از ${total}`;
+  $("#pageChip").classList.toggle("on", VIEW.showAll);
+  window.LASTROWS = rows;
+  const errs = VIEW.filter==="all" && !VIEW.q ? d.coins.filter(c=>c.error) : [];
+  $("#rows").innerHTML = rows.concat(errs).map(rowHtml).join("") ||
+    `<tr><td colspan="13" class="loading">هیچ ارزی با این فیلتر پیدا نشد — فیلتر «همه» را انتخاب کنید</td></tr>`;
+  document.querySelectorAll("thead th[data-k]").forEach(th=>{
+    const ar = th.querySelector(".arrow");
+    if(ar) ar.textContent = th.dataset.k===VIEW.sort ? (VIEW.dir===-1?"▼":"▲") : "";
+  });
+}
+function setFilter(el){
+  document.querySelectorAll(".fchip[data-f]").forEach(x=>x.classList.remove("on"));
+  el.classList.add("on");
+  VIEW.filter = el.dataset.f;
+  saveView();
+  renderTable();
+}
+function renderStats(d){
+  const ok = d.coins.filter(c=>c.tradeable);
+  const sided = d.coins.filter(c=>c.side);
+  const longs = sided.filter(c=>c.side==="long").length, shorts = sided.length-longs;
+  const avgEv = ok.length ? ok.reduce((s,c)=>s+(c.ev_pct||0),0)/ok.length : null;
+  const ready = d.coins.filter(c=>!c.side && (c.readiness||0)>=80).length;
+  const ls = window.LSTATS, pt = window.PT;
+  $("#statsRow").innerHTML = `
+    <div class="stat"><div class="lbl">سیگنال قابل معامله (${TF})</div><div class="val ${ok.length?"up":""}">${ok.length} <small>از ${d.coins.length} ارز</small></div></div>
+    <div class="stat"><div class="lbl">جهت سیگنال‌ها</div><div class="val"><span class="up">▲${longs}</span> / <span class="dn">▼${shorts}</span> <small>· ${ready} ارز آماده >۸۰٪</small></div></div>
+    <div class="stat"><div class="lbl">میانگین EV سیگنال‌های مجاز</div><div class="val ${avgEv>0?"up":avgEv<0?"dn":""}">${avgEv!=null?pct(avgEv):"—"}</div></div>
+    <div class="stat"><div class="lbl">روند بیت‌کوین (${TF})</div><div class="val ${d.btc?(d.btc.dir==="صعودی"?"up":d.btc.dir==="نزولی"?"dn":"mid"):""}">${d.btc?d.btc.dir:"—"}</div></div>
+    <div class="stat"><div class="lbl">عملکرد زنده ۳۰ روز</div><div class="val">${ls&&ls.n?`${fmt(ls.win_rate,0)}٪ <small>از ${ls.n} سیگنال</small>`:"—"}</div></div>
+    <div class="stat"><div class="lbl">سود/زیان دمو</div><div class="val">${pt?`<span class="${cls(pt.open)}">${fmt(pt.open,1)}$</span> <small>باز</small> · <span class="${cls(pt.closed)}">${fmt(pt.closed,1)}$</span> <small>بسته</small>`:"—"}</div></div>`;
+}
+async function loadOverview(){
+  $("#led").classList.add("busy"); nprog.start();
+  $("#pulseText").textContent = `در حال تحلیل ۲۰۰ ارز (${TF})…`;
+  try{
+    const r = await fetch(`/api/overview?tf=${TF}`);
+    const d = await r.json();
+    if(d.net_error){
+      $("#rows").innerHTML = `<tr><td colspan="13" class="loading">⚠️ ${d.net_error}</td></tr>`;
+      $("#pulseText").textContent = "قطع اتصال به صرافی — تلاش مجدد خودکار";
+      $("#led").classList.remove("busy"); nprog.done(); nextRefresh = Date.now()+60000;
+      return;
+    }
+    window.OV = d;
+    notifyNewSignals(d.coins);
+    $("#updated").textContent = "به‌روزرسانی: " + new Date(d.updated*1000).toLocaleTimeString("fa-IR");
+    if(d.btc) $("#btcPill").innerHTML = `BTC: <b class="${d.btc.dir==="صعودی"?"up":d.btc.dir==="نزولی"?"dn":"mid"}">${d.btc.dir}</b>` +
+      (d.btc.dir==="نزولی" ? ` <small class="dn">— اولویت با شورت</small>` : d.btc.dir==="صعودی" ? ` <small class="up">— اولویت با لانگ</small>` : "");
+    if(d.calib && d.calib.building) $("#updated").textContent += ` · کالیبراسیون در حال ساخت`;
+    renderTable();
+    renderStats(d);
+    const tr = d.tf_trust || {}, tn = $("#tfTrustNote");
+    if(tn){
+      if(tr.policy_ok)
+        tn.innerHTML = `✅ سیاست نهاییِ <b>${TF}</b> (${tr.policy_type==="action"?"انتخاب مستقیم لانگ/شورت/عدم معامله":"فیلتر ستاپ"}) روی test زمانیِ دست‌نخورده پاس شده: n=${tr.policy_n}، میانگین خالص ${fmt(tr.policy_avg_net_r,2)}R، کران پایین ${fmt(tr.policy_lcb_net_r,2)}R، PF=${fmt(tr.policy_profit_factor,2)}.`;
+      else
+        tn.innerHTML = `⚠️ سیاست نهاییِ تایم‌فریم <b>${TF}</b> هنوز test زمانیِ مستقل را پاس نکرده؛ پیش‌بینی جهت نمایش داده می‌شود اما مجوز ورود نیست.`;
+    }
+  }catch(e){ $("#rows").innerHTML = `<tr><td colspan="13" class="err loading">خطا در دریافت داده: ${e}</td></tr>`; }
+  $("#led").classList.remove("busy"); nprog.done();
+  $("#pulseText").textContent = "موتور زنده — ۲۰۰ ارز × ۴ تایم‌فریم × ۲۴ ویژگی × سیاست نهاییِ آزموده‌شده";
+  nextRefresh = Date.now() + 60000;
+  loadLiveStats().then(()=>{ if(window.OV) renderStats(window.OV); });
+}
+async function loadLiveStats(){
+  try{
+    const d = await (await fetch(`/api/live-stats?tf=${TF}`)).json();
+    window.LSTATS = d.all;
+    const s = d.stats, a = d.all;
+    const one = (x,l) => x.n ? `${l}: <b>${x.win_rate}٪</b> برد از ${x.n} سیگنال (میانگین ${x.avg_r>=0?"+":""}${x.avg_r}R)` : `${l}: هنوز سیگنال داوری‌شده‌ای نیست`;
+    const susp = d.suspended && Object.keys(d.suspended).length
+      ? ` · <b class="dn">⏸ ستاپ‌های معلق (بازده خالص ضعیف): ${Object.entries(d.suspended).map(([k,v])=>`${k} (${fmt(v,2)}R)`).join("، ")}</b>` : "";
+    $("#liveStats").innerHTML = `📡 عملکرد زندهٔ سیگنال‌های نمایش‌داده‌شده (۳۰ روز اخیر) — ${one(s, "تایم‌فریم "+TF)} · ${one(a, "همه")} · در انتظار داوری: ${a.pending}${susp}`
+      + (d.drift ? `<br><b class="dn">${d.drift}</b>` : "");
+  }catch(e){ $("#liveStats").textContent = "📡 عملکرد زنده: —"; }
+}
+
+/* ═══════════ کشوی جزئیات ارز ═══════════ */
+async function openDetail(sym){
+  $("#drawer").classList.add("open");
+  $("#dTitle").textContent = sym.replace("USDT","") + " / USDT";
+  $("#dGrid").innerHTML = `<div class="loading">🧠 در حال تحلیل چهار تایم‌فریم…<div class="prog" style="max-width:240px;margin:12px auto 0"><i style="width:100%"></i></div></div>`;
+  const d = await jget(`/api/coin/${sym}`);
+  const tfName = {"15m":"۱۵ دقیقه","1h":"۱ ساعت","4h":"۴ ساعت","1d":"روزانه"};
+  $("#dGrid").innerHTML = Object.entries(d.tfs).map(([tf,a]) => {
+    if(a.error) return `<div class="tfcard"><h4>${tfName[tf]}</h4><div class="err">${a.error}</div></div>`;
+    const t = a.trade, f = a.forecast;
+    const compBar = (name,v)=>{
+      const w = Math.min(Math.abs(v)*50,50);
+      return `<div class="comp"><label>${name}</label><div class="bar" style="width:100%"><i style="${v>=0?"left":"right"}:50%;width:${w}%;background:${v>=0?"var(--up)":"var(--dn)"}"></i></div><b class="num ${cls(v)}">${fmt(v,2)}</b></div>`;
+    };
+    const dur = m => m>=1440 ? fmt(m/1440,1)+" روز" : m>=60 ? fmt(m/60,1)+" ساعت" : m+" دقیقه";
+    return `<div class="tfcard">
+      <h4><span>${tfName[tf]} <span class="chip ${regimeCls(a.regime)}">${a.regime}</span></span>
+          <span>${gradeHtml(t.grade, t.side, t.tradeable!==false && t.viable)}</span></h4>
+      ${Object.entries(a.components).map(([k,v])=>compBar(k,v)).join("")}
+      <div class="divider"></div>
+      <div class="kv"><span>احتمال رشد تا ${f.horizon_bars} کندل ${a.p_calibrated?"(کالیبره ✓)":"(برآورد مدل)"}</span><b class="num ${a.p_up>=55?"up":a.p_up<=45?"dn":"mid"}">${fmt(a.p_up,0)}٪</b></div>
+      ${t.p_win!=null ? `<div class="kv"><span>${t.tradeable?"وین‌ریت ستاپ‌های مشابه تاریخی":"آمار تشخیصی (مجوز ورود نیست)"}</span><b class="num">${fmt(t.p_win,0)}٪ از ${t.n_hist} نمونه — اتکا: ${t.reliability}</b></div>
+      ${t.p_win_low!=null?`<div class="kv"><span>بازهٔ احتمال ۹۰٪</span><b class="num">${fmt(t.p_win_low,0)}٪ تا ${fmt(t.p_win_high,0)}٪</b></div>`:""}
+      <div class="kv"><span>EV مرکزی / کران پایین پس از هزینه</span><b class="num ${cls(t.ev_lcb_pct)}">${pct(t.ev_pct)} / ${pct(t.ev_lcb_pct)}</b></div>
+      ${t.edge_r!=null?`<div class="kv"><span>مدل مستقلِ بازده خالص</span><b class="num ${cls(t.edge_lcb_r)}">${fmt(t.edge_r,2)}R / LCB ${fmt(t.edge_lcb_r,2)}R</b></div>`:""}` : ""}
+      <div class="kv"><span>هدف پیش‌بینی (${dur(f.horizon_min)})</span><b class="num ${cls(f.target_pct)}">${px(f.target)} (${pct(f.target_pct)})</b></div>
+      <div class="kv"><span>بازه محتمل</span><b class="num">${px(f.cone_lo)} ← ${px(f.cone_hi)}</b></div>
+      <div class="kv"><span>وین‌ریت بک‌تست همین نماد</span><b class="num">${a.backtest.win_rate!=null?fmt(a.backtest.win_rate,0)+"٪ از "+a.backtest.n+" سیگنال":"داده کم"}</b></div>
+      <div class="divider"></div>
+      ${t.side ? `
+        <div class="kv"><span>${t.tradeable?"پیشنهاد معامله":"ستاپ مشاهده‌شده"}</span><b class="${t.tradeable?(t.side==="long"?"up":"dn"):"mid"}">${t.tradeable
+          ? ((t.side==="long"?"خرید (لانگ)":"فروش (شورت)") + " — درجه " + t.grade + " · " + (t.setup_fa||""))
+          : ((t.setup_fa||"ستاپ") + " · درجه ساختاری " + t.grade + " · " + (t.side==="long"?"سمت خرید":"سمت فروش") + " (ورود مجاز نیست)")
+        }</b></div>
+        ${t.signal_score!=null?`<div class="kv"><span>امتیاز نهایی سیگنال</span><b class="num" style="color:${t.signal_score>=75?"var(--up)":t.signal_score>=60?"var(--brass)":t.signal_score>=45?"var(--blue)":"var(--dim)"}">${t.signal_score}/۱۰۰ — ${t.signal_tier}</b></div>`
+          : `<div class="kv"><span>امتیاز نهایی سیگنال</span><b class="mid">— · بدون مجوز ورود محاسبه نمی‌شود</b></div>`}
+        ${t.meta_score!=null?`<div class="kv"><span>متا-گیت (رژیم/فاندینگ/OI)</span><b class="num">${fmt(t.meta_score*100,0)}٪ · تلاقی ${t.meta_confluence??"—"} · حجم×${fmt(t.meta_size_mult,2)} · نشست ${t.meta_session||"—"}</b></div>`:""}
+        ${t.meta_reasons&&t.meta_reasons.length?`<div class="kv"><span>تأییدهای متا</span><b class="mid">${t.meta_reasons.join(" · ")}</b></div>`:""}
+        ${t.oi_z!=null?`<div class="kv"><span>Open Interest z</span><b class="num ${cls(t.oi_z)}">${fmt(t.oi_z,2)}</b></div>`:""}
+        <div class="kv"><span>ورود / حدضرر / هدف</span><b class="num">${px(t.entry)} / ${px(t.sl)} / ${px(t.tp)}</b></div>
+        <div class="kv"><span>ریسک → سود</span><b class="num">−${fmt(t.risk_pct,2)}٪ → +${fmt(t.gain_pct,2)}٪ (R:R ${fmt(t.rr,1)})</b></div>
+        <div class="kv"><span>خروج زمانی</span><b>${dur(t.time_stop_min)} بعد (اگر هدف/حدضرر نخورد)</b></div>
+        ${t.tradeable!==false && t.viable
+          ? `<div class="sizebox"><input type="number" id="sz_${tf}" value="${defSizeFor(t.risk_pct)}" min="10" oninput="updRisk('${tf}',${t.risk_pct})"> دلار
+             <button class="btn ${t.side}" onclick="openPos('${sym}','${tf}', document.getElementById('sz_${tf}').value)">باز کردن پوزیشن دمو</button></div>
+             <div class="note" id="risk_${tf}">⚠️ اگر حدضرر بخورد: <b class="num dn">−${fmt(defSizeFor(t.risk_pct)*t.risk_pct/100,1)}$</b> (فاصله حدضرر ${fmt(t.risk_pct,1)}٪)
+             · <a href="#" onclick="event.preventDefault();setRiskSize('${tf}',${t.risk_pct})">تنظیم حجم برای ریسک ~${fmt(TS().risk||20,0)}$</a></div>`
+          : `<div class="err" style="margin-top:8px">${t.status}</div>`}
+      ` : `<div class="kv"><span>وضعیت</span><b>${t.status}</b></div>
+           <div class="note err">${(t.reasons||[]).join("، ")}</div>`}
+    </div>`;
+  }).join("");
+}
+function closeDrawer(){ $("#drawer").classList.remove("open"); }
+function updRisk(tf, riskPct){
+  const v = Number(document.getElementById("sz_"+tf).value || 0);
+  const el = document.getElementById("risk_"+tf);
+  if(el) el.querySelector("b").textContent = "−" + fmt(v*riskPct/100, 1) + "$";
+}
+function setRiskSize(tf, riskPct){
+  document.getElementById("sz_"+tf).value = Math.max(Math.round((TS().risk||20)/riskPct*100), 10);
+  updRisk(tf, riskPct);
+}
+async function openPos(symbol, tf, size, force, forceRisk, side){
+  try{
+    const body = {symbol, tf, size_usdt: Number(size||500), force: force===true, force_risk: forceRisk===true};
+    if(side) body.side = side;                        // جهتِ دستی (پیش‌بینیِ جهت)
+    const r = await fetch("/api/positions", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if(!r.ok){
+      const m = String(d.detail||"خطا");
+      if(m.indexOf("DRIFT|")===0 && confirm(m.split("|")[2] + "\n\nبا مسئولیت خودم باز کن؟"))
+        return openPos(symbol, tf, size, true, forceRisk, side);
+      if(m.indexOf("HEAT|")===0 && confirm("⚠️ هشدار ریسک پرتفوی:\n\n" + m.split("|")[2] + "\n\nبا مسئولیت خودم باز کن؟"))
+        return openPos(symbol, tf, size, force, true, side);
+      if(m.indexOf("WEAK|")===0 && confirm("🛑 هشدار آماری:\n\n" + m.split("|")[2] +
+          "\n\nتجربهٔ ۵ ژوئیه: از ۱۳ معاملهٔ مشابه، ۱۰تا باخت. واقعاً باز کنم؟"))
+        return openPos(symbol, tf, size, true, forceRisk, side);
+      throw new Error((m.indexOf("DRIFT|")===0||m.indexOf("HEAT|")===0||m.indexOf("WEAK|")===0) ? "لغو شد" : m);
+    }
+    saveTS({size: Number(size||500)});
+    toast(`✅ پوزیشن دمو ${d.position.side==="long"?"خرید":"فروش"} ${symbol.replace("USDT","")} با ${fmt(Number(size),0)}$ باز شد`);
+    loadPositions();
+  }catch(e){ toast("❌ " + e.message, false); }
+}
+
+/* ═══════════ مودال معامله ═══════════ */
+let TM = null;
+function openTradeModal(sym){
+  const c = ((window.OV||{}).coins||[]).find(x=>x.symbol===sym);
+  if(!c || !c.side){ toast("ستاپ فعالی برای این ارز نیست", false); return; }
+  TM = c;
+  $("#tmTitle").textContent = `پوزیشن دمو — ${c.name} / USDT (${TF})`;
+  $("#tmSide").innerHTML = `<span class="${c.side==="long"?"up":"dn"}">${c.side==="long"?"خرید ▲":"فروش ▼"}</span> · ${c.setup_fa||"—"} · درجه ${c.grade||"—"}`;
+  $("#tmLevels").textContent = `${px(c.entry)} / ${px(c.sl)} / ${px(c.tp)}`;
+  $("#tmStats").innerHTML = `${c.p_win!=null?fmt(c.p_win,0)+"٪ برد":"—"} · EV ${c.ev_pct!=null?pct(c.ev_pct):"—"}` +
+    (c.signal_score!=null?` · امتیاز <b style="color:${c.signal_score>=75?"var(--up)":c.signal_score>=60?"var(--brass)":"var(--blue)"}">${c.signal_score}/۱۰۰ (${c.signal_tier})</b>`:"");
+  $("#tmRiskDef").textContent = fmt(TS().risk||20, 0);
+  $("#tmSize").value = defSizeFor(c.risk_pct);
+  $("#tmGo").className = `btn ${c.side}`;
+  tmRisk();
+  $("#tmodal").classList.add("open");
+}
+function closeTModal(){ $("#tmodal").classList.remove("open"); TM = null; }
+function tmRisk(){
+  if(!TM) return;
+  const v = Number($("#tmSize").value||0);
+  const lose = v * (TM.risk_pct||0) / 100;
+  const win = TM.tp && TM.entry ? v * Math.abs((TM.tp-TM.entry)/TM.entry) : null;
+  $("#tmRiskLine").innerHTML = `اگر حدضرر بخورد: <b class="num dn">−${fmt(lose,1)}$</b>` +
+    (win!=null ? ` · اگر به هدف برسد: <b class="num up">+${fmt(win,1)}$</b>` : "") +
+    ` · <small class="mid">پیش‌فرض‌ها در ⚙️ قابل تغییرند</small>`;
+}
+function tmSetRisk(){
+  if(!TM) return;
+  $("#tmSize").value = Math.max(Math.round((TS().risk||20)/(TM.risk_pct||1)*100), 10);
+  tmRisk();
+}
+async function tmConfirm(){
+  if(!TM) return;
+  const size = Number($("#tmSize").value||0);
+  if(size < 10){ toast("حجم حداقل ۱۰$ است", false); return; }
+  saveTS({size});
+  try{
+    const r = await fetch("/api/positions", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({symbol: TM.symbol, tf: TF, size_usdt: size, force: TM._force===true, force_risk: TM._forceRisk===true})});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail||"خطا");
+    toast(`✅ ${TM.name} — پوزیشن ${d.position.side==="long"?"خرید":"فروش"} با ${fmt(size,0)}$ باز شد`);
+    closeTModal(); loadPositions();
+  }catch(e){
+    const m = String(e.message);
+    if(m.indexOf("DRIFT|")===0){
+      const parts = m.split("|");
+      TM._force = true;
+      $("#tmGo").textContent = `تأیید ورود با وجود حرکت ${parts[1]}٪ ⚠️`;
+      $("#tmRiskLine").innerHTML = `<span class="err">${parts[2]}</span>`;
+      toast("⚠️ برای ورود آگاهانه یک‌بار دیگر روی دکمه بزنید", false);
+    } else if(m.indexOf("HEAT|")===0){
+      TM._forceRisk = true;
+      $("#tmGo").textContent = "تأیید با وجود هشدار ریسک ⚠️";
+      $("#tmRiskLine").innerHTML = `<span class="err">${m.split("|")[2]}</span>`;
+      toast("⚠️ هشدار ریسک پرتفوی — برای تأیید آگاهانه دوباره بزنید", false);
+    } else if(m.indexOf("WEAK|")===0){
+      TM._force = true;
+      $("#tmGo").textContent = "باز کردن با وجود آمارِ مخالف 🛑";
+      $("#tmRiskLine").innerHTML = `<span class="err">🛑 ${m.split("|")[2]}</span>`;
+      toast("🛑 مدل علیه این معامله است — برای اصرار دوباره بزنید", false);
+    } else toast("❌ " + m, false);
+  }
+}
+
+/* ═══════════ پوزیشن‌ها ═══════════ */
+function posCard(p, open){
+  const side = p.side==="long" ? `<span class="up">خرید ▲</span>` : `<span class="dn">فروش ▼</span>`;
+  const modeChip = (p.mode==="testnet" ? ` <span class="chip trend">تست‌نت</span>` : "")
+                 + (p.opened_by==="bot" ? ` <span class="chip" style="background:rgba(88,166,255,.12);color:var(--blue)">🤖 ربات</span>` : "");
+  const rp = Math.abs(p.entry-p.sl)/Math.max(p.entry,1e-12)*100;
+  let range = "";
+  if(open && p.tp!==p.sl){
+    const posn = Math.min(Math.max(((p.last_price!=null?p.last_price:p.entry)-p.sl)/(p.tp-p.sl),0),1)*100;
+    const entn = Math.min(Math.max((p.entry-p.sl)/(p.tp-p.sl),0),1)*100;
+    range = `<div class="range"><span class="re" style="left:${entn.toFixed(1)}%"></span><i style="left:${posn.toFixed(1)}%"></i></div>
+             <div class="rlbl"><span>SL ${px(p.sl)}</span><span>TP ${px(p.tp)}</span></div>`;
+  }
+  // 🧭 توصیهٔ مشاورِ پوزیشن (فقط پوزیشن‌های باز)
+  let adv = "";
+  if(open && p.advice && p.advice.action){
+    const a = p.advice;
+    const col  = {close_now:"var(--dn)", lock_profit:"#e3b341", move_be:"var(--blue)", time_exit:"var(--mid)", hold:"var(--mid)"}[a.action] || "var(--mid)";
+    const icon = {close_now:"⛔", lock_profit:"💰", move_be:"🛡️", time_exit:"⏳", hold:"🧭"}[a.action] || "🧭";
+    const beBtn = (a.action==="move_be" && p.mode!=="testnet")
+      ? ` <button class="btn mini" style="margin-top:4px" onclick="moveBE('${p.id}')">🛡️ انجام بده</button>` : "";
+    adv = `<div class="advice ${a.urgency>=2?"hot":""}" style="border-inline-start-color:${col}">
+      <b style="color:${col}">${icon} ${a.title}</b>
+      <small class="mid">${(a.reasons||[]).join(" · ")}</small>${beBtn}</div>`;
+  }
+  return `<div class="pos">
+    <div class="row"><b>${p.symbol.replace("USDT","")} <small class="mid">${p.tf}</small>${modeChip}</b>${side}</div>
+    <div class="row"><span>ورود → ${open?"قیمت فعلی":"خروج"}</span><b class="num">${px(p.entry)} → ${px(open?p.last_price:p.exit_price)}</b></div>
+    ${range}
+    <div class="row"><span>سود/زیان</span><b class="num ${cls(p.pnl_pct)}">${pct(p.pnl_pct)} (${fmt(p.pnl_usdt,2)}$)</b></div>
+    ${adv}
+    ${open ? `<div class="row"><span>حجم / حداکثر ضرر</span><b class="num">${fmt(p.size_usdt,0)}$ / <span class="dn">−${fmt(p.size_usdt*rp/100,1)}$</span></b></div>
+              <button class="btn close" onclick="closePos('${p.id}')">بستن دستی</button>`
+           : `<div class="row"><span>دلیل خروج</span><b>${p.close_reason}</b></div>`}
+  </div>`;
+}
+async function loadPositions(){
+  try{
+    const d = await (await fetch("/api/positions")).json();
+    $("#openCount").textContent = d.open.length;
+    $("#navPosBadge").textContent = d.open.length;
+    window.PT = {open: d.total_open_pnl, closed: d.total_closed_pnl};
+    if(d.wallet) renderWallet(d.wallet);
+    const expo = d.open.reduce((s,p)=>s+p.size_usdt,0);
+    const riskSum = d.open.reduce((s,p)=>s+p.size_usdt*Math.abs(p.entry-p.sl)/Math.max(p.entry,1e-12),0);
+    $("#posMeta").innerHTML = (d.open.length ? `· در معرض بازار: <b class="num">${fmt(expo,0)}$</b> · جمع ریسک حدضررها: <b class="num dn">−${fmt(riskSum,0)}$</b>` : "")
+      + (d.portfolio_note ? `<br><b class="dn">${d.portfolio_note}</b>` : "");
+    $("#closeAllBtn").style.display = d.open.length >= 2 ? "" : "none";
+    window.CLOSED = d.closed;
+    $("#openPos").innerHTML = d.open.map(p=>posCard(p,true)).join("") || `<div class="note">پوزیشن بازی نیست — از جدول بالا یکی از سیگنال‌های ✅ را انتخاب کنید.</div>`;
+    $("#closedPos").innerHTML = d.closed.slice(0,12).map(p=>posCard(p,false)).join("") || `<div class="note">هنوز معامله بسته‌شده‌ای ثبت نشده.</div>`;
+    // منحنی سرمایه از معاملات بسته‌شده (قدیمی → جدید)
+    const seq = [...d.closed].reverse();
+    if(seq.length >= 2){
+      let cum = 0; const pts = [0].concat(seq.map(p=>cum += p.pnl_usdt));
+      const mn = Math.min(...pts), mx = Math.max(...pts), w = 130, h = 26, rng = (mx-mn)||1;
+      const line = pts.map((v,i)=>`${(i/(pts.length-1)*w).toFixed(1)},${(h-((v-mn)/rng)*(h-4)-2).toFixed(1)}`).join(" ");
+      const col = cum>=0 ? "var(--up)" : "var(--dn)";
+      $("#eqCurve").innerHTML = `<svg width="${w}" height="${h}"><polyline points="${line}" fill="none" stroke="${col}" stroke-width="1.6"/></svg>
+        <small class="num ${cls(cum)}" style="margin-inline-start:4px">${cum>=0?"+":""}${fmt(cum,1)}$</small>`;
+    } else $("#eqCurve").innerHTML = "";
+  }catch(e){}
+}
+function renderWallet(w){
+  window.WALLET = w;
+  $("#wBalance").textContent = fmt(w.balance,0);
+  const eqCls = w.equity>=w.start ? "up" : "dn";
+  const openC = w.open_pnl>=0?"up":"dn";
+  $("#walletHero").innerHTML = `
+    <div class="hero">
+      <div class="lbl">ارزش کل کیف‌پول (موجودی + سود باز)</div>
+      <div class="eq ${eqCls}">${fmt(w.equity,0)} <small style="font-size:14px;color:var(--dim)">USDT</small></div>
+      <div class="ret"><span class="${w.return_pct>=0?"up":"dn"}">${pct(w.return_pct)}</span> از موجودی اولیه ${fmt(w.start,0)}$
+           · سود باز <span class="${openC}">${w.open_pnl>=0?"+":""}${fmt(w.open_pnl,1)}$</span></div>
+    </div>
+    <div class="wc"><div class="lbl">موجودی محقق‌شده</div><div class="v ${w.realized>=0?"up":"dn"}">${w.realized>=0?"+":""}${fmt(w.realized,0)}$</div></div>
+    <div class="wc"><div class="lbl">وین‌ریت معاملات</div><div class="v">${w.win_rate!=null?fmt(w.win_rate,0)+"٪":"—"} <small>${w.wins}/${w.trades}</small></div></div>
+    <div class="wc"><div class="lbl">ضریب سود (PF)</div><div class="v ${w.profit_factor>=1?"up":w.profit_factor!=null?"dn":""}">${w.profit_factor!=null?fmt(w.profit_factor,2):"—"}</div></div>
+    <div class="wc"><div class="lbl">بیشترین افت سرمایه</div><div class="v ${w.max_drawdown>0?"dn":""}">${w.max_drawdown>0?"−"+fmt(w.max_drawdown,0)+"$":"۰"} <small>${w.max_drawdown_pct>0?fmt(w.max_drawdown_pct,1)+"٪":""}</small></div></div>
+    <div class="wc"><div class="lbl">پوزیشن باز</div><div class="v">${w.open_count}</div></div>`;
+  if($("#wStart") && document.activeElement !== $("#wStart")) $("#wStart").value = w.start;
+  if($("#wStats")) $("#wStats").innerHTML = `موجودی: <b class="num">${fmt(w.balance,0)}$</b> · معاملات: ${w.trades} · وین‌ریت: ${w.win_rate!=null?fmt(w.win_rate,0)+"٪":"—"} · افت سرمایه: −${fmt(w.max_drawdown,0)}$`;
+}
+async function setBalance(){
+  const v = Number($("#wStart").value||0);
+  if(v < 100){ toast("موجودی اولیه حداقل ۱۰۰$", false); return; }
+  const r = await fetch("/api/wallet/balance", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({start_balance:v})});
+  const d = await r.json();
+  if(r.ok){ renderWallet(d.wallet); toast("موجودی اولیه تنظیم شد"); } else toast("❌ "+(d.detail||"خطا"), false);
+}
+async function resetWallet(keepHistory){
+  const msg = keepHistory ? "همهٔ پوزیشن‌های باز بسته و پاک شوند؟ (تاریخچه می‌ماند)" : "کیف‌پول از صفر ریست شود؟ همهٔ پوزیشن‌ها و تاریخچه پاک می‌شوند.";
+  if(!confirm(msg)) return;
+  const v = Number($("#wStart").value||0) || undefined;
+  const r = await fetch("/api/wallet/reset", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({start_balance:v, keep_history:keepHistory})});
+  const d = await r.json();
+  if(r.ok){ renderWallet(d.wallet); loadPositions(); toast(keepHistory?"پوزیشن‌های باز پاک شدند":"✅ کیف‌پول از صفر ریست شد"); }
+  else toast("❌ خطا در ریست", false);
+}
+async function closeAll(){
+  const d = await (await fetch("/api/positions")).json();
+  if(!d.open.length) return;
+  if(!confirm(`هر ${d.open.length} پوزیشن باز بسته شود؟`)) return;
+  for(const p of d.open){ try{ await fetch(`/api/positions/${p.id}/close`, {method:"POST"}); }catch(e){} }
+  toast("همه پوزیشن‌ها بسته شدند");
+  loadPositions();
+}
+/* ═══════════ ناوبریِ اپ ═══════════ */
+function showPage(name){
+  document.querySelectorAll(".page").forEach(p=>p.classList.toggle("on", p.id === "page-"+name));
+  document.querySelectorAll(".anav[data-page]").forEach(b=>b.classList.toggle("on", b.dataset.page === name));
+  try{ localStorage.setItem("ctp_page", name); }catch(e){}
+}
+try{
+  const savedPage = localStorage.getItem("ctp_page");
+  if(savedPage && document.getElementById("page-"+savedPage)) showPage(savedPage);
+}catch(e){}
+
+async function moveBE(id){
+  const r = await fetch(`/api/positions/${id}/breakeven`, {method:"POST"});
+  if(r.ok){ toast("🛡️ حدضرر به سربه‌سر منتقل شد — این معامله دیگر ضرر نمی‌شود"); loadPositions(); }
+  else { const d = await r.json().catch(()=>({})); toast("❌ " + (d.detail||"خطا"), false); }
+}
+async function closePos(id){
+  const r = await fetch(`/api/positions/${id}/close`, {method:"POST"});
+  if(r.ok){ toast("پوزیشن بسته شد"); loadPositions(); }
+  else { const d = await r.json(); toast("❌ " + (d.detail||"خطا"), false); }
+}
+
+/* ═══════════ تنظیمات حساب/کالیبراسیون ═══════════ */
+function openSettings(){
+  $("#settings").classList.add("open");
+  loadConfig(true); loadCalib();
+  const s = TS();
+  $("#tsMode").value = s.mode||"size";
+  $("#tsSize").value = s.size||500;
+  $("#tsRisk").value = s.risk||20;
+}
+function closeSettings(){ $("#settings").classList.remove("open"); }
+async function loadConfig(fillForm){
+  try{
+    const d = await (await fetch("/api/config")).json();
+    if(d.broker === "binance_testnet"){
+      $("#brokerPill").innerHTML = d.connected
+        ? `حساب: <b>تست‌نت بایننس</b> — <b class="num">${fmt(d.balance,0)}</b> USDT`
+        : `حساب: تست‌نت — <span class="err">قطع</span>`;
+    } else {
+      $("#brokerPill").textContent = "حساب: شبیه‌ساز محلی";
+    }
+    if(fillForm){
+      $("#cfgBroker").value = d.broker;
+      $("#tnFields").style.display = d.broker==="binance_testnet" ? "block" : "none";
+      $("#cfgLev").value = d.leverage;
+      $("#cfgStatus").textContent = d.has_keys ? (d.connected ? `✅ متصل — موجودی ${fmt(d.balance,0)} USDT` : "") : "";
+    }
+  }catch(e){}
+}
+async function saveConfig(){
+  $("#cfgStatus").textContent = "در حال تست اتصال…";
+  try{
+    const body = {broker: $("#cfgBroker").value, api_key: $("#cfgKey").value,
+                  api_secret: $("#cfgSecret").value, leverage: Number($("#cfgLev").value||2)};
+    const r = await fetch("/api/config", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail || "خطا");
+    $("#cfgStatus").innerHTML = d.connected
+      ? `✅ متصل شد — موجودی دمو: <b class="num">${fmt(d.balance,0)}</b> USDT`
+      : "✅ ذخیره شد — حالت شبیه‌ساز محلی";
+    toast("تنظیمات حساب ذخیره شد");
+    loadConfig(false); loadPositions();
+  }catch(e){ $("#cfgStatus").innerHTML = `<span class="err">❌ ${e.message}</span>`; }
+}
+async function loadCalib(){
+  try{
+    const d = await (await fetch("/api/calib/status")).json();
+    const ev = d.events ? Object.entries(d.events).map(([tf,n])=>`${tf}: ${n}`).join(" · ") : "";
+    let mtable = "";
+    if(d.models && Object.keys(d.models).length){
+      const kindFa = {logit:"لجستیک", lgbm:"LightGBM", mlp:"شبکهٔ عصبی 🧠", ensemble:"ترکیبی 🧠"};
+      mtable = `<table style="margin-top:8px;font-size:12px;min-width:0"><thead><tr><th>TF</th><th>مدلِ برنده</th><th>نمونه</th><th>لیفت OOS</th><th>Brier</th><th>ستاپ‌ها</th></tr></thead><tbody>` +
+        Object.entries(d.models).map(([tf,m])=>`<tr>
+          <td>${tf}</td>
+          <td style="font-size:11px">${kindFa[m.kind]||m.kind||"—"}${m.members?`<br><small class="mid">${m.members.map(k=>kindFa[k]||k).join("+")}</small>`:""}</td>
+          <td class="num">${m.n_train||"—"}</td>
+          <td class="num ${m.oos_lift>=8?"up":m.oos_lift>=4?"mid":"dn"}">${m.oos_lift!=null?(m.oos_lift>=0?"+":"")+m.oos_lift+" pp":"—"}</td>
+          <td class="num">${m.oos_brier||"—"}</td>
+          <td class="num" style="font-size:11px">${Object.entries(m.by_setup||{}).map(([k,v])=>`${k}:${v.win}٪`).join(" ")}${m.dir_lift!=null?`<br><b>جهت‌یاب: ${m.dir_lift>=0?"+":""}${m.dir_lift}pp</b>`:""}</td>
+        </tr>`).join("") + `</tbody></table>
+        <p class="note">🧠 هستهٔ هوش مصنوعی: برای هر تایم‌فریم، سه یادگیرنده (لجستیک، LightGBM، شبکهٔ عصبی) و یک مغزِ ترکیب‌کننده رقابت می‌کنند؛ برندهٔ آزمونِ برون‌نمونه‌ای (Walk-Forward) انتخاب می‌شود. لیفت = اختلاف وین‌ریتِ سیگنال‌های بالا/پایین‌رتبه روی داده‌ای که مدل هرگز ندیده.</p>`;
+    }
+    $("#calStatus").innerHTML = d.building
+      ? `⏳ در حال ساخت… (${d.progress||""} — ${d.done}/${d.total})`
+      : d.built_at
+        ? `✅ آخرین ساخت: ${fmt(d.age_hours,1)} ساعت پیش · سیگنال تاریخی: ${ev}` + mtable
+        : d.error ? `<span class="err">خطا: ${d.error}</span>` : "هنوز ساخته نشده";
+  }catch(e){ $("#calStatus").textContent = "—"; }
+}
+async function rebuildCalib(){
+  const r = await fetch("/api/calib/rebuild", {method:"POST"});
+  const d = await r.json();
+  toast(d.ok ? "بازکالیبراسیون شروع شد (چند دقیقه)" : d.msg, d.ok);
+  setTimeout(loadCalib, 1500);
+  if(d.ok){ closeSettings(); setTimeout(loadCalibBanner, 800); }
+}
+
+/* ═══════════ ربات معامله‌گر خودکار ═══════════ */
+let BOT = null;
+function botParamsMirror(lv){                     // آینهٔ level_params بک‌اند برای پیش‌نمایشِ فوری
+  lv = Math.max(1, Math.min(lv|0, 10));
+  return {min_score: Math.round(82 - lv*2.5),
+          min_open: 0,
+          max_open: 2 + Math.floor((lv-1)/3),
+          risk: (0.25 + lv*0.025).toFixed(2),
+          heat: (1.25 + lv*0.15).toFixed(1),
+          tfs: lv<=4?["4h"]:["4h","1h"]};
+}
+function botLvlPreview(v){
+  $("#botLvlNum").textContent = v;
+  const p = botParamsMirror(Number(v));
+  $("#botLvlDesc").innerHTML = `بدون اجبار به معامله · سقف <b>${p.max_open}</b> پوزیشن · فقط امتیاز <b>${p.min_score}+</b> · تایم‌ها: <b>${p.tfs.join("/")}</b> · ریسکِ هر معامله <b>${p.risk}٪</b> موجودی · سقفِ ریسکِ کل <b>${p.heat}٪</b>`;
+}
+function renderBot(d){
+  BOT = d;
+  $("#botDot").classList.toggle("on", d.enabled);
+  $("#navBotDot").classList.toggle("on", d.enabled);
+  $("#botStateTxt").textContent = d.enabled ? "فعال — در حال پایش" : "خاموش";
+  const tg = $("#botToggle");
+  tg.textContent = d.enabled ? "⏸ خاموش کردن" : "▶ روشن کردن";
+  tg.className = d.enabled ? "btn short" : "btn long";
+  if(document.activeElement !== $("#botSlider")){ $("#botSlider").value = d.level; }
+  botLvlPreview(d.level);
+  $("#botCurrent").textContent = d.current || "—";
+  $("#botCurrent").classList.toggle("on", d.enabled);
+  if(d.next_cycle) $("#botCycleInfo").textContent = "چرخهٔ " + (d.cycle_n||0);
+  const s = d.stats||{};
+  const g = d.guards||{};
+  const guardPills = (g.storm?`<span class="pill" style="color:var(--dn)">⛈ ترمزِ طوفان</span>`:"")
+                   + (g.risk_off?`<span class="pill" style="color:var(--dn)">🛑 حدِ ضررِ روزانه</span>`:"");
+  $("#botStats").innerHTML = `
+    <span class="pill">باز: <b class="num">${s.open||0}</b>${s.open_pnl?` (<span class="${cls(s.open_pnl)}">${s.open_pnl>0?"+":""}${fmt(s.open_pnl,1)}$</span>)`:""}</span>
+    <span class="pill">معاملات: <b class="num">${s.trades||0}</b></span>
+    <span class="pill">وین‌ریت: <b class="num">${s.win_rate!=null?fmt(s.win_rate,0)+"٪":"—"}</b></span>
+    <span class="pill">سودِ محقق: <b class="num ${cls(s.pnl)}">${s.pnl!=null?(s.pnl>0?"+":"")+fmt(s.pnl,1)+"$":"—"}</b></span>
+    <span class="pill" title="پایشِ لحظه‌ای پوزیشن‌ها: تریلینگ + برداشت پله‌ای">👁 پایش هر ${g.monitor_sec||12} ثانیه</span>${guardPills}`;
+  const log = $("#botLog");
+  const atBottom = log.scrollTop < 30;
+  log.innerHTML = (d.thoughts||[]).map(t=>{
+    const tm = new Date(t.t*1000).toLocaleTimeString("fa-IR");
+    return `<div class="th k-${t.kind||"info"}"><span class="tt">${tm}</span>${t.msg}</div>`;
+  }).join("") || `<span class="mid">هنوز فکری ثبت نشده…</span>`;
+  if(atBottom) log.scrollTop = 0;
+}
+async function loadBot(){
+  try{ renderBot(await (await fetch("/api/bot")).json()); }catch(e){}
+}
+async function botSet(patch){
+  try{
+    const r = await fetch("/api/bot/config", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(patch)});
+    renderBot(await r.json());
+  }catch(e){ toast("❌ خطا در تنظیم ربات", false); }
+}
+function botToggle(){
+  if(!BOT) return;
+  if(!BOT.enabled && !confirm("ربات روشن شود؟\n\nخودش با هوش مصنوعی پوزیشنِ دمو باز/بسته می‌کند (فقط کیف‌پولِ دمو — پول واقعی در کار نیست) و همهٔ تصمیم‌هایش را در جریانِ افکار می‌نویسد.")) return;
+  botSet({enabled: !BOT.enabled});
+}
+
+/* ═══════════ راه‌اندازی ═══════════ */
+document.querySelectorAll("#tfTabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#tfTabs button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on");
+  TF = b.dataset.tf;
+  window.prevOK = null;
+  saveView();
+  $("#rows").innerHTML = `<tr class="skel"><td colspan="13"></td></tr><tr class="skel"><td colspan="13"></td></tr>`;
+  loadOverview();
+});
+(function restoreState(){
+  try{
+    const v = JSON.parse(localStorage.view||"{}");
+    if(v.tf && TF_MIN[v.tf]){
+      TF = v.tf;
+      document.querySelectorAll("#tfTabs button").forEach(b=>b.classList.toggle("on", b.dataset.tf===TF));
+    }
+    const chip = document.querySelector(`.fchip[data-f="${VIEW.filter}"]`);
+    if(chip){ document.querySelectorAll(".fchip[data-f]").forEach(x=>x.classList.remove("on")); chip.classList.add("on"); }
+  }catch(e){}
+  if(localStorage.dense==="1"){ document.body.classList.add("dense"); $("#densChip").classList.add("on"); }
+  $("#notifChip").classList.toggle("on", localStorage.notif==="1");
+  $("#soundChip").classList.toggle("on", localStorage.sound==="1");
+})();
+document.querySelectorAll("thead th[data-k]").forEach(th=>{
+  th.onclick = ()=>{
+    const k = th.dataset.k;
+    if(VIEW.sort===k) VIEW.dir *= -1; else { VIEW.sort=k; VIEW.dir=-1; }
+    renderTable();
+  };
+});
+document.addEventListener("keydown", e=>{
+  if(e.key==="/" && document.activeElement.tagName!=="INPUT"){ e.preventDefault(); $("#q").focus(); }
+  if(e.key==="Escape"){ closeDrawer(); closeSettings(); closeTModal(); }
+});
+
+loadVersion(); loadOverview(); loadPositions(); loadConfig(false); loadEngineCred(); loadCalibBanner(); loadEdgeHealth(); loadBot();
+setInterval(loadBot, 6000);
+setInterval(loadOverview, 60000);
+setInterval(loadPositions, 30000);
+setInterval(()=>loadConfig(false), 60000);
+setInterval(loadEngineCred, 600000);
+setInterval(loadEdgeHealth, 120000);
+setInterval(loadVersion, 600000);
+</script>
+</body>
+</html>

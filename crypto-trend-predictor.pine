@@ -1,0 +1,144 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════
+//  Crypto Trend Predictor (CTP) — پیش‌بین روند و قیمت کریپتو
+//  ترکیب ۶ مؤلفه: EMA Cross + Supertrend + RSI + MACD + OBV + ADX
+//  موتور پیش‌بینی: رگرسیون خطی + درِیفت مومنتوم + مخروط اطمینان ATR
+// ═══════════════════════════════════════════════════════════════════
+indicator("Crypto Trend Predictor | پیش‌بین روند کریپتو", shorttitle = "CTP",
+     overlay = true, max_polylines_count = 10, max_labels_count = 20)
+
+// ─────────────────────────── ورودی‌ها ───────────────────────────
+grpT = "۱) روند — Trend"
+emaFastLen = input.int(21,  "EMA سریع",            minval = 2,  group = grpT)
+emaSlowLen = input.int(55,  "EMA کند",             minval = 5,  group = grpT)
+stFactor   = input.float(3.0, "ضریب Supertrend",   step = 0.5,  group = grpT)
+stAtrLen   = input.int(10,  "ATR سوپرترند",        minval = 1,  group = grpT)
+
+grpM = "۲) مومنتوم — Momentum"
+rsiLen     = input.int(14,  "دوره RSI",            minval = 2,  group = grpM)
+macdFastL  = input.int(12,  "MACD سریع",           minval = 2,  group = grpM)
+macdSlowL  = input.int(26,  "MACD کند",            minval = 5,  group = grpM)
+macdSigL   = input.int(9,   "MACD سیگنال",         minval = 2,  group = grpM)
+
+grpV = "۳) حجم و قدرت روند — Volume & ADX"
+obvSlopeLen = input.int(20, "طول شیب OBV",         minval = 5,  group = grpV)
+adxLen      = input.int(14, "دوره ADX",            minval = 2,  group = grpV)
+adxMin      = input.float(20, "حداقل ADX (فیلتر بازار رِنج)", group = grpV)
+
+grpF = "۴) موتور پیش‌بینی — Forecast Engine"
+fcBars    = input.int(30,    "تعداد کندل پیش‌بینی",      minval = 5, maxval = 200, group = grpF)
+regLen    = input.int(100,   "طول رگرسیون خطی",          minval = 20,             group = grpF)
+momWeight = input.float(0.5, "وزن مومنتوم در درِیفت",     minval = 0, maxval = 1, step = 0.1, group = grpF)
+damping   = input.float(0.97,"میرایی درِیفت (هر کندل)",   minval = 0.8, maxval = 1, step = 0.01, group = grpF)
+bandMult  = input.float(1.5, "ضریب باند اطمینان (ATR)",   minval = 0.5, step = 0.25, group = grpF)
+
+grpS = "۵) نمایش — Display"
+showTable  = input.bool(true, "جدول امتیازها",  group = grpS)
+showSignal = input.bool(true, "سیگنال خرید/فروش", group = grpS)
+colorBars  = input.bool(false,"رنگ‌آمیزی کندل‌ها", group = grpS)
+
+// ─────────────────────── محاسبه مؤلفه‌ها ───────────────────────
+atr      = ta.atr(14)
+emaFast  = ta.ema(close, emaFastLen)
+emaSlow  = ta.ema(close, emaSlowLen)
+[stLine, stDir] = ta.supertrend(stFactor, stAtrLen)
+rsi      = ta.rsi(close, rsiLen)
+[macdLine, macdSig, macdHist] = ta.macd(close, macdFastL, macdSlowL, macdSigL)
+obv      = ta.obv
+obvSlope = ta.linreg(obv, obvSlopeLen, 0) - ta.linreg(obv, obvSlopeLen, 1)
+obvNorm  = ta.stdev(obv, obvSlopeLen)
+[diPlus, diMinus, adx] = ta.dmi(adxLen, adxLen)
+
+clamp(x) => math.max(-1.0, math.min(1.0, x))
+
+// امتیاز هر مؤلفه در بازه [-1 , +1]
+sEma  = clamp((emaFast - emaSlow) / (atr * 2))           // فاصله EMAها نسبت به نوسان
+sSt   = stDir < 0 ? 1.0 : -1.0                            // جهت سوپرترند
+sRsi  = clamp((rsi - 50) / 25)                            // مومنتوم RSI
+sMacd = clamp(macdHist / atr)                             // هیستوگرام MACD نرمال‌شده
+sObv  = obvNorm > 0 ? clamp(obvSlope / obvNorm * 3) : 0.0 // شیب جریان حجم
+
+// امتیاز ترکیبی وزن‌دار — روند وزن بیشتری دارد
+rawScore = sEma * 0.25 + sSt * 0.25 + sRsi * 0.15 + sMacd * 0.15 + sObv * 0.20
+// ADX به‌عنوان ضریب اطمینان: در بازار رِنج امتیاز تضعیف می‌شود
+confidence = clamp(adx / 40)
+score      = rawScore * (0.4 + 0.6 * math.abs(confidence))
+
+// ─────────────────────── موتور پیش‌بینی ───────────────────────
+// درِیفت پایه = شیب رگرسیون خطی + سهم مومنتوم (امتیاز × نوسان)
+regSlope  = ta.linreg(close, regLen, 0) - ta.linreg(close, regLen, 1)
+drift     = regSlope * (1 - momWeight) + (score * atr * 0.35) * momWeight
+
+// ─────────────────────── رسم مسیر آینده ───────────────────────
+var polyline plMid = na
+var polyline plUp  = na
+var polyline plDn  = na
+var label   lbTarget = na
+
+if barstate.islast
+    polyline.delete(plMid)
+    polyline.delete(plUp)
+    polyline.delete(plDn)
+    label.delete(lbTarget)
+
+    ptsMid = array.new<chart.point>()
+    ptsUp  = array.new<chart.point>()
+    ptsDn  = array.new<chart.point>()
+
+    float p = close
+    float d = drift
+    for i = 0 to fcBars
+        band = bandMult * atr * math.sqrt(i)   // عدم قطعیت با ریشه زمان زیاد می‌شود
+        ptsMid.push(chart.point.from_index(bar_index + i, p))
+        ptsUp.push(chart.point.from_index(bar_index + i, p + band))
+        ptsDn.push(chart.point.from_index(bar_index + i, p - band))
+        p += d
+        d *= damping                            // میرایی: هرچه جلوتر، درِیفت محافظه‌کارانه‌تر
+
+    fcColor = score > 0 ? color.new(color.green, 0) : score < 0 ? color.new(color.red, 0) : color.gray
+    plMid := polyline.new(ptsMid, line_color = fcColor, line_style = line.style_dashed, line_width = 2)
+    plUp  := polyline.new(ptsUp,  line_color = color.new(fcColor, 60), line_style = line.style_dotted)
+    plDn  := polyline.new(ptsDn,  line_color = color.new(fcColor, 60), line_style = line.style_dotted)
+
+    lastPt   = ptsMid.last()
+    targetPx = lastPt.price
+    chgPct   = (targetPx - close) / close * 100
+    lbTarget := label.new(bar_index + fcBars, targetPx,
+         text = "هدف " + str.tostring(fcBars) + " کندل بعد:\n" + str.tostring(targetPx, format.mintick) +
+                "  (" + (chgPct >= 0 ? "+" : "") + str.tostring(chgPct, "#.##") + "%)",
+         style = chgPct >= 0 ? label.style_label_lower_left : label.style_label_upper_left,
+         color = color.new(fcColor, 75), textcolor = chart.fg_color)
+
+// ─────────────────────── جدول امتیازها ───────────────────────
+var table tb = table.new(position.top_right, 2, 8, border_width = 1)
+cellColor(v) => v > 0.15 ? color.new(color.green, 70) : v < -0.15 ? color.new(color.red, 70) : color.new(color.gray, 70)
+
+if showTable and barstate.islast
+    verdict = score > 0.4 ? "صعودی قوی 🚀" : score > 0.1 ? "صعودی" : score < -0.4 ? "نزولی قوی 🔻" : score < -0.1 ? "نزولی" : "خنثی / رِنج"
+    tb.cell(0, 0, "مؤلفه",            text_color = chart.fg_color, bgcolor = color.new(color.blue, 60))
+    tb.cell(1, 0, "امتیاز",           text_color = chart.fg_color, bgcolor = color.new(color.blue, 60))
+    tb.cell(0, 1, "روند EMA",         text_color = chart.fg_color), tb.cell(1, 1, str.tostring(sEma,  "#.##"), bgcolor = cellColor(sEma),  text_color = chart.fg_color)
+    tb.cell(0, 2, "Supertrend",       text_color = chart.fg_color), tb.cell(1, 2, str.tostring(sSt,   "#.##"), bgcolor = cellColor(sSt),   text_color = chart.fg_color)
+    tb.cell(0, 3, "RSI",              text_color = chart.fg_color), tb.cell(1, 3, str.tostring(sRsi,  "#.##"), bgcolor = cellColor(sRsi),  text_color = chart.fg_color)
+    tb.cell(0, 4, "MACD",             text_color = chart.fg_color), tb.cell(1, 4, str.tostring(sMacd, "#.##"), bgcolor = cellColor(sMacd), text_color = chart.fg_color)
+    tb.cell(0, 5, "حجم OBV",          text_color = chart.fg_color), tb.cell(1, 5, str.tostring(sObv,  "#.##"), bgcolor = cellColor(sObv),  text_color = chart.fg_color)
+    tb.cell(0, 6, "اطمینان ADX",      text_color = chart.fg_color), tb.cell(1, 6, str.tostring(adx,   "#.#"),  bgcolor = adx >= adxMin ? color.new(color.green, 70) : color.new(color.orange, 70), text_color = chart.fg_color)
+    tb.cell(0, 7, "جمع‌بندی",         text_color = chart.fg_color, bgcolor = color.new(color.blue, 80))
+    tb.cell(1, 7, verdict + "  (" + str.tostring(score, "#.##") + ")", bgcolor = cellColor(score), text_color = chart.fg_color)
+
+// ─────────────────────── سیگنال و هشدار ───────────────────────
+longSig  = ta.crossover(score, 0.4)  and adx >= adxMin
+shortSig = ta.crossunder(score, -0.4) and adx >= adxMin
+
+plotshape(showSignal and longSig,  title = "سیگنال خرید",  style = shape.labelup,   location = location.belowbar, color = color.green, text = "خرید",  textcolor = color.white, size = size.small)
+plotshape(showSignal and shortSig, title = "سیگنال فروش",  style = shape.labeldown, location = location.abovebar, color = color.red,   text = "فروش",  textcolor = color.white, size = size.small)
+
+plot(emaFast, "EMA سریع", color = color.new(color.aqua,   30))
+plot(emaSlow, "EMA کند",  color = color.new(color.orange, 30))
+plot(stDir < 0 ? stLine : na, "Supertrend صعودی", color = color.green, style = plot.style_linebr)
+plot(stDir > 0 ? stLine : na, "Supertrend نزولی", color = color.red,   style = plot.style_linebr)
+
+barcolor(colorBars ? (score > 0.1 ? color.new(color.green, 20) : score < -0.1 ? color.new(color.red, 20) : color.gray) : na)
+
+alertcondition(longSig,  "CTP سیگنال خرید",  "CTP: سیگنال خرید — امتیاز ترکیبی از +0.4 عبور کرد")
+alertcondition(shortSig, "CTP سیگنال فروش", "CTP: سیگنال فروش — امتیاز ترکیبی از -0.4 عبور کرد")
