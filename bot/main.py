@@ -467,6 +467,80 @@ def gates_status():
     return gates.status()
 
 
+HEALTH_MAX_CANDIDATE_AGE_SEC = 3 * max(ANALYSIS_TTL.values())
+HEALTH_MAX_MODEL_AGE_DAYS = 30
+
+
+@app.get("/api/health")
+def health():
+    """یک نگاه: آیا این سیستم الان قابلِ اتکاست؟
+
+    قرمز یعنی عددهایی که می‌بینید ممکن است کهنه یا ناقص باشند. چون خطاها در
+    سراسرِ کد بلعیده می‌شوند و ویژگیِ گم‌شده به ۰٫۰ تبدیل می‌شود، بدونِ این نقطه
+    هیچ راهی برای فهمیدنِ «دادهٔ من مرده است» وجود نداشت.
+    """
+    problems, warnings = [], []
+    out = {"checked_at": time.time()}
+
+    g = gates.status()
+    out["gates"] = g
+    if g["live_effective"]:
+        warnings.append("معاملهٔ واقعی فعال است")
+
+    cs = calib.status()
+    age_h = cs.get("age_hours")
+    out["model"] = {"version": cs.get("version"), "required": cs.get("required_version"),
+                    "age_hours": age_h, "stale": cs.get("stale"), "building": cs.get("building"),
+                    "error": cs.get("error")}
+    if cs.get("error"):
+        problems.append(f"ساخت مدل خطا داد: {cs['error']}")
+    if cs.get("version") != cs.get("required_version"):
+        problems.append("نسخهٔ مدل با نسخهٔ کد نمی‌خواند — تحلیل‌ها بدون مدل‌اند")
+    elif age_h is not None and age_h > HEALTH_MAX_MODEL_AGE_DAYS * 24:
+        problems.append(f"مدل {age_h / 24:.0f} روز کهنه است")
+
+    try:
+        cnt = candidates.counts()
+    except Exception as e:  # noqa: BLE001
+        cnt = {"error": str(e)}
+        problems.append("دفترِ کاندیدها خوانده نشد")
+    out["candidates"] = cnt
+    last = cnt.get("last_logged_at")
+    if last is None:
+        warnings.append("هنوز هیچ کاندیدی ثبت نشده — یک بار /api/overview را صدا بزنید")
+    elif time.time() - last > HEALTH_MAX_CANDIDATE_AGE_SEC:
+        problems.append(f"از آخرین ثبتِ کاندید {(time.time() - last) / 3600:.1f} ساعت گذشته")
+
+    try:
+        out["data"] = market.cache_stats()
+        for tf, row in (out["data"].get("klines_by_tf") or {}).items():
+            limit = 3 * market.KLINE_TTL.get(tf, 300)
+            if row.get("oldest_age_sec", 0) > limit:
+                warnings.append(f"کشِ کندلِ {tf} کهنه است ({row['oldest_age_sec'] / 60:.0f} دقیقه)")
+    except Exception as e:  # noqa: BLE001
+        out["data"] = {"error": str(e)}
+        problems.append("لایهٔ داده پاسخ نداد")
+
+    try:
+        db = paper.list_positions()
+        bot_cfg = autotrader.load_cfg()
+        out["trading"] = {
+            "open_positions": len(db["open"]),
+            "closed_recorded": len(db["closed"]),
+            "bot_enabled": bot_cfg["enabled"],
+            "bot_level": bot_cfg["level"],
+            "wallet": paper.wallet_summary(),
+        }
+    except Exception as e:  # noqa: BLE001
+        out["trading"] = {"error": str(e)}
+        problems.append("وضعیت پوزیشن‌ها خوانده نشد")
+
+    out["status"] = "red" if problems else ("amber" if warnings else "green")
+    out["problems"] = problems
+    out["warnings"] = warnings
+    return out
+
+
 @app.get("/api/version")
 def version_info():
     """شناسهٔ دقیق کد و مدلِ در حال اجرا برای راستی‌آزمایی انتشار."""

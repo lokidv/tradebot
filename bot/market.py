@@ -100,6 +100,25 @@ def get_top_symbols(n=15):
     return symbols, tickers
 
 
+def cache_stats():
+    """سنِ کشِ کندل‌ها به تفکیکِ تایم‌فریم — برای پایشِ سلامت (بدونِ تماسِ شبکه)."""
+    now = time.time()
+    out = {}
+    with _lock:
+        for (sym, tf), (ts, _data) in _kline_cache.items():
+            row = out.setdefault(tf, {"symbols": 0, "newest_age_sec": None, "oldest_age_sec": None})
+            row["symbols"] += 1
+            age = now - ts
+            row["newest_age_sec"] = age if row["newest_age_sec"] is None else min(row["newest_age_sec"], age)
+            row["oldest_age_sec"] = age if row["oldest_age_sec"] is None else max(row["oldest_age_sec"], age)
+        top_age = now - _top_cache["ts"] if _top_cache["ts"] else None
+    for row in out.values():
+        row["newest_age_sec"] = round(row["newest_age_sec"], 1)
+        row["oldest_age_sec"] = round(row["oldest_age_sec"], 1)
+    return {"klines_by_tf": out, "universe_age_sec": round(top_age, 1) if top_age else None,
+            "universe_size": len(_top_cache["symbols"])}
+
+
 def get_klines_cached(symbol, tf):
     """فقط از کش حافظه — بدون هیچ فراخوانی شبکه (برای محاسبات جمعی مثل رتبه قدرت نسبی)."""
     with _lock:
