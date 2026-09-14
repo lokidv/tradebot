@@ -18,6 +18,26 @@ def _now():
 DEFAULT_BALANCE = 10000.0
 DEFAULT_COST_PCT = 0.15
 
+# لغزشِ خروجِ استاپ‌مارکت بر حسب ردهٔ نقدشوندگی (نقطهٔ پایه). شبیه‌سازِ قبلی صفر
+# فرض می‌کرد و حدضرر را دقیقاً روی سطحِ برنامه پر می‌کرد — روی آلت‌های کم‌عمق غیرواقعی است.
+SLIPPAGE_BPS = {0.08: 3.0, 0.11: 5.0, 0.18: 10.0, 0.30: 20.0}
+DEFAULT_SLIPPAGE_BPS = 10.0
+FUNDING_INTERVAL_MS = 8 * 3600 * 1000     # پرپچوالِ بایننس هر ۸ ساعت تسویه می‌شود
+
+
+def slippage_bps(cost_pct):
+    """لغزشِ متناسب با ردهٔ هزینه — هرچه جفت کم‌عمق‌تر، خروجِ استاپ بدتر."""
+    try:
+        return SLIPPAGE_BPS[round(float(cost_pct), 2)]
+    except (KeyError, TypeError, ValueError):
+        return DEFAULT_SLIPPAGE_BPS
+
+
+def _apply_slippage(price, side, cost_pct):
+    """خروجِ اضطراری همیشه بدتر از سطحِ برنامه پر می‌شود."""
+    d = 1 if side == "long" else -1
+    return float(price) * (1 - d * slippage_bps(cost_pct) / 10_000.0)
+
 
 def _load():
     if not os.path.exists(PATH):
@@ -65,10 +85,15 @@ def open_position(symbol, tf, side, entry, sl, tp, size_usdt, time_stop_min, gra
     return pos
 
 
+def _total_cost_pct(pos):
+    """هزینهٔ رفت‌وبرگشت + فاندینگِ انباشته (هر دو برحسبِ درصدِ نُشنال)."""
+    return float(pos.get("cost_pct", DEFAULT_COST_PCT)) + float(pos.get("funding_pct", 0.0))
+
+
 def _pnl(pos, price):
     d = 1 if pos["side"] == "long" else -1
     gross_pct = d * (price / pos["entry"] - 1) * 100
-    pct = gross_pct - float(pos.get("cost_pct", DEFAULT_COST_PCT))
+    pct = gross_pct - _total_cost_pct(pos)
     return pct, pos["size_usdt"] * pct / 100
 
 
@@ -78,13 +103,74 @@ def _close(pos, price, reason):
     gross_pct = d * (price / pos["entry"] - 1) * 100
     pos.update(closed_at=_now(), exit_price=price, pnl_pct=round(pct, 3),
                gross_pnl_pct=round(gross_pct, 3),
-               cost_usdt=round(pos["size_usdt"] * float(pos.get("cost_pct", DEFAULT_COST_PCT)) / 100, 3),
+               cost_usdt=round(pos["size_usdt"] * _total_cost_pct(pos) / 100, 3),
+               funding_usdt=round(pos["size_usdt"] * float(pos.get("funding_pct", 0.0)) / 100, 3),
                pnl_usdt=round(usd, 3), close_reason=reason, last_price=price)
     return pos
 
 
-def refresh(prices):
-    """به‌روزرسانی با قیمت‌های جدید؛ بستن خودکار در هدف/حدضرر/حد زمانی. prices: dict symbol->price"""
+def _opened_ms(pos):
+    return datetime.fromisoformat(pos["opened_at"]).timestamp() * 1000
+
+
+def _accrue_funding(pos, funding_rows, now_ms):
+    """فاندینگِ پرپچوال را برای هر تسویهٔ ۸ساعته‌ای که پوزیشن باز بوده اضافه می‌کند.
+
+    شبیه‌سازِ قبلی این را کاملاً نادیده می‌گرفت، در حالی که با حدِ زمانیِ ۴۰ کندل،
+    یک پوزیشنِ ۱d تا ۴۰ روز باز می‌ماند: با ~۰٫۰۳٪ در روز این ~۱٫۲٪ است — هم‌اندازهٔ
+    کلِ پاداشِ 1.8R روی ریسکِ ~۰٫۷٪.
+    """
+    if not funding_rows:
+        return 0.0
+    d = 1 if pos["side"] == "long" else -1
+    since = float(pos.get("funding_ts") or _opened_ms(pos))
+    added = 0.0
+    latest = since
+    for ts, rate in funding_rows:
+        ts = float(ts)
+        if since < ts <= now_ms:
+            added += d * float(rate) * 100.0      # لانگ نرخِ مثبت می‌پردازد
+            latest = max(latest, ts)
+    if added or latest > since:
+        pos["funding_pct"] = round(float(pos.get("funding_pct", 0.0)) + added, 6)
+        pos["funding_ts"] = latest
+    return added
+
+
+def _barrier_exit(pos, kl):
+    """برخوردِ حدضرر/هدف را روی **ویکِ کندل‌ها** می‌سنجد، نه فقط قیمتِ نمونه‌برداری‌شده.
+
+    پایشِ هر ۱۲ ثانیه، ویک‌هایی را که بینِ دو نمونه می‌آیند و حدضرر را می‌زنند
+    نمی‌دید. قواعد همان قواعدِ محافظه‌کارانهٔ ``bracket`` است: گپ روی قیمتِ باز،
+    برخوردِ هم‌زمان = حدضرر.
+    """
+    if not kl or not kl.get("t"):
+        return None
+    d = 1 if pos["side"] == "long" else -1
+    sl, tp = float(pos["sl"]), float(pos["tp"])
+    since = float(pos.get("bar_ts") or _opened_ms(pos))
+    for i, t in enumerate(kl["t"]):
+        if t <= since:
+            continue
+        o, h, l = float(kl["o"][i]), float(kl["h"][i]), float(kl["l"][i])
+        if (d == 1 and o <= sl) or (d == -1 and o >= sl):
+            return _apply_slippage(o, pos["side"], pos.get("cost_pct")), "حدضرر (گپ)", t
+        if (l <= sl if d == 1 else h >= sl):
+            return _apply_slippage(sl, pos["side"], pos.get("cost_pct")), "حدضرر", t
+        if (h >= tp if d == 1 else l <= tp):
+            return tp, "هدف ✅", t
+        pos["bar_ts"] = t
+    return None
+
+
+def refresh(prices, klines_fn=None, funding_fn=None):
+    """به‌روزرسانی با قیمت‌های جدید؛ بستن خودکار در هدف/حدضرر/حد زمانی.
+
+    ``klines_fn(symbol, tf)`` اگر داده شود، برخوردِ حدها روی ویکِ کندل‌ها سنجیده
+    می‌شود (واقع‌گرا)؛ وگرنه فقط آخرین قیمتِ نمونه‌برداری‌شده ملاک است (خوش‌بینانه).
+    ``funding_fn(symbol)`` تاریخچهٔ ``[[ts, rate], ...]`` می‌دهد تا فاندینگ کسر شود.
+    """
+    now_ms = datetime.now(timezone.utc).timestamp() * 1000
     with _lock:
         db = _load()
         still = []
@@ -92,6 +178,20 @@ def refresh(prices):
             if pos.get("mode") == "testnet":     # چرخه تست‌نت را صرافی مدیریت می‌کند، نه شبیه‌ساز محلی
                 still.append(pos)
                 continue
+            if funding_fn is not None:
+                try:
+                    _accrue_funding(pos, funding_fn(pos["symbol"]), now_ms)
+                except Exception:  # noqa: BLE001 — نبودِ فاندینگ نباید پوزیشن را بشکند
+                    pass
+            if klines_fn is not None:
+                try:
+                    hit = _barrier_exit(pos, klines_fn(pos["symbol"], pos["tf"]))
+                except Exception:  # noqa: BLE001
+                    hit = None
+                if hit is not None:
+                    exit_price, reason, _t = hit
+                    db["closed"].insert(0, _close(pos, exit_price, reason))
+                    continue
             price = prices.get(pos["symbol"])
             if price is None:
                 still.append(pos)
@@ -101,7 +201,8 @@ def refresh(prices):
             age_min = (datetime.now(timezone.utc) - opened).total_seconds() / 60
             if (d == 1 and price <= pos["sl"]) or (d == -1 and price >= pos["sl"]):
                 # اگر بین دو نمونهٔ قیمت گپ رخ داده باشد، خروج را خوش‌بینانه روی SL فرض نکن.
-                exit_price = min(price, pos["sl"]) if d == 1 else max(price, pos["sl"])
+                worst = min(price, pos["sl"]) if d == 1 else max(price, pos["sl"])
+                exit_price = _apply_slippage(worst, pos["side"], pos.get("cost_pct"))
                 db["closed"].insert(0, _close(pos, exit_price, "حدضرر"))
             elif (d == 1 and price >= pos["tp"]) or (d == -1 and price <= pos["tp"]):
                 db["closed"].insert(0, _close(pos, pos["tp"], "هدف ✅"))

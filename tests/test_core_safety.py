@@ -237,17 +237,19 @@ class SimulatorTests(unittest.TestCase):
         paper.PATH = self.old_path
         self.tmp.cleanup()
 
-    def test_cost_and_stop_gap_are_included(self):
+    def test_cost_stop_gap_and_slippage_are_included(self):
         paper.open_position(
             "BTCUSDT", "1h", "long", 100, 90, 120, 1_000, 60,
             cost_pct=0.2,
         )
         db = paper.refresh({"BTCUSDT": 85})
         closed = db["closed"][0]
-        self.assertEqual(closed["exit_price"], 85)
-        self.assertAlmostEqual(closed["gross_pnl_pct"], -15.0)
-        self.assertAlmostEqual(closed["pnl_pct"], -15.2)
-        self.assertAlmostEqual(closed["pnl_usdt"], -152.0)
+        # قیمت با گپ از حدضرر رد شده: خروج روی ۸۵ (نه ۹۰) و بدتر از آن با لغزشِ
+        # استاپ‌مارکت (پیش‌فرضِ ۱۰ نقطهٔ پایه) — شبیه‌ساز نباید خوش‌بین باشد.
+        self.assertAlmostEqual(closed["exit_price"], 84.915)
+        self.assertAlmostEqual(closed["gross_pnl_pct"], -15.085)
+        self.assertAlmostEqual(closed["pnl_pct"], -15.285)
+        self.assertAlmostEqual(closed["pnl_usdt"], -152.85)
 
     def test_quick_backtest_counts_timeout_and_cost(self):
         n = 270

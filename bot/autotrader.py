@@ -142,6 +142,16 @@ def _live(symbol):
         return None
 
 
+def _bars(symbol, tf):
+    """کندل‌های کش‌شده برای سنجشِ برخوردِ حدها روی ویک (بدونِ تماسِ شبکه)."""
+    return market.get_klines_cached(symbol, tf)
+
+
+def _refresh(prices):
+    """به‌روزرسانیِ واقع‌گرا: ویکِ کندل‌ها + لغزشِ استاپ + فاندینگِ پرپچوال."""
+    return paper.refresh(prices, klines_fn=_bars, funding_fn=market.get_funding_history)
+
+
 def _portfolio_risk_usd(db, side=None):
     """ریسک تا حدضرر؛ با side می‌توان تمرکز جهت‌دار (همبستگی بازار کریپتو) را جدا سنجید."""
     return sum(
@@ -343,7 +353,7 @@ def _monitor():
                 if lp:
                     prices[p["symbol"]] = lp
         if prices:
-            _announce_closes(paper.refresh(prices), before_ids)
+            _announce_closes(_refresh(prices), before_ids)
         try:
             _retire_toxic_1d()
         except Exception:  # noqa: BLE001
@@ -368,7 +378,7 @@ def _monitor():
             lp = _live(p["symbol"])
             if lp:
                 prices[p["symbol"]] = lp
-    db = paper.refresh(prices)                      # برخوردِ حدضرر/هدف/حدزمانی همین‌جا بسته می‌شود
+    db = _refresh(prices)                         # برخوردِ حدضرر/هدف/حدزمانی همین‌جا بسته می‌شود
     _announce_closes(db, before_ids)
 
     # خوشهٔ همبسته؟ وقتی ≥۶ پوزیشنِ هم‌جهت باز است، سودها با هم می‌آیند و با هم می‌روند →
@@ -540,7 +550,7 @@ def _cycle():
             lp = _live(p["symbol"])
             if lp:
                 prices[p["symbol"]] = lp
-    db = paper.refresh(prices)
+    db = _refresh(prices)
     _announce_closes(db, before_ids)
 
     # ۲) عکسِ فوری از بازار

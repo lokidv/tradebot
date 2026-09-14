@@ -903,7 +903,9 @@ def positions():
                 prices[pos["symbol"]] = market.last_price(pos["symbol"])
             except Exception:  # noqa: BLE001
                 pass
-    db = paper.refresh(prices)
+    # شبیه‌سازِ واقع‌گرا: ویکِ کندل‌ها + لغزشِ استاپ + فاندینگ (نه فقط قیمتِ نمونه‌برداری‌شده)
+    db = paper.refresh(prices, klines_fn=market.get_klines_cached,
+                       funding_fn=market.get_funding_history)
     # 🧭 مشاورِ پوزیشن: برای هر پوزیشنِ باز، توصیهٔ مدیریتِ زنده با مدلِ کالیبره
     for pos in db["open"]:
         try:
