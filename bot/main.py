@@ -23,6 +23,7 @@ from pydantic import BaseModel
 import numpy as np
 
 import market
+import candidates
 import engine
 import paper
 import broker
@@ -497,6 +498,10 @@ def live_stats(tf: str | None = None):
         shadow.resolve(market.get_klines)
     except Exception:  # noqa: BLE001
         pass
+    try:
+        candidates.resolve(market.get_klines, limit=120)
+    except Exception:  # noqa: BLE001
+        pass
     st = shadow.stats(tf)
     drift = None
     # drift با بازده خالص تشخیص داده می‌شود، نه win-rate خام که نسبت سود/ضرر را نادیده می‌گیرد.
@@ -506,7 +511,11 @@ def live_stats(tf: str | None = None):
     return {"tf": tf, "stats": st, "all": shadow.stats(None), "drift": drift,
             "suspended": _suspended_setups(),
             "edge_pockets": _live_edge_book()[0],
-            "suspended_combos": _live_edge_book()[1]}
+            "suspended_combos": _live_edge_book()[1],
+            # دفترِ کاندیدها: همهٔ ستاپ‌های دیده‌شده، نه فقط مجازها
+            "candidates": candidates.counts(),
+            "candidate_stats": candidates.stats(tf),
+            "candidate_stats_tradeable_only": candidates.stats(tf, only_tradeable=True)}
 
 
 @app.get("/api/edge-health")
@@ -601,6 +610,10 @@ def overview(tf: str = "1h"):
                        meta_session=a["trade"].get("meta_session"),
                        meta_reasons=a["trade"].get("meta_reasons"),
                        oi_z=a["trade"].get("oi_z"),
+                       atr14=a["trade"].get("atr14"),
+                       combo_suspended=bool(a["trade"].get("setup") and
+                                            f"{tf}|{a['trade'].get('setup')}" in
+                                            (_live_edge_book()[1] or {})),
                        cost=_symbol_cost(s))
             try:
                 row["spark"] = [round(x, 8) for x in market.get_klines(s, tf)["c"][-28:]]
@@ -613,6 +626,7 @@ def overview(tf: str = "1h"):
                     dr = abs(live_px - a["price"]) / max(a["price"], 1e-12) * 100
                     if dr > DRIFT_CAP.get(tf, 2.5):
                         row["tradeable"] = False
+                        row["drift_reject"] = True
                         row["status"] = f"دیررسیده — قیمت {dr:.1f}٪ از کندل سیگنال حرکت کرده؛ با کندل بعدی تازه می‌شود"
         coins.append(row)
     coins = [r for r in coins if "داده کافی" not in r.get("error", "")][:TOP_N]   # حذف ارزهای تازه‌لیست‌شده بدون سابقه
@@ -653,18 +667,19 @@ def overview(tf: str = "1h"):
             row["tradeable"] = False
             row["status"] = (f"ردِ مقطعی — این فرصت در صدک {rank_pct:.0f} بازار است؛ "
                              "فقط بهترین ۴۰٪ سیگنال‌های هم‌زمان معامله می‌شوند")
-    # فقط سیاستِ نهاییِ قابل‌اجرا وارد کارنامهٔ سایه می‌شود؛ هزینه هم از R نتیجه کم خواهد شد.
-    for row in active:
-        if not row.get("tradeable"):
+    # ── دفترِ کاندیدها: **هر** ستاپِ دیده‌شده ثبت می‌شود، مسدود یا نه ──
+    # ثبتِ فقط ردیف‌های مجاز، حلقهٔ یادگیری را در بن‌بست گذاشته بود: بدونِ مدلِ معتبر
+    # هیچ ردیفی ثبت نمی‌شد و بدونِ ردیف هیچ لبه‌ای قابلِ کشف نبود.
+    logged = 0
+    for row in coins:
+        if not row.get("side") or row.get("error"):
             continue
         try:
-            shadow.log_signal(
-                row["symbol"], tf, row["side"], row["entry"], row["sl"], row["tp"],
-                row.get("setup") or "zx", row.get("p_win"), row.get("ev_pct"),
-                row.get("zt"), row["time_stop_min"], cost_pct=row.get("cost") or 0.15,
-            )
-        except Exception:  # noqa: BLE001
+            logged += bool(candidates.log_candidate(row, tf))
+        except Exception:  # noqa: BLE001 — ثبت هرگز نباید پاسخِ API را بشکند
             pass
+    if logged:
+        print(f"[candidates] {tf}: {logged} ردیف تازه ثبت شد", flush=True)
     coins.sort(key=lambda r: (
         r.get("tradeable", False),
         r.get("entry_quality") or r.get("signal_score") or 0,

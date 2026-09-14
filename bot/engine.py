@@ -509,6 +509,7 @@ def trade_suggestion(c, cs, fc, tf, votes_bull, votes_bear, s_ml, force_side=Non
     viable = abs(tp - entry) <= 8 * a
     return {
         "side": side, "grade": grade, "entry": entry, "sl": sl, "tp": tp,
+        "atr14": a,                              # برای بازسازیِ دقیقِ همین براکت هنگام داوری
         "rr": lv["rr"], "risk_pct": lv["risk_pct"], "gain_pct": abs(tp - entry) / entry * 100,
         "time_stop_bars": bracket.MAX_BARS, "time_stop_min": bracket.MAX_BARS * TF_MINUTES[tf],
         "viable": viable,
