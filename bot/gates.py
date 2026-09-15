@@ -33,6 +33,9 @@ DEFAULTS = {
     # ترکیبی که روی ارزهای بزرگ پذیرفته شده، به‌طور خودکار روی آلت‌های کم‌عمق مجاز نیست.
     # خالی = هیچ نمادی (نه همه). داور همراهِ ترکیب‌ها می‌نویسدش.
     "allowed_symbols": [],
+    # نامزدهای پژوهشی که کاربر صریحاً اجازهٔ اجرایشان را **فقط روی تست‌نت** داده است.
+    # هیچ راهی به پولِ واقعی ندارد: فقط trend_exec می‌خواندش و او فقط با کلاینتِ تست‌نت کار می‌کند.
+    "testnet_research": [],
     "gate_results": {},
     "history": [],
 }
@@ -64,6 +67,9 @@ def _validate(d):
         out[k] = v
     if not isinstance(out["allowed_symbols"], list):
         raise GateError("allowed_symbols باید فهرست باشد")
+    if not isinstance(out["testnet_research"], list) or \
+            not all(isinstance(k, str) for k in out["testnet_research"]):
+        raise GateError("testnet_research باید فهرستِ رشته باشد")
     out["max_open"] = int(out["max_open"])
     out["max_side_open"] = int(out["max_side_open"])
     out["live_allowed"] = bool(out["live_allowed"])
@@ -132,7 +138,24 @@ def kill(reason):
     g = dict(load_gates())
     g["live_allowed"] = False
     g["allowed_combos"] = []
+    g["testnet_research"] = []
     return _save(g, f"KILL: {reason}", action="kill")
+
+
+def set_testnet_research(keys, reason, user_token=None):
+    """اجرای نامزدهای پژوهشی **فقط روی تست‌نت** — فقط با تصمیمِ صریحِ کاربر.
+
+    allowed_combos، live_allowed و سقف‌های ریسک دست نمی‌خورند؛ این مجوزِ پول نیست.
+    """
+    g = dict(load_gates())
+    if user_token != f"user:{g['version']}":
+        raise GateError("اجرای پژوهشی روی تست‌نت فقط با تأییدِ صریحِ کاربر مجاز است")
+    g["testnet_research"] = sorted(set(keys))
+    return _save(g, reason, action="testnet_research")
+
+
+def testnet_research_allowed(key):
+    return key in set(load_gates().get("testnet_research") or [])
 
 
 def is_combo_allowed(tf, setup, side, symbol=None):
@@ -200,6 +223,7 @@ def status():
         "live_effective": live_allowed(),
         "allowed_combos": list(g["allowed_combos"]),
         "allowed_symbols": list(g["allowed_symbols"]),
+        "testnet_research": list(g["testnet_research"]),
         "preregistration_hash": g["preregistration_hash"],
         "caps": risk_caps(),
         "path": GATES_PATH,

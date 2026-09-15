@@ -32,6 +32,9 @@
   "UNIUSDT",
   "XRPUSDT"
  ],
+ "testnet_research": [
+  "1d|trend20|long"
+ ],
  "gate_results": {},
  "history": [
   {
@@ -44,6 +47,14 @@
   {
    "ts": 1789440511.4909215,
    "reason": "judged prereg 0bbcca393520",
+   "allowed_combos": [],
+   "live_allowed": false,
+   "max_risk_pct_per_trade": 0.25
+  },
+  {
+   "ts": 1789482298.9650035,
+   "reason": "کاربر: اجرای روندِ روزانه روی تست‌نت روشن",
+   "action": "testnet_research",
    "allowed_combos": [],
    "live_allowed": false,
    "max_risk_pct_per_trade": 0.25

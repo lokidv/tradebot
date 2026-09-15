@@ -300,7 +300,7 @@ def gate_changes_during_proving(prereg_hash, since_ts, judged=False):
     for e in gate_changes_since(since_ts):
         action, h = _gate_action(e), _event_hash(e)
         ours = bool(h and prereg_hash and str(prereg_hash).startswith(h))
-        if action == "scale":
+        if action in ("scale", "testnet_research"):     # هیچ‌کدام مجوزِ پول را عوض نمی‌کنند
             continue
         if action == "preregister" and ours:
             continue

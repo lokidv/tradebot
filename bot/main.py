@@ -37,6 +37,7 @@ import autotrader
 import advisor
 import gates
 import trend
+import trend_exec
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
@@ -483,6 +484,10 @@ def _startup():
                 trend.snapshot()
             except Exception:  # noqa: BLE001
                 log.exc("trend tracker")
+            try:
+                trend_exec.step()           # فقط تست‌نت؛ بی‌مجوز یا بی‌کلید کاری نمی‌کند
+            except Exception:  # noqa: BLE001
+                log.exc("trend testnet executor")
             time.sleep(600)
     threading.Thread(target=_health_and_report, daemon=True).start()
     autotrader.init(overview, DRIFT_CAP, get_analysis, health_fn=health)   # 🤖 ربات معامله‌گر خودکار
@@ -541,6 +546,31 @@ def trend_status(force: bool = False):
     """روندِ روزانه — نامزدِ پژوهشی و اثبات‌نشده: وضعیتِ قاعده‌ها روی ۲۰ ارزِ بزرگ،
     سیگنال‌های امروز، دفترِ رو-به-جلو و شواهدِ اکتشاف. هیچ مجوزی نمی‌دهد."""
     return trend.snapshot(force=force)
+
+
+@app.get("/api/trend/testnet")
+def trend_testnet_status():
+    """اجرای قاعدهٔ روند روی تست‌نت: مجوز، اتصال، پوزیشن‌ها و کیفیتِ اجرا در برابرِ کاغذ."""
+    out = trend_exec.summary()
+    cfg = broker.load_cfg()
+    out["broker"] = cfg.get("broker", "local")
+    out["has_keys"] = bool(cfg.get("api_key") and cfg.get("api_secret"))
+    return out
+
+
+class TestnetResearchReq(BaseModel):
+    enable: bool
+
+
+@app.post("/api/trend/testnet")
+def trend_testnet_toggle(req: TestnetResearchReq):
+    """روشن/خاموش‌کردنِ اجرای روند روی تست‌نت — فقط با کلیکِ خودِ کاربر. پول واقعی دست نمی‌خورد."""
+    g = gates.load_gates(force=True)
+    keys = [trend_exec.STRATEGY] if req.enable else []
+    gates.set_testnet_research(keys, reason=("کاربر: اجرای روندِ روزانه روی تست‌نت روشن" if req.enable
+                                             else "کاربر: اجرای روندِ روزانه روی تست‌نت خاموش"),
+                               user_token=f"user:{g['version']}")
+    return trend_testnet_status()
 
 
 @app.get("/api/research")
@@ -1025,6 +1055,12 @@ def open_pos(req: OpenReq):
     cfg = broker.load_cfg()
     bk = broker.make_broker(cfg)
     if bk is not None:
+        # فیوچرزِ یک‌طرفه پوزیشن‌های هم‌نماد را یکی می‌کند: بستنِ معاملهٔ دستی پوزیشنِ
+        # قاعدهٔ روند را هم می‌بست و سنجشِ اجرا را خراب می‌کرد
+        held = {t["sym"] for t in trend_exec.replay()[0].values() if t["status"] == "open"}
+        if req.symbol in held:
+            raise HTTPException(409, f"{req.symbol} الان در دستِ اجرای روندِ تست‌نت است — "
+                                     "معاملهٔ دستی روی همین نماد پوزیشنِ آن را هم تغییر می‌دهد")
         try:
             res = bk.open_bracket(req.symbol, side, req.size_usdt, sl, tp)
         except broker.TestnetError as e:

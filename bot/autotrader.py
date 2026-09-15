@@ -60,7 +60,12 @@ def kill_switch(reason):
     cfg = load_cfg()
     cfg["enabled"] = False
     save_cfg(cfg)
-    gates.kill(reason)
+    gates.kill(reason)                  # فهرستِ مجاز و مجوزِ پژوهشیِ تست‌نت هم خالی می‌شوند
+    try:
+        import trend_exec
+        closed += trend_exec.close_all(reason)
+    except Exception:  # noqa: BLE001
+        log.exc("kill switch: trend testnet")
     today = time.strftime("%Y-%m-%d", time.gmtime())
     _set_risk_off(today)
     think(f"🛑 قطعِ اضطراری: {reason} — {closed} پوزیشن بسته، ربات خاموش، فهرستِ مجاز خالی.", "close")

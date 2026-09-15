@@ -569,9 +569,47 @@ async function loadGateBanner(){
 }
 
 /* ═══════════ روندِ روزانه — نامزدِ پژوهشی، فقط کاغذی ═══════════ */
+async function toggleTrendTestnet(enable){
+  try{
+    await fetch("/api/trend/testnet", {method:"POST", headers:{"Content-Type":"application/json"},
+                                      body: JSON.stringify({enable})});
+  }catch(e){}
+  loadTrendBanner(); loadGateBanner();
+}
+
+function trendTestnetHtml(x){
+  if(!x) return "";
+  const st = ((x.last_step||{}).result||{}).status, ex = x.execution || {};
+  const coin = s => s.replace("USDT","");
+  let line;
+  if(!x.permitted)
+    line = `اجرای تست‌نت: <b>خاموش</b>`;
+  else if(x.broker !== "binance_testnet" || !x.has_keys)
+    line = `اجرای تست‌نت: <b>روشن، در انتظارِ کلید</b> — ⚙️ تنظیمات ← بروکر «تست‌نت بایننس» ← کلید و سکرتِ API
+            از <b>testnet.binancefuture.com</b> (پول مجازی). از آن لحظه سیگنال‌های تازه خودکار اجرا می‌شوند.`;
+  else if(st === "broker_error")
+    line = `اجرای تست‌نت: <b style="color:var(--dn)">خطای اتصال</b> — ${(x.last_step.result||{}).error||""}`;
+  else
+    line = `اجرای تست‌نت: <b class="up">فعال</b> · ${x.open.length} پوزیشن · ${ex.closed||0} بسته
+            · ورود ${ex.entries||0} از ${(ex.entries||0)+(ex.missed||0)} سیگنال
+            ${ex.entry_slippage_bps_mean!=null?` · لغزشِ ورود ~${fmt(ex.entry_slippage_bps_mean,1)}bps`:""}
+            ${ex.realized_minus_paper_r_mean!=null?` · R واقعی منهای کاغذی ${fmt(ex.realized_minus_paper_r_mean,2)}`:""}`;
+  const btn = `<button class="gear" style="padding:3px 10px;font-size:12px;margin-inline-start:8px"
+      onclick="toggleTrendTestnet(${!x.permitted})">${x.permitted?"خاموش کن":"روشن کن"}</button>`;
+  const rows = (x.open||[]).map(t => `<tr><td><b>${coin(t.sym)}</b></td><td>تست‌نت از ${new Date(t.opened_ms).toLocaleDateString("fa-IR")}</td>
+      <td class="num">پرشده ${px(t.fill_px)} (${fmt(t.entry_slippage_bps,1)}bps)</td><td class="num">حدضرر ${px(t.stop)}</td><td></td></tr>`);
+  const err = (x.errors||[]).slice(-1)[0];
+  return `<div class="sub" style="margin-top:8px">${line}${btn}</div>
+    ${rows.length?`<div style="overflow-x:auto"><table class="mini"><tbody>${rows.join("")}</tbody></table></div>`:""}
+    ${err?`<div class="sub" style="color:var(--brass)">آخرین خطا (${coin(err.sym||"")}): ${err.msg}</div>`:""}`;
+}
+
 async function loadTrendBanner(){
   try{
-    const d = await (await fetch("/api/trend", {cache:"no-store"})).json();
+    const [d, x] = await Promise.all([
+      (await fetch("/api/trend", {cache:"no-store"})).json(),
+      fetch("/api/trend/testnet", {cache:"no-store"}).then(r => r.json()).catch(() => null),
+    ]);
     const el = $("#trendBanner"); if(!el || !d.rules) return;
     const P = d.primary, ev = ((d.evidence||{}).rules||{})[P] || {}, acct = ev.account || {};
     const fw = (d.forward||{})[P] || {n:0};
@@ -587,8 +625,8 @@ async function loadTrendBanner(){
         ? `<tr><td><b>${coin(x.sym)}</b></td><td>${x.exiting_next_open?"خروج در openِ بعد":"در پوزیشن"} از ${day(x.entry_ts)}${x.counted?"":` <small class="mid">(پیش از شروعِ ردیابی — شمرده نمی‌شود)</small>`}</td>
             <td class="num">ورود ${px(x.entry_px)}</td><td class="num">حدضررِ دنباله‌دار ${px(x.stop)}</td>
             <td class="num ${cls(x.open_r)}">${x.open_r>=0?"+":""}${fmt(x.open_r,2)}R</td></tr>`
-        : `<tr><td><b>${coin(x.sym)}</b></td><td class="up">سیگنالِ امروز</td>
-            <td class="num">ورود در openِ فردا (~${px(x.last)})</td><td></td><td></td></tr>`),
+        : `<tr><td><b>${coin(x.sym)}</b></td><td class="up">سیگنال روی آخرین بستهٔ روزانه</td>
+            <td class="num">ورود در openِ کندلِ جاری، ۰۰:۰۰ UTC (~${px(x.last)})</td><td></td><td></td></tr>`),
       ...near.map(x => `<tr><td>${coin(x.sym)}</td><td class="mid">بی‌پوزیشن</td>
           <td class="num">ماشه: بستهٔ بالای ${px(x.trigger)}</td><td class="num mid">${fmt(x.distance_pct,1)}٪ تا ماشه</td><td></td></tr>`),
     ];
@@ -605,6 +643,7 @@ async function loadTrendBanner(){
           ${rest>0?`<div class="sub">${rest} ارزِ دیگر دورتر از ماشه‌اند.</div>`:""}`
         : `<div class="sub">دادهٔ روزانه هنوز نرسیده است.</div>`}
       ${(d.missing_data||[]).length ? `<div class="sub" style="color:var(--brass)">بی‌داده: ${d.missing_data.map(coin).join("، ")}</div>` : ""}
+      ${trendTestnetHtml(x)}
     </div>`;
   }catch(e){}
 }

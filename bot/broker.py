@@ -82,6 +82,10 @@ class BinanceTestnet:
                 return float(b["availableBalance"]), float(b["balance"])
         return 0.0, 0.0
 
+    def symbol_rules(self, symbol):
+        """``(step, tick, min_qty, min_notional)`` — برای اندازه‌گیریِ حجم پیش از سفارش."""
+        return self._sym_info(symbol)
+
     def _sym_info(self, symbol):
         if self._info is None:
             data = self._public("/fapi/v1/exchangeInfo")
@@ -156,6 +160,54 @@ class BinanceTestnet:
             raise
         return {"order_id": order.get("orderId"), "qty": qty, "price": fill,
                 "sl": sl_r, "tp": tp_r}
+
+    # ── حدضررِ جابه‌جاشونده (قاعدهٔ روند) ──
+    def open_orders(self, symbol):
+        return self._signed("GET", "/fapi/v1/openOrders", symbol=symbol)
+
+    def place_stop(self, symbol, side, qty, stop_price):
+        """حدضررِ reduceOnly با مقدارِ صریح.
+
+        ``closePosition`` نه: بایننس دو سفارشِ closePosition هم‌جهت را نمی‌پذیرد
+        (-4130)، و جابه‌جاییِ امن («اول تازه، بعد لغوِ قدیمی») دو سفارش هم‌زمان لازم دارد.
+        """
+        _step, tick, _mq, _mn = self._sym_info(symbol)
+        exit_side = "SELL" if side == "long" else "BUY"
+        o = self._signed("POST", "/fapi/v1/order", symbol=symbol, side=exit_side,
+                         type="STOP_MARKET", stopPrice=self._round_step(stop_price, tick),
+                         quantity=qty, reduceOnly="true", workingType="MARK_PRICE")
+        return o.get("orderId")
+
+    def open_with_stop(self, symbol, side, qty, stop_price):
+        """ورودِ مارکت + فقط حدضرر (بی‌هدف). اگر حدضرر ثبت نشد، پوزیشن بی‌محافظ نمی‌ماند."""
+        self._ensure_leverage(symbol)
+        entry_side = "BUY" if side == "long" else "SELL"
+        order = self._signed("POST", "/fapi/v1/order", symbol=symbol, side=entry_side,
+                             type="MARKET", quantity=qty, newOrderRespType="RESULT")
+        fill = float(order.get("avgPrice") or 0) or self.mark_price(symbol)
+        filled = float(order.get("executedQty") or 0) or float(qty)
+        try:
+            stop_id = self.place_stop(symbol, side, filled, stop_price)
+        except TestnetError:
+            self.close_symbol(symbol)
+            raise
+        return {"order_id": order.get("orderId"), "qty": filled, "fill": fill, "stop_order_id": stop_id}
+
+    def move_stop(self, symbol, side, qty, new_stop):
+        """اول حدضررِ تازه، بعد لغوِ قدیمی‌ها — پوزیشن حتی یک لحظه بی‌محافظ نمی‌ماند."""
+        new_id = self.place_stop(symbol, side, qty, new_stop)
+        for o in self.open_orders(symbol):
+            if o.get("type") == "STOP_MARKET" and o.get("orderId") != new_id:
+                try:
+                    self._signed("DELETE", "/fapi/v1/order", symbol=symbol, orderId=o["orderId"])
+                except TestnetError:
+                    log.exc("cancel superseded stop", symbol=symbol)
+        return new_id
+
+    def fills_since(self, symbol, start_ms):
+        """معامله‌های پرشدهٔ حساب روی یک نماد — برای قیمتِ واقعیِ خروج و لغزشِ حدضرر."""
+        return self._signed("GET", "/fapi/v1/userTrades", symbol=symbol,
+                            startTime=int(start_ms), limit=100)
 
     def positions(self):
         out = []

@@ -139,6 +139,17 @@ def cache_stats():
             "universe_size": len(_top_cache["symbols"])}
 
 
+def current_bar_open(symbol, tf):
+    """قیمتِ بازِ کندلِ **جاری** روی اسپاتِ بایننس — مرجعِ ورودِ قاعده‌های روزانه.
+    ``get_klines`` کندلِ باز را عمداً حذف می‌کند؛ این فقط همان یک عدد را می‌خواهد."""
+    raw = _binance_json("/api/v3/klines", {"symbol": symbol, "interval": TF_BINANCE[tf], "limit": 1})
+    return int(raw[-1][0]), float(raw[-1][1])
+
+
+def spot_price(symbol):
+    return float(_binance_json("/api/v3/ticker/price", {"symbol": symbol})["price"])
+
+
 def get_klines_cached(symbol, tf):
     """فقط از کش حافظه — بدون هیچ فراخوانی شبکه (برای محاسبات جمعی مثل رتبه قدرت نسبی)."""
     with _lock:
