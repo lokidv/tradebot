@@ -604,13 +604,32 @@ function trendTestnetHtml(x){
     ${err?`<div class="sub" style="color:var(--brass)">آخرین خطا (${coin(err.sym||"")}): ${err.msg}</div>`:""}`;
 }
 
+function notifyTrendSignals(d){
+  // هر سیگنالِ روند (بستهٔ روزانه بالای سقفِ ۲۰روزه) فقط یک‌بار — حتی پس از بازکردنِ دوبارهٔ صفحه
+  const fresh = (d.now||[]).filter(x => x.signal_today).map(x => `${x.sym}:${d.last_closed_bar_ms}`);
+  let seen = [];
+  try{ seen = JSON.parse(localStorage.trendSeen || "[]"); }catch(e){}
+  const news = fresh.filter(id => !seen.includes(id));
+  if(!news.length) return;
+  const names = news.map(id => id.split(":")[0].replace("USDT",""));
+  try{ if(localStorage.sound==="1") beep(); }catch(e){}
+  try{
+    if(localStorage.notif==="1" && "Notification" in window && Notification.permission==="granted")
+      new Notification(`📈 سیگنالِ روندِ روزانه: ${names.join("، ")}`,
+        {body:"بستهٔ روزانه بالای سقفِ ۲۰روزه — ورود در openِ کندلِ جاری. نامزدِ پژوهشی، اثبات‌نشده."});
+  }catch(e){}
+  toast(`📈 سیگنالِ روند: ${names.join("، ")} — ورود در openِ کندلِ جاری`);
+  try{ localStorage.trendSeen = JSON.stringify(seen.concat(news).slice(-200)); }catch(e){}
+}
+
 async function loadTrendBanner(){
   try{
     const [d, x] = await Promise.all([
       (await fetch("/api/trend", {cache:"no-store"})).json(),
       fetch("/api/trend/testnet", {cache:"no-store"}).then(r => r.json()).catch(() => null),
     ]);
-    const el = $("#trendBanner"); if(!el || !d.rules) return;
+    const el = $("#trendBanner"); if(!el) return;
+    if(!d.rules){ setTimeout(loadTrendBanner, 15000); return; }   // سرور تازه بالا آمده — زود دوباره
     const P = d.primary, ev = ((d.evidence||{}).rules||{})[P] || {}, acct = ev.account || {};
     const fw = (d.forward||{})[P] || {n:0};
     const day = ms => new Date(ms).toLocaleDateString("fa-IR");
@@ -645,7 +664,8 @@ async function loadTrendBanner(){
       ${(d.missing_data||[]).length ? `<div class="sub" style="color:var(--brass)">بی‌داده: ${d.missing_data.map(coin).join("، ")}</div>` : ""}
       ${trendTestnetHtml(x)}
     </div>`;
-  }catch(e){}
+    notifyTrendSignals(d);
+  }catch(e){ setTimeout(loadTrendBanner, 15000); }   // خطای شبکه در بالا آمدنِ سرور — ۱۰ دقیقه صبر نکن
 }
 
 /* ═══════════ بنرِ ساختِ کالیبراسیون ═══════════ */
