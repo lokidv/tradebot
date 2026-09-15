@@ -101,6 +101,17 @@ class PreregistrationTests(_ResearchMixin, unittest.TestCase):
         self.assertEqual(b["n_trials"], 2)
         self.assertEqual(b["previous_hash"], a["hash"])
 
+    def test_second_trial_never_reuses_data_the_first_trial_judged(self):
+        first = research.register(self.spans(), now=NOW)
+        later = NOW + 200 * 86400
+        spans = {"4h": (START, int(later * 1000)), "1d": (START, int(later * 1000))}
+        second = research.register(spans, now=later)
+        for tf in ("4h", "1d"):
+            self.assertGreaterEqual(second["final_windows"][tf]["start_ms"],
+                                    first["final_windows"][tf]["end_ms"],
+                                    f"{tf}: پنجرهٔ آزمونِ دوم با داده‌ی داوری‌شدهٔ اول هم‌پوشان است")
+            self.assertEqual(second["final_windows"][tf]["after_previous_trial"], first["hash"])
+
     def test_new_registration_clears_previously_allowed_combos(self):
         research.register(self.spans(), now=NOW)
         gver = gates.load_gates(force=True)["version"]

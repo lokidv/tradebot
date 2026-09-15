@@ -120,6 +120,15 @@ def register(spans, family=None, gate_numbers=None, symbols=MAJORS, note="", now
     prev = load_prereg()
     n_trials = int((prev or {}).get("n_trials", 0)) + 1
     family = list(family or DEFAULT_FAMILY)
+    windows = final_windows_from_spans(spans, end_ms=int(now * 1000))
+    # آزمونِ تازه فقط روی داده‌ای که **هیچ داوریِ قبلی ندیده**. بدونِ این، پیش‌ثبتِ دوم
+    # «۲۵٪ آخر تا حالا» را می‌گرفت که با پنجرهٔ داوری‌شدهٔ قبلی هم‌پوشان است — یعنی
+    # همان استفادهٔ دوباره از دادهٔ آزمون که کلِ این سازوکار برای جلوگیری از آن است.
+    for tf, w in windows.items():
+        prev_w = ((prev or {}).get("final_windows") or {}).get(tf)
+        if prev_w:
+            w["start_ms"] = max(int(w["start_ms"]), int(prev_w["end_ms"]))
+            w["after_previous_trial"] = prev.get("hash")
     doc = {
         "schema": 1,
         "registered_at": now,
@@ -131,7 +140,7 @@ def register(spans, family=None, gate_numbers=None, symbols=MAJORS, note="", now
                     "tp_r": bracket.TP_R, "max_bars": bracket.MAX_BARS,
                     "entry": "next_bar_open"},
         "cost_model": "costs.event_cost_pct (point-in-time tier + funding)",
-        "final_windows": final_windows_from_spans(spans, end_ms=int(now * 1000)),
+        "final_windows": windows,
         "n_trials": n_trials,
         "previous_hash": (prev or {}).get("hash"),
     }

@@ -315,23 +315,8 @@ def get_oi_history(symbol, period="1h", limit=48):
             rows = parsed[-limit:]
         except Exception:  # noqa: BLE001
             rows = []
-    # پشتیبان آخر: شتاب حجم اسپات به‌عنوان پروکسی اهرم (ضعیف‌تر ولی بهتر از هیچ)
-    if not rows:
-        try:
-            kl = get_klines_cached(symbol, "1h") or get_klines(symbol, "1h")
-            if kl and len(kl["v"]) >= 24:
-                vs = [float(x) for x in kl["v"][-48:]]
-                # OI-proxy = EMA حجم
-                ema = vs[0]
-                series = []
-                t0 = kl["t"][-len(vs)]
-                step = 3600000
-                for i, v in enumerate(vs):
-                    ema = 0.2 * v + 0.8 * ema
-                    series.append([t0 + i * step, ema])
-                rows = series
-        except Exception:  # noqa: BLE001
-            rows = []
+    # ⚠️ پشتیبانِ «EMAِ حجمِ اسپات به‌جای OI» حذف شد: متا-گیت آن را اهرم می‌خواند و
+    # بلاکِ سخت می‌زد. نبودِ داده = «نامعلوم»، نه عددِ ساختگی.
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(rows, f)
