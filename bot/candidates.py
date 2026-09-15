@@ -27,6 +27,7 @@ import threading
 import time
 
 import bracket
+import stats as statsmod   # «stats» نامِ تابعِ همین ماژول است
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CAND_PATH = os.path.join(DATA_DIR, "candidates.jsonl")
@@ -227,6 +228,11 @@ def stats(tf=None, days=30, only_tradeable=False, setup=None, side=None):
     out["win_rate"] = round(sum(1 for v in vals if v > 0) / len(vals) * 100, 1)
     out["avg_net_r"] = round(sum(vals) / len(vals), 4)
     out["sum_net_r"] = round(sum(vals), 3)
+    # کرانِ پایین با بوت‌استرپِ بلوکی و n مؤثر — همان معیاری که داورِ آزمونِ منجمد دارد
+    stamps = [float(r.get("candle_ts") or 0) for r in rows]
+    block = bracket.MAX_BARS * TF_MINUTES.get(tf or "1h", 60) * 60000
+    out["lcb_net_r_90"] = statsmod.block_bootstrap_lcb(vals, stamps, block, alpha=0.10, B=500)
+    out["n_eff"] = statsmod.effective_n(vals, stamps, block)
     for r in rows:
         key = f"{r['tf']}|{r['setup']}|{r['side']}"
         b = out["by_combo"].setdefault(key, {"n": 0, "wins": 0, "sum_r": 0.0})

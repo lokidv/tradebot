@@ -11,7 +11,6 @@ bot/data/candidates.jsonl
 bot/data/journal.jsonl
 bot/data/logs/
 bot/data/reports/
-bot/data/final_test/
 *.tmp
 bot.rar
 __pycache__/

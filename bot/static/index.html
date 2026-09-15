@@ -264,7 +264,7 @@
 <header>
   <div class="brand">
     <div class="mark">⌁</div>
-    <div><h1>میز فرمان CTP</h1><div class="sub">پایش ۲۰۰ ارز برتر · مدل آماری کالیبره</div></div>
+    <div><h1>میز فرمان CTP</h1><div class="sub">پایش ارزهای برتر · ورود فقط با ترکیبِ پیش‌ثبت‌شده و قضاوت‌شده</div></div>
   </div>
   <nav class="tabs" id="tfTabs">
     <button data-tf="15m">۱۵ دقیقه</button>
@@ -298,6 +298,7 @@
 </div>
 
 <main>
+  <div id="gateBanner"></div>
   <div id="calibBanner"></div>
   <div id="edgeBanner"></div>
 
@@ -534,6 +535,34 @@ async function jget(url){                        // fetch با نوارِ پیش
   finally{ nprog.done(); }
 }
 
+/* ═══════════ بنرِ قفلِ ایمنی و سلامت ═══════════ */
+async function loadGateBanner(){
+  try{
+    const [g, h, r] = await Promise.all([
+      (await fetch("/api/gates", {cache:"no-store"})).json(),
+      (await fetch("/api/health", {cache:"no-store"})).json(),
+      (await fetch("/api/research", {cache:"no-store"})).json(),
+    ]);
+    const el = $("#gateBanner");
+    const combos = (g.allowed_combos||[]);
+    const color = h.status==="green" ? "var(--up)" : h.status==="amber" ? "var(--brass)" : "var(--dn)";
+    const judged = r.judgement && r.judgement.judged;
+    const evid = judged ? Object.entries(r.judgement.hypotheses||{})
+        .map(([k,v])=>`${k}: ${({edge_proven:"اثبات شد",no_edge:"لبه نیست",
+          weak_edge:"لبهٔ ضعیف",insufficient_evidence:"شواهد ناکافی"})[v.evidence]||v.verdict||"—"}`).join(" · ") : "";
+    el.innerHTML = `<div class="calbanner" style="border-color:${color}">
+      <div class="top"><span>🔒 <b>قفلِ ایمنیِ سرمایه</b> — ${combos.length
+          ? `ترکیب‌های مجاز: ${combos.join("، ")} (فقط روی ${(g.allowed_symbols||[]).length} نماد)`
+          : "هیچ ترکیبی مجاز نیست؛ هیچ معامله‌ای باز نمی‌شود"}
+        · پول واقعی: <b>${g.live_effective?"فعال":"خاموش"}</b></span>
+        <span style="color:${color}">سلامت: <b>${h.status}</b></span></div>
+      ${(h.problems||[]).length?`<div class="sub" style="color:var(--dn)">${h.problems.join(" · ")}</div>`:""}
+      ${judged?`<div class="sub">حکمِ آزمونِ منجمد: ${evid}</div>`
+        : `<div class="sub">آزمونِ منجمد هنوز قضاوت نشده (${r.integrity})</div>`}
+    </div>`;
+  }catch(e){}
+}
+
 /* ═══════════ بنرِ ساختِ کالیبراسیون ═══════════ */
 async function loadCalibBanner(){
   try{
@@ -692,8 +721,8 @@ function notifyNewSignals(coins){
 function exportCSV(){
   const rows = window.LASTROWS||[];
   if(!rows.length){ toast("چیزی برای خروجی نیست", false); return; }
-  const head = "symbol,price,chg24h,score,z,side,setup,grade,p_up,target_pct,rr,ev_pct,ev_lcb_pct,p_win,p_win_low,p_win_high,edge_r,edge_lcb_r,market_rank_pct,n_hist,regime,status";
-  const body = rows.map(c=>[c.symbol,c.price,c.chg24h,c.score,c.z,c.side||"",c.setup_fa||"",c.grade||"",c.p_up,c.target_pct,c.rr||"",c.ev_pct??"",c.ev_lcb_pct??"",c.p_win??"",c.p_win_low??"",c.p_win_high??"",c.edge_r??"",c.edge_lcb_r??"",c.market_rank_pct??"",c.n_hist||"",c.regime,(c.status||"").replace(/,/g,"،")].join(","));
+  const head = "symbol,price,chg24h,score,z,side,setup,grade,authorized,p_up,target_pct,rr,ev_pct,ev_lcb_pct,p_win,p_win_low,p_win_high,edge_r,edge_lcb_r,market_rank_pct,n_hist,regime,status";
+  const body = rows.map(c=>[c.symbol,c.price,c.chg24h,c.score,c.z,c.side||"",c.setup_fa||"",c.grade||"",c.tradeable?"yes":"no",c.p_up,c.target_pct,c.rr||"",c.ev_pct??"",c.ev_lcb_pct??"",c.p_win??"",c.p_win_low??"",c.p_win_high??"",c.edge_r??"",c.edge_lcb_r??"",c.market_rank_pct??"",c.n_hist||"",c.regime,(c.status||"").replace(/,/g,"،")].join(","));
   dl("ctp-overview-"+TF+".csv", [head].concat(body).join("\n"));
 }
 function exportHistCSV(){
@@ -730,7 +759,7 @@ function rowHtml(c){
         : `<span class="${cls(c.target_pct)}">${pct(c.target_pct)}</span>${(c.p_up>=55 && c.target_pct<0) || (c.p_up<=45 && c.target_pct>0) ? ` <small title="مدل جهت‌یاب و مسیر درِیفت اختلاف دارند — به احتمال کالیبره اعتماد کنید">⚠</small>` : ""}<br><small class="mid">${px(c.target)}</small>`}</td>
     <td class="num">${c.rr ? fmt(c.rr,1) : "—"}</td>
     <td class="num ${c.ev_lcb_pct!=null?cls(c.ev_lcb_pct):""}">${c.ev_pct!=null ? `<b>${pct(c.ev_pct)}</b>${c.ev_lcb_pct!=null?`<br><small title="کران پایین با لحاظ عدم‌قطعیت">LCB ${pct(c.ev_lcb_pct)}</small>`:""}` : "—"}</td>
-    <td class="num">${c.p_win!=null ? `${fmt(c.p_win,0)}٪ <small>(${c.n_hist})</small>${c.p_win_low!=null?`<br><small class="mid">${fmt(c.p_win_low,0)}–${fmt(c.p_win_high,0)}٪ · ${c.reliability||"—"}</small>`:""}` : (c.win_rate!=null ? fmt(c.win_rate,0)+"٪ ("+c.bt_n+")" : "—")}</td>
+    <td class="num" ${c.p_win!=null && !c.tradeable ? 'style="opacity:.55" title="از مدلی که مجوزِ ورود ندارد — فقط تشخیصی"' : ""}>${c.p_win!=null ? `${fmt(c.p_win,0)}٪${!c.tradeable?' <small>تشخیصی</small>':''} <small>(${c.n_hist})</small>${c.p_win_low!=null?`<br><small class="mid">${fmt(c.p_win_low,0)}–${fmt(c.p_win_high,0)}٪ · ${c.reliability||"—"}</small>`:""}` : (c.win_rate!=null ? fmt(c.win_rate,0)+"٪ ("+c.bt_n+")" : "—")}</td>
     <td><span class="chip ${regimeCls(c.regime)}">${c.regime}</span>${c.market_rank_pct!=null?`<br><small class="mid">رتبه بازار ${fmt(c.market_rank_pct,0)}٪</small>`:""}${c.btc_align===false?`<br><small class="dn">⛔ BTC مخالف</small>`:""}</td>
     <td>${actionCell(c)}</td>
   </tr>`;
@@ -982,7 +1011,8 @@ function openTradeModal(sym){
   $("#tmTitle").textContent = `پوزیشن دمو — ${c.name} / USDT (${TF})`;
   $("#tmSide").innerHTML = `<span class="${c.side==="long"?"up":"dn"}">${c.side==="long"?"خرید ▲":"فروش ▼"}</span> · ${c.setup_fa||"—"} · درجه ${c.grade||"—"}`;
   $("#tmLevels").textContent = `${px(c.entry)} / ${px(c.sl)} / ${px(c.tp)}`;
-  $("#tmStats").innerHTML = `${c.p_win!=null?fmt(c.p_win,0)+"٪ برد":"—"} · EV ${c.ev_pct!=null?pct(c.ev_pct):"—"}` +
+  $("#tmStats").innerHTML = (c.tradeable ? "" : `<b style="color:var(--dn)">بدون مجوز ورود — اعداد فقط تشخیصی‌اند</b> · `) +
+    `${c.p_win!=null?fmt(c.p_win,0)+"٪ برد":"—"} · EV ${c.ev_pct!=null?pct(c.ev_pct):"—"}` +
     (c.signal_score!=null?` · امتیاز <b style="color:${c.signal_score>=75?"var(--up)":c.signal_score>=60?"var(--brass)":"var(--blue)"}">${c.signal_score}/۱۰۰ (${c.signal_tier})</b>`:"");
   $("#tmRiskDef").textContent = fmt(TS().risk||20, 0);
   $("#tmSize").value = defSizeFor(c.risk_pct);
@@ -1342,7 +1372,8 @@ document.addEventListener("keydown", e=>{
   if(e.key==="Escape"){ closeDrawer(); closeSettings(); closeTModal(); }
 });
 
-loadVersion(); loadOverview(); loadPositions(); loadConfig(false); loadEngineCred(); loadCalibBanner(); loadEdgeHealth(); loadBot();
+loadVersion(); loadGateBanner(); loadOverview(); loadPositions(); loadConfig(false); loadEngineCred(); loadCalibBanner(); loadEdgeHealth(); loadBot();
+setInterval(loadGateBanner, 60000);
 setInterval(loadBot, 6000);
 setInterval(loadOverview, 60000);
 setInterval(loadPositions, 30000);
