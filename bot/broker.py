@@ -12,9 +12,10 @@ from urllib.parse import urlencode
 import httpx
 
 import log
+import paths
 
 TESTNET_BASE = "https://testnet.binancefuture.com"   # ⚠️ فقط تست‌نت
-CFG_PATH = os.path.join(os.path.dirname(__file__), "data", "config.json")
+CFG_PATH = paths.data("config.json")
 DEFAULT_CFG = {"broker": "local", "api_key": "", "api_secret": "", "leverage": 2}
 _cfg_lock = threading.Lock()
 

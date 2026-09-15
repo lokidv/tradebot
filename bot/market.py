@@ -6,6 +6,8 @@ import time
 import threading
 import httpx
 
+import paths
+
 BINANCE_HOSTS = [
     "https://data-api.binance.vision",   # هاست عمومی داده — در اکثر مناطق باز است
     "https://api.binance.com",
@@ -162,7 +164,7 @@ def get_klines(symbol, tf, limit=420):
     return out
 
 
-HIST_DIR = os.path.join(os.path.dirname(__file__), "data", "hist")
+HIST_DIR = paths.data("hist")
 HIST_TTL = 86400            # تاریخچه عمیق روزی یک‌بار تازه می‌شود
 
 

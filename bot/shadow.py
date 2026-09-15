@@ -8,8 +8,9 @@ import time
 import uuid
 
 import bracket
+import paths
 
-SHADOW_PATH = os.path.join(os.path.dirname(__file__), "data", "signals_log.json")
+SHADOW_PATH = paths.data("signals_log.json")
 MIN_RISK_PCT = 0.05        # زیر این فاصله، گردکردنِ قیمت حدضرر را روی ورود می‌آورد و R بی‌معنا می‌شود
 MAX_ABS_R = 5.0            # هر |R| بزرگ‌تر، خطای داده است نه نتیجهٔ معامله
 _lock = threading.Lock()

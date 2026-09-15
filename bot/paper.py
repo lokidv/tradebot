@@ -7,8 +7,9 @@ import uuid
 from datetime import datetime, timezone
 
 import log
+import paths
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = paths.DATA_DIR
 PATH = os.path.join(DATA_DIR, "positions.json")
 # دفترِ کامل و فقط-افزودنیِ معامله‌های بسته. positions.json فقط ۲۰۰تای آخر را برای
 # رابط نگه می‌دارد؛ افتِ سرمایه و ضریبِ سود باید از کلِ تاریخچه حساب شوند.

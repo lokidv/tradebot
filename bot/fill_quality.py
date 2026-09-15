@@ -8,7 +8,9 @@ import threading
 import time
 from typing import Any
 
-PATH = os.path.join(os.path.dirname(__file__), "data", "fill_quality.json")
+import paths
+
+PATH = paths.data("fill_quality.json")
 _lock = threading.Lock()
 
 

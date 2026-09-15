@@ -27,9 +27,10 @@ import threading
 import time
 
 import bracket
+import paths
 import stats as statsmod   # «stats» نامِ تابعِ همین ماژول است
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = paths.DATA_DIR
 CAND_PATH = os.path.join(DATA_DIR, "candidates.jsonl")
 RESULT_PATH = os.path.join(DATA_DIR, "candidate_results.jsonl")
 

@@ -19,6 +19,7 @@ import log
 import engine
 import features
 import market
+import paths
 import research
 import stats
 import universe
@@ -29,7 +30,7 @@ try:
 except Exception:  # noqa: BLE001
     HAS_LGBM = False
 
-CALIB_PATH = os.path.join(os.path.dirname(__file__), "data", "calib.json")
+CALIB_PATH = paths.data("calib.json")
 COST_PCT = 0.15
 # هفتگی، نه روزانه: بازسازیِ روزانه همان پنجرهٔ آزمون را ۳۶۵ بار در سال دوباره قضاوت می‌کرد
 REBUILD_SEC = 7 * 86400

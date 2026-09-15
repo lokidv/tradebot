@@ -19,11 +19,14 @@ import threading
 import time
 import traceback
 
-LOG_DIR = os.path.join(os.path.dirname(__file__), "data", "logs")
+import paths
+
+LOG_DIR = paths.data("logs")
 LOG_PATH = os.path.join(LOG_DIR, "bot.log")
 MAX_BYTES = 5 * 1024 * 1024
 BACKUPS = 3
 DEDUP_WINDOW_SEC = 60
+STARTED_AT = time.time()   # شروعِ همین پروسه — مرزِ «هشدارهای اخیر» در /api/health
 
 _lock = threading.Lock()
 _logger = None
@@ -114,8 +117,12 @@ def counts():
         return dict(_counts)
 
 
-def tail(n=100, level=None):
-    """آخرین خطوطِ لاگ — برای نمایش در /api/health بدونِ بازکردنِ فایل روی دیسک."""
+def tail(n=100, level=None, since=None):
+    """آخرین خطوطِ لاگ — برای نمایش در /api/health بدونِ بازکردنِ فایل روی دیسک.
+
+    ``since`` (مثلاً ``STARTED_AT``): فقط خطوطِ پس از آن — سلامت دربارهٔ همین پروسه
+    است، مثلِ ``counts()``؛ کلِ تاریخچه در خودِ فایل می‌ماند.
+    """
     if not os.path.exists(LOG_PATH):
         return []
     try:
@@ -130,6 +137,8 @@ def tail(n=100, level=None):
         except ValueError:
             continue
         if level and row.get("level") != level:
+            continue
+        if since is not None and float(row.get("ts") or 0) < since:
             continue
         out.append(row)
     return out[-n:]

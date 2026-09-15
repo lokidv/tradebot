@@ -13,6 +13,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "bot"))
+import _hermetic  # noqa: E402,F401  — پیش از هر ماژولِ ربات: داده به پوشهٔ موقت
 
 import autotrader  # noqa: E402
 import fill_quality  # noqa: E402
@@ -62,6 +63,57 @@ class AppendAndReplayTests(_JournalMixin, unittest.TestCase):
             f.write('{"seq": 2, "kind": "storm", "unti')      # قطعِ برق
         journal.append(journal.STORM, until=3)
         self.assertEqual(len(journal.events()), 2)
+
+    def test_sequence_is_read_from_the_tail_of_a_large_journal(self):
+        with open(journal.PATH, "w", encoding="utf-8") as f:
+            for i in range(1, 3001):                      # ≈۱۵۰KB، بزرگ‌تر از TAIL_BYTES
+                f.write(f'{{"seq": {i}, "ts": 0, "kind": "storm", "until": 0, "pad": "{"x" * 20}"}}\n')
+        self.assertGreater(os.path.getsize(journal.PATH), journal.TAIL_BYTES)
+        self.assertEqual(journal.append(journal.STORM, until=1)["seq"], 3001)
+
+
+class QuarantineTests(_JournalMixin, unittest.TestCase):
+    """ژورنال بازنویسی نمی‌شود؛ رویدادِ اشتباه با اصلاحیه باطل می‌شود و خطِ اصلی می‌ماند."""
+
+    def test_quarantined_events_vanish_from_queries_but_stay_on_disk(self):
+        journal.append(journal.GATE_CHANGE, reason="real")
+        bad = journal.append(journal.GATE_CHANGE, reason="from a test")
+        journal.quarantine([bad], "written by the test suite")
+        self.assertEqual([e["reason"] for e in journal.events(kinds=[journal.GATE_CHANGE])], ["real"])
+        with open(journal.PATH, encoding="utf-8") as f:
+            self.assertIn("from a test", f.read())
+        self.assertEqual(journal.summary()["quarantined"], 1)
+
+    def test_a_quarantined_brake_is_not_restored_on_restart(self):
+        ev = journal.append(journal.STORM, until=time.time() + 3600)
+        journal.quarantine([ev], "test")
+        self.assertEqual(journal.replay()["storm_until"], 0.0)
+
+    def test_a_shared_seq_is_told_apart_by_its_timestamp(self):
+        """پیش از قفلِ بین‌پروسه‌ای دو رویداد seq ۱۱۱ گرفتند؛ باطل‌کردنِ یکی نباید دیگری را ببرد."""
+        with open(journal.PATH, "w", encoding="utf-8") as f:
+            f.write('{"seq": 7, "ts": 100.5, "kind": "gate_change", "reason": "real"}\n')
+            f.write('{"seq": 7, "ts": 200.25, "kind": "gate_change", "reason": "test"}\n')
+        journal.quarantine([{"seq": 7, "ts": 200.25}], "test")
+        self.assertEqual([e["reason"] for e in journal.events(kinds=[journal.GATE_CHANGE])], ["real"])
+
+
+class CrossProcessSequenceTests(_JournalMixin, unittest.TestCase):
+    """برنامه و پروسهٔ بازسازی هم‌زمان در ژورنال می‌نویسند؛ هر کدام شمارندهٔ خودش
+    را داشت و seq ۱۱۱ دو بار نوشته شد. seq باید بین پروسه‌ها یکتا بماند."""
+
+    def test_two_processes_appending_at_once_never_share_a_seq(self):
+        import subprocess
+        child = ("import sys; sys.path.insert(0, sys.argv[1]); import journal; journal.PATH = sys.argv[2]\n"
+                 "for i in range(40): journal.append('storm', until=0, who=sys.argv[3], i=i)\n")
+        bot = os.path.join(ROOT, "bot")
+        procs = [subprocess.Popen([sys.executable, "-c", child, bot, journal.PATH, who])
+                 for who in ("app", "rebuild")]
+        for p in procs:
+            self.assertEqual(p.wait(timeout=60), 0)
+        seqs = [int(r["seq"]) for r in journal._read_raw()]
+        self.assertEqual(len(seqs), 80)
+        self.assertEqual(sorted(seqs), list(range(1, 81)), "seq تکراری یا جاافتاده")
 
 
 class RiskBrakesSurviveRestartTests(_JournalMixin, unittest.TestCase):

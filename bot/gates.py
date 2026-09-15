@@ -13,7 +13,9 @@ import os
 import threading
 import time
 
-GATES_PATH = os.path.join(os.path.dirname(__file__), "data", "gates.json")
+import paths
+
+GATES_PATH = paths.data("gates.json")
 LIVE_ACK_ENV = "TRADERBOT_LIVE_ACK"
 
 DEFAULTS = {
@@ -86,14 +88,19 @@ def load_gates(force=False):
         return data
 
 
-def _save(data, reason):
-    """نوشتن اتمیک + ثبت تاریخچه. فقط توسط توابع همین ماژول صدا زده می‌شود."""
+def _save(data, reason, action="other", **extra):
+    """نوشتن اتمیک + ثبت تاریخچه. فقط توسط توابع همین ماژول صدا زده می‌شود.
+
+    ``action`` (preregister / judge / kill / scale) برای ماشین است و ``reason`` برای
+    انسان: گزارش با آن پروتکل را از دست‌کاری جدا می‌کند، نه با خواندنِ متن.
+    """
     data = _validate(data)
+    row = {"reason": reason, "action": action,
+           "allowed_combos": list(data["allowed_combos"]),
+           "live_allowed": data["live_allowed"],
+           "max_risk_pct_per_trade": data["max_risk_pct_per_trade"], **extra}
     hist = list(data.get("history") or [])
-    hist.append({"ts": time.time(), "reason": reason,
-                 "allowed_combos": list(data["allowed_combos"]),
-                 "live_allowed": data["live_allowed"],
-                 "max_risk_pct_per_trade": data["max_risk_pct_per_trade"]})
+    hist.append({"ts": time.time(), **row})
     data["history"] = hist[-200:]
     os.makedirs(os.path.dirname(GATES_PATH), exist_ok=True)
     tmp = GATES_PATH + ".tmp"
@@ -105,10 +112,7 @@ def _save(data, reason):
     # هر تغییرِ گیت در ژورنال — در طولِ دورهٔ اثبات، ساعت را صفر می‌کند (report.py)
     try:
         import journal
-        journal.append(journal.GATE_CHANGE, reason=reason,
-                       allowed_combos=list(data["allowed_combos"]),
-                       live_allowed=data["live_allowed"],
-                       max_risk_pct_per_trade=data["max_risk_pct_per_trade"])
+        journal.append(journal.GATE_CHANGE, **row)
     except Exception:  # noqa: BLE001, silent-ok — gates پیش از لاگ بارگذاری می‌شود؛ ژورنال اختیاری است
         pass
     return data
@@ -120,7 +124,7 @@ def set_live_risk(risk_pct, reason, report_token=None):
     if report_token != f"scale:{g['version']}":
         raise GateError("تغییرِ ریسکِ لایو فقط از مسیرِ تصمیمِ مقیاسِ پیش‌ثبت‌شده مجاز است")
     g["max_risk_pct_per_trade"] = float(risk_pct)
-    return _save(g, reason)
+    return _save(g, reason, action="scale")
 
 
 def kill(reason):
@@ -128,7 +132,7 @@ def kill(reason):
     g = dict(load_gates())
     g["live_allowed"] = False
     g["allowed_combos"] = []
-    return _save(g, f"KILL: {reason}")
+    return _save(g, f"KILL: {reason}", action="kill")
 
 
 def is_combo_allowed(tf, setup, side, symbol=None):
@@ -171,7 +175,7 @@ def set_allowed_combos(combos, reason, judge_token=None, symbols=None):
     g["allowed_combos"] = sorted(set(combos))
     if symbols is not None:
         g["allowed_symbols"] = sorted(set(symbols))
-    return _save(g, reason)
+    return _save(g, reason, action="judge", prereg_hash=g.get("preregistration_hash"))
 
 
 def bind_preregistration(prereg_hash, reason):
@@ -185,7 +189,7 @@ def bind_preregistration(prereg_hash, reason):
     g["preregistered_at"] = time.time()
     g["allowed_combos"] = []
     g["allowed_symbols"] = []
-    return _save(g, reason)
+    return _save(g, reason, action="preregister", prereg_hash=prereg_hash)
 
 
 def status():

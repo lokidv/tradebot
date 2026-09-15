@@ -30,9 +30,10 @@ import numpy as np
 
 import bracket
 import gates
+import paths
 import stats
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = paths.DATA_DIR
 PREREG_PATH = os.path.join(DATA_DIR, "preregistration.json")
 FINAL_DIR = os.path.join(DATA_DIR, "final_test")
 

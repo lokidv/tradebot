@@ -29,6 +29,7 @@ import engine
 import features
 import universe
 import paper
+import paths
 import broker
 import calib
 import shadow
@@ -428,7 +429,7 @@ def _calib_builder():
     if p is not None and p.poll() is None:
         return                                     # یکی در جریان است
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rebuild_models.py")
-    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "logs", "rebuild.log")
+    log_path = paths.data("logs", "rebuild.log")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     try:
         with open(log_path, "a", encoding="utf-8") as out:
@@ -622,7 +623,7 @@ def health():
 
     try:
         out["logs"] = log.counts()
-        recent = log.tail(200, level="warning")
+        recent = log.tail(200, level="warning", since=log.STARTED_AT)
         out["logs"]["recent_warnings"] = len(recent)
         out["logs"]["sample"] = [r.get("msg") for r in recent[-5:]]
     except Exception:  # noqa: BLE001

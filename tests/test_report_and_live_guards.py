@@ -12,6 +12,7 @@ import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "bot"))
+import _hermetic  # noqa: E402,F401  — پیش از هر ماژولِ ربات: داده به پوشهٔ موقت
 
 import autotrader  # noqa: E402
 import candidates  # noqa: E402
@@ -268,6 +269,73 @@ class FullReportTests(_IsolatedData, unittest.TestCase):
         rep = report.build(closed_positions=[])
         self.assertGreater(rep["gate_changes_during_proving"], 0)
         self.assertTrue(any("ساعت" in r for r in rep["stages"]["shadow"]["reasons"]))
+
+
+class ProvingClockTests(_IsolatedData, unittest.TestCase):
+    """ساعتِ اثبات با حکم شروع می‌شود. خودِ پروتکل (پیش‌ثبت و حکم) «تغییر» نیست؛
+    قبلاً بود، و مرحلهٔ سایه حتی در غیابِ هر دست‌کاری هرگز قبول نمی‌شد."""
+
+    def _register_and_judge(self, edge_combo=None):
+        from test_research_judge import NOW, START, events_for
+        end = int(NOW * 1000)
+        research.register({"4h": (START, end), "1d": (START, end)}, now=NOW)
+        rng = np.random.default_rng(5)
+        by_tf = {"4h": [], "1d": []}
+        for hyp in research.DEFAULT_FAMILY:
+            key = gates.combo_key(hyp["tf"], hyp["setup"], hyp["side"])
+            spacing = (end - START) / research.TF_MS[hyp["tf"]] / 6000
+            by_tf[hyp["tf"]].extend(events_for(hyp["tf"], hyp["setup"], hyp["side"], 6000,
+                                               0.45 if key == edge_combo else 0.0, rng,
+                                               list(research.MAJORS), spacing))
+        return research.judge(by_tf, now=NOW)
+
+    def test_the_judgement_itself_does_not_restart_the_clock(self):
+        res = self._register_and_judge("4h|zx|long")
+        self.assertIn("4h|zx|long", res["passing"])
+        rep = report.build(closed_positions=[])
+        self.assertEqual(rep["gate_changes_during_proving"], 0)
+        self.assertTrue(rep["stages"]["frozen_test"]["pass"])
+        self.assertFalse(any("ساعت" in r for r in rep["stages"]["shadow"]["reasons"]))
+        self.assertIsNotNone(rep["proving_started_at"])
+
+    def test_a_kill_after_the_judgement_restarts_the_clock(self):
+        self._register_and_judge("4h|zx|long")
+        gates.kill("test")
+        rep = report.build(closed_positions=[])
+        self.assertEqual(rep["gate_changes_during_proving"], 1)
+
+    def test_a_quarantined_gate_event_does_not_restart_the_clock(self):
+        self._register_and_judge("4h|zx|long")
+        ev = [e for e in journal.events(kinds=[journal.GATE_CHANGE])][-1]
+        bogus = journal.append(journal.GATE_CHANGE, reason="t", action="judge", prereg_hash="a4465e8337e4")
+        self.assertEqual(report.build(closed_positions=[])["gate_changes_during_proving"], 1)
+        journal.quarantine([bogus], "written by the test suite")
+        self.assertEqual(report.build(closed_positions=[])["gate_changes_during_proving"], 0)
+        self.assertEqual(ev["action"], "judge")
+
+    def test_a_risk_size_step_is_not_a_change_to_what_is_allowed(self):
+        self._register_and_judge("4h|zx|long")
+        ver = gates.load_gates(force=True)["version"]
+        gates.set_live_risk(0.5, "scale", report_token=f"scale:{ver}")
+        self.assertEqual(report.build(closed_positions=[])["gate_changes_during_proving"], 0)
+
+    def test_hand_edited_gates_fail_the_frozen_stage(self):
+        """ویرایشِ دستیِ gates.json ردی در ژورنال نمی‌گذارد؛ مقایسه با حکم آن را می‌گیرد."""
+        self._register_and_judge(None)                     # هیچ ترکیبی قبول نشد
+        blob = dict(gates.load_gates(force=True), allowed_combos=["4h|zx|long"])
+        with open(gates.GATES_PATH, "w", encoding="utf-8") as f:
+            json.dump(blob, f)
+        rep = report.build(closed_positions=[])
+        self.assertEqual(rep["allowed_beyond_judgement"], ["4h|zx|long"])
+        self.assertFalse(rep["stages"]["frozen_test"]["pass"])
+        self.assertFalse(rep["ready_for_live"])
+
+    def test_a_judgement_of_an_older_trial_does_not_vouch_for_the_new_one(self):
+        self._register_and_judge("4h|zx|long")
+        research.register({"4h": (0, int(time.time() * 1000))}, now=time.time())
+        rep = report.build(closed_positions=[])
+        self.assertIsNone(rep["proving_started_at"])
+        self.assertFalse(rep["stages"]["frozen_test"]["pass"])
 
 
 if __name__ == "__main__":

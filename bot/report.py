@@ -25,9 +25,10 @@ import bracket
 import candidates
 import gates
 import journal
+import paths
 import stats
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DATA_DIR = paths.DATA_DIR
 REPORT_DIR = os.path.join(DATA_DIR, "reports")
 HEALTH_SAMPLES = os.path.join(DATA_DIR, "health_samples.jsonl")
 DAY = 86400.0
@@ -263,8 +264,51 @@ def evaluate_ops(now=None, gates_=OPS_GATES):
 
 
 def gate_changes_since(ts):
-    """تغییرِ گیت در طولِ دورهٔ اثبات = ساعت از نو."""
+    """همهٔ رویدادهای تغییرِ گیت از ``ts`` به بعد."""
     return [e for e in journal.events(kinds=[journal.GATE_CHANGE], since=ts)]
+
+
+def _gate_action(ev):
+    """نوعِ تغییرِ گیت. رویدادهای پیش از فیلدِ ``action`` از متنِ reason خوانده می‌شوند."""
+    if ev.get("action"):
+        return ev["action"]
+    reason = str(ev.get("reason") or "")
+    for prefix, action in (("preregistered trial", "preregister"), ("judged prereg", "judge"),
+                           ("KILL:", "kill")):
+        if reason.startswith(prefix):
+            return action
+    return "other"
+
+
+def _event_hash(ev):
+    if ev.get("prereg_hash"):
+        return str(ev["prereg_hash"])
+    reason = str(ev.get("reason") or "")
+    return reason.split()[-1] if reason.startswith("judged prereg ") else None
+
+
+def gate_changes_during_proving(prereg_hash, since_ts, judged=False):
+    """تغییرهایی که شواهدِ دورهٔ اثبات را باطل می‌کنند — ساعت از نو.
+
+    پیش‌ثبتِ همین آزمایش و **یک** نوشتنِ حکمش خودِ پروتکل‌اند، نه دست‌کاری؛ پلهٔ
+    اندازهٔ ریسک (scale) هم فهرستِ مجاز را عوض نمی‌کند. هر چیزِ دیگر — قطعِ اضطراری،
+    پیش‌ثبتِ تازه، نوشتنِ فهرستِ مجاز بدونِ حکمِ ثبت‌شده، تغییرِ ناشناخته — شمرده می‌شود.
+    بدونِ این تفکیک، خودِ حکم «تغییر در دورهٔ اثبات» شمرده می‌شد و مرحلهٔ سایه
+    هیچ‌وقت نمی‌توانست قبول شود.
+    """
+    out, judgement_seen = [], False
+    for e in gate_changes_since(since_ts):
+        action, h = _gate_action(e), _event_hash(e)
+        ours = bool(h and prereg_hash and str(prereg_hash).startswith(h))
+        if action == "scale":
+            continue
+        if action == "preregister" and ours:
+            continue
+        if action == "judge" and ours and judged and not judgement_seen:
+            judgement_seen = True
+            continue
+        out.append(e)
+    return out
 
 
 # ───────────────────────── مقیاسِ سرمایهٔ واقعی ─────────────────────────
@@ -331,13 +375,25 @@ def build(now=None, closed_positions=None, testnet_started_at=None):
     now = now if now is not None else time.time()
     g = gates.load_gates(force=True)
     doc = research.load_prereg() or {}
-    since = float(doc.get("registered_at") or now)
     judged = research.last_judgement() or {}
+    # حکمِ **همین** پیش‌ثبت؛ حکمِ آزمایشِ قبلی دربارهٔ فهرستِ فعلی چیزی نمی‌گوید
+    judged_this = bool(judged.get("judged")) and bool(doc.get("hash")) \
+        and judged.get("prereg_hash") == doc.get("hash")
+    if not judged_this:
+        judged = {}
+    # ساعتِ اثبات با حکم شروع می‌شود (نه با پیش‌ثبت): پیش از حکم چیزی مجاز نبود
+    since = float(judged.get("judged_at") or doc.get("registered_at") or now)
     allowed = g.get("allowed_combos") or []
     symbols = g.get("allowed_symbols") or []
     frozen_means = [h.get("mean") for k, h in (judged.get("hypotheses") or {}).items()
                     if k in allowed and h.get("mean") is not None]
     frozen_mean = float(np.mean(frozen_means)) if frozen_means else None
+    # gates.json را با دست هم می‌شود ویرایش کرد و آن ردی در ژورنال نمی‌گذارد؛ پس
+    # فهرستِ فعلی با خودِ حکم مقایسه می‌شود. کمتر از حکم (پس از قطعِ اضطراری) امن
+    # است؛ هر چیزِ **بیشتر** از حکم مجوزی است که هیچ آزمونی نداده.
+    beyond = sorted(set(allowed) - set(judged.get("passing") or []))
+    if allowed:
+        beyond += sorted(set(symbols) - set(judged.get("symbols") or []))
 
     shadow = shadow_section(since, allowed, symbols, now=now)
     all_cands = shadow_section(since, [], [], now=now)       # همهٔ کاندیدها، برای مقایسه
@@ -345,12 +401,14 @@ def build(now=None, closed_positions=None, testnet_started_at=None):
     closed = closed_positions or []
     gap = sim_vs_exchange_gap(closed)
     tn_days = (now - testnet_started_at) / DAY if testnet_started_at else 0.0
-    changes = gate_changes_since(since)
+    changes = gate_changes_during_proving(doc.get("hash"), since, judged=judged_this)
     rep = {
         "generated_at": now,
         "prereg_hash": doc.get("hash"),
         "registered_at": doc.get("registered_at"),
+        "proving_started_at": judged.get("judged_at"),
         "allowed_combos": allowed,
+        "allowed_beyond_judgement": beyond,
         "frozen_test_mean_r": frozen_mean,
         "shadow_allowed": shadow,
         "shadow_all_candidates": {k: all_cands.get(k) for k in
@@ -365,6 +423,12 @@ def build(now=None, closed_positions=None, testnet_started_at=None):
         rep["stages"]["frozen_test"] = {
             "pass": False,
             "reasons": ["هیچ ترکیبی از آزمونِ منجمد عبور نکرده — مراحلِ بعد موضوعیت ندارند"]}
+    elif beyond:
+        rep["stages"]["frozen_test"] = {
+            "pass": False,
+            "reasons": [f"gates.json چیزی را مجاز کرده که حکمِ این پیش‌ثبت قبول نکرده: {beyond}"]}
+    else:
+        rep["stages"]["frozen_test"] = {"pass": True, "reasons": []}
     rep["stages"]["shadow"] = evaluate_shadow(shadow, frozen_mean)
     if changes:
         rep["stages"]["shadow"]["pass"] = False

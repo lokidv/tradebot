@@ -16,8 +16,9 @@ import journal
 import log
 import market
 import paper
+import paths
 
-CFG_PATH = os.path.join(os.path.dirname(__file__), "data", "autobot.json")
+CFG_PATH = paths.data("autobot.json")
 CYCLE_SEC = 45                     # فاصلهٔ چرخه‌های فکر کردن (تحلیل و شکار)
 MONITOR_SEC = 12                   # پایشِ لحظه‌ایِ پوزیشن‌های باز (تریلینگ/برداشت پله‌ای/حدها)
 
