@@ -481,7 +481,8 @@ def _startup():
                 log.exc("health/report loop")
             try:
                 # دفترِ رو-به-جلوِ روند باید حتی وقتی کسی صفحه را باز نکرده ثبت شود
-                trend.snapshot()
+                snap = trend.snapshot()
+                trend.sync_demo(snap.get("now"))      # حدضررِ پوزیشن‌های دموی روند هم‌پای قاعده
             except Exception:  # noqa: BLE001
                 log.exc("trend tracker")
             try:
@@ -545,7 +546,23 @@ def report_now(write: bool = False):
 def trend_status(force: bool = False):
     """روندِ روزانه — نامزدِ پژوهشی و اثبات‌نشده: وضعیتِ قاعده‌ها روی ۲۰ ارزِ بزرگ،
     سیگنال‌های امروز، دفترِ رو-به-جلو و شواهدِ اکتشاف. هیچ مجوزی نمی‌دهد."""
-    return trend.snapshot(force=force)
+    out = dict(trend.snapshot(force=force))
+    out["demo_open"] = trend.demo_open_symbols()          # کش نمی‌شود: همین لحظه
+    return out
+
+
+class TrendDemoReq(BaseModel):
+    symbol: str
+    risk_pct: float = 0.5
+
+
+@app.post("/api/trend/demo")
+def trend_demo_open(req: TrendDemoReq):
+    """«خرید در دمو» برای سیگنالِ قابل‌اقدامِ امروز — حسابِ شبیه‌سازِ محلی، نه صرافی."""
+    try:
+        return trend.open_demo(req.symbol.upper(), req.risk_pct)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.get("/api/trend/testnet")

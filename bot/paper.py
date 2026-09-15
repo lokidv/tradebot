@@ -73,11 +73,16 @@ def list_positions():
 
 
 def open_position(symbol, tf, side, entry, sl, tp, size_usdt, time_stop_min, grade="", mode="local", qty=None,
-                  opened_by="user", cost_pct=DEFAULT_COST_PCT):
-    entry, sl, tp, size_usdt = map(float, (entry, sl, tp, size_usdt))
-    if side not in ("long", "short") or min(entry, sl, tp, size_usdt) <= 0:
+                  opened_by="user", cost_pct=DEFAULT_COST_PCT, strategy=None, market="perp"):
+    """``tp=None``: بی‌هدف (قاعدهٔ روند — فقط حدضررِ دنباله‌دار). ``market="spot"``: بی‌فاندینگ."""
+    entry, sl, size_usdt = map(float, (entry, sl, size_usdt))
+    tp = None if tp is None else float(tp)
+    if side not in ("long", "short") or min(entry, sl, size_usdt) <= 0 or (tp is not None and tp <= 0):
         raise ValueError("پارامترهای پوزیشن نامعتبر است")
-    if (side == "long" and not sl < entry < tp) or (side == "short" and not tp < entry < sl):
+    if tp is None:
+        if (side == "long" and not sl < entry) or (side == "short" and not entry < sl):
+            raise ValueError("حدضرر با جهت معامله سازگار نیست")
+    elif (side == "long" and not sl < entry < tp) or (side == "short" and not tp < entry < sl):
         raise ValueError("حدضرر/هدف با جهت معامله سازگار نیست")
     pos = {
         "id": uuid.uuid4().hex[:10],
@@ -88,6 +93,7 @@ def open_position(symbol, tf, side, entry, sl, tp, size_usdt, time_stop_min, gra
         "mode": mode, "qty": qty, "opened_by": opened_by,
         "cost_pct": max(float(cost_pct), 0.0),
         "r0": abs(entry - sl),                 # ریسکِ اولیه (برای محاسبهٔ R حتی بعد از جابه‌جاییِ حدضرر)
+        "strategy": strategy, "market": market,
     }
     with _lock:
         db = _load()
@@ -199,7 +205,8 @@ def _barrier_exit(pos, kl):
     if not kl or not kl.get("t"):
         return None
     d = 1 if pos["side"] == "long" else -1
-    sl, tp = float(pos["sl"]), float(pos["tp"])
+    sl = float(pos["sl"])
+    tp = None if pos.get("tp") is None else float(pos["tp"])      # بی‌هدف: فقط حدضرر
     since = float(pos.get("bar_ts") or _opened_ms(pos))
     for i, t in enumerate(kl["t"]):
         if t <= since:
@@ -209,7 +216,7 @@ def _barrier_exit(pos, kl):
             return _apply_slippage(o, pos["side"], pos.get("cost_pct")), "حدضرر (گپ)", t
         if (l <= sl if d == 1 else h >= sl):
             return _apply_slippage(sl, pos["side"], pos.get("cost_pct")), "حدضرر", t
-        if (h >= tp if d == 1 else l <= tp):
+        if tp is not None and (h >= tp if d == 1 else l <= tp):
             return tp, "هدف ✅", t
         pos["bar_ts"] = t
     return None
@@ -230,7 +237,7 @@ def refresh(prices, klines_fn=None, funding_fn=None):
             if pos.get("mode") == "testnet":     # چرخه تست‌نت را صرافی مدیریت می‌کند، نه شبیه‌ساز محلی
                 still.append(pos)
                 continue
-            if funding_fn is not None:
+            if funding_fn is not None and pos.get("market") != "spot":     # اسپات فاندینگ ندارد
                 try:
                     _accrue_funding(pos, funding_fn(pos["symbol"]), now_ms)
                 except Exception:  # noqa: BLE001 — نبودِ فاندینگ نباید پوزیشن را بشکند
@@ -256,7 +263,7 @@ def refresh(prices, klines_fn=None, funding_fn=None):
                 worst = min(price, pos["sl"]) if d == 1 else max(price, pos["sl"])
                 exit_price = _apply_slippage(worst, pos["side"], pos.get("cost_pct"))
                 db["closed"].insert(0, _close(pos, exit_price, "حدضرر"))
-            elif (d == 1 and price >= pos["tp"]) or (d == -1 and price <= pos["tp"]):
+            elif pos.get("tp") is not None and ((d == 1 and price >= pos["tp"]) or (d == -1 and price <= pos["tp"])):
                 db["closed"].insert(0, _close(pos, pos["tp"], "هدف ✅"))
             elif age_min >= pos["time_stop_min"]:
                 db["closed"].insert(0, _close(pos, price, "حد زمانی"))

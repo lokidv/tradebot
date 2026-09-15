@@ -621,6 +621,25 @@ function notifyTrendSignals(d){
   try{ localStorage.trendSeen = JSON.stringify(seen.concat(news).slice(-200)); }catch(e){}
 }
 
+async function openTrendDemo(sym){
+  let risk = 0.5;
+  try{ risk = parseFloat(localStorage.trRisk||"0.5")||0.5; }catch(e){}
+  try{
+    const r = await fetch("/api/trend/demo", {method:"POST", headers:{"Content-Type":"application/json"},
+                                             body: JSON.stringify({symbol: sym, risk_pct: risk})});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.detail || "باز نشد");
+    toast(`✅ ${sym.replace("USDT","")} در دمو خریده شد — ارزش ${fmt(j.size_usdt,0)}$، حدضرر ${px(j.sl)} (ریسکِ ${risk}٪ موجودیِ دمو)`);
+    loadPositions(); loadTrendBanner();
+  }catch(e){ toast("❌ " + e.message, false); }
+}
+
+function trendDemoBtn(x){
+  const open = ((window.TREND||{}).demo_open||[]).includes(x.sym);
+  return open ? `<span class="mid">✓ در دمو باز است</span>`
+              : `<button class="gear" style="padding:3px 10px;font-size:12px" onclick="openTrendDemo('${x.sym}')">▶ خرید در دمو</button>`;
+}
+
 function setTrendSizing(){
   try{ localStorage.trCapital = $("#trCap").value.trim(); localStorage.trRisk = $("#trRisk").value.trim(); }catch(e){}
   loadTrendBanner();
@@ -645,9 +664,10 @@ async function loadTrendBanner(){
     const now = d.now || [];
     const by = c => now.filter(x => x.category === c);
     const act = [...by("new"), ...by("join")], late = by("late"), watch = by("watch");
+    window.TREND = d;                                    // دکمهٔ دمو وضعیتِ «باز است» را از همین می‌خواند
     const buy = (x, label) => `<tr><td><b>${coin(x.sym)}</b></td><td class="up">${label}</td>
         <td class="num">ورود ~${px(x.last)}</td><td class="num">حدضرر ${px(x.stop)} <small class="mid">(−${fmt(x.stop_distance_pct,1)}٪)</small></td>
-        <td class="num">${size(x.stop_distance_pct)}</td></tr>`;
+        <td class="num">${size(x.stop_distance_pct)}</td><td>${trendDemoBtn(x)}</td></tr>`;
     const actRows = act.map(x => x.category === "new"
         ? buy(x, "🟢 ورودِ تازه — شکستِ سقفِ ۲۰روزه")
         : buy(x, `🟡 پیوستن مجاز — روزِ ${x.days_in} روند`));
@@ -959,6 +979,7 @@ function trendSignalRows(){
       · ${cap > 0 ? `خرید به ارزشِ <b class="num">${fmt(cap*risk/x.stop_distance_pct,0)} USDT</b> <small class="mid">(ریسکِ ${risk}٪ از ${fmt(cap,0)})</small>`
                   : `<span class="mid">حجم: سرمایه را در پنلِ روند وارد کنید</span>`}
       · <span class="mid">خروج: حدضررِ دنباله‌دار — هر روز ۳:۳۰ بامدادِ تهران از پنلِ روند بخوانید و فقط بالا ببرید</span>
+      &nbsp; ${trendDemoBtn(x)}
     </td></tr>`).join("");
 }
 
@@ -1228,10 +1249,14 @@ async function tmConfirm(){
 function posCard(p, open){
   const side = p.side==="long" ? `<span class="up">خرید ▲</span>` : `<span class="dn">فروش ▼</span>`;
   const modeChip = (p.mode==="testnet" ? ` <span class="chip trend">تست‌نت</span>` : "")
-                 + (p.opened_by==="bot" ? ` <span class="chip" style="background:rgba(88,166,255,.12);color:var(--blue)">🤖 ربات</span>` : "");
+                 + (p.opened_by==="bot" ? ` <span class="chip" style="background:rgba(88,166,255,.12);color:var(--blue)">🤖 ربات</span>` : "")
+                 + (p.strategy==="trend20" ? ` <span class="chip trend">📈 روند · اسپات</span>` : "");
   const rp = Math.abs(p.entry-p.sl)/Math.max(p.entry,1e-12)*100;
   let range = "";
-  if(open && p.tp!==p.sl){
+  if(open && p.tp==null){
+    // پوزیشنِ روند: هدف ندارد؛ حدضررِ دنباله‌دار هر روز فقط بالا می‌رود
+    range = `<div class="rlbl"><span>حدضررِ دنباله‌دار ${px(p.sl)}</span><span>بی‌هدف — تا خوردنِ حدضرر</span></div>`;
+  } else if(open && p.tp!==p.sl){
     const posn = Math.min(Math.max(((p.last_price!=null?p.last_price:p.entry)-p.sl)/(p.tp-p.sl),0),1)*100;
     const entn = Math.min(Math.max((p.entry-p.sl)/(p.tp-p.sl),0),1)*100;
     range = `<div class="range"><span class="re" style="left:${entn.toFixed(1)}%"></span><i style="left:${posn.toFixed(1)}%"></i></div>
@@ -1241,8 +1266,8 @@ function posCard(p, open){
   let adv = "";
   if(open && p.advice && p.advice.action){
     const a = p.advice;
-    const col  = {close_now:"var(--dn)", lock_profit:"#e3b341", move_be:"var(--blue)", time_exit:"var(--mid)", hold:"var(--mid)"}[a.action] || "var(--mid)";
-    const icon = {close_now:"⛔", lock_profit:"💰", move_be:"🛡️", time_exit:"⏳", hold:"🧭"}[a.action] || "🧭";
+    const col  = {close_now:"var(--dn)", lock_profit:"#e3b341", move_be:"var(--blue)", time_exit:"var(--mid)", hold:"var(--mid)", hold_trend:"var(--up)"}[a.action] || "var(--mid)";
+    const icon = {close_now:"⛔", lock_profit:"💰", move_be:"🛡️", time_exit:"⏳", hold:"🧭", hold_trend:"📈"}[a.action] || "🧭";
     const beBtn = (a.action==="move_be" && p.mode!=="testnet")
       ? ` <button class="btn mini" style="margin-top:4px" onclick="moveBE('${p.id}')">🛡️ انجام بده</button>` : "";
     adv = `<div class="advice ${a.urgency>=2?"hot":""}" style="border-inline-start-color:${col}">

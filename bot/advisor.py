@@ -25,6 +25,13 @@ def advise(pos, a, btc_z=None):
     خروجی: {action, title, urgency ۰-۳, reasons[], p_hit_tp, ev_hold_r, pnl_r}"""
     d = 1 if pos["side"] == "long" else -1
     price = float(pos.get("last_price") or pos["entry"])
+    if pos.get("tp") is None:
+        # پوزیشنِ روند: هدف ندارد، پس «احتمالِ رسیدن به هدف» بی‌معناست؛ قاعده خودش خروج را می‌گوید
+        r0 = float(pos.get("r0") or abs(float(pos["entry"]) - float(pos["sl"]))) or 1e-9
+        return {"action": "hold_trend", "title": "روند — تا خوردنِ حدضررِ دنباله‌دار نگه دارید",
+                "urgency": 0, "reasons": ["قاعدهٔ روند هدفِ ثابت ندارد؛ حدضرر هر روز فقط رو به بالا می‌رود"],
+                "p_hit_tp": None, "ev_hold_r": None,
+                "pnl_r": round(d * (price - float(pos["entry"])) / r0, 2)}
     entry, sl, tp = float(pos["entry"]), float(pos["sl"]), float(pos["tp"])
     r0 = float(pos.get("r0") or abs(entry - sl)) or 1e-9   # ریسکِ اولیه — حتی بعد از انتقالِ حدضرر به سربه‌سر
     pnl_r = d * (price - entry) / r0

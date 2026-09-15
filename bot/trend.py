@@ -244,6 +244,63 @@ def dev_evidence():
             "joins": joins, "join_max_days": JOIN_MAX_DAYS}
 
 
+# ───────────────────────── پوزیشنِ دمو برای سیگنالِ امروز ─────────────────────────
+DEMO_STRATEGY = "trend20"
+DEMO_MAX_HOLD_MIN = 120 * 1440                 # همان حدِ زمانیِ ۱۲۰ روزهٔ قاعده
+DEMO_RISK_RANGE = (0.1, 2.0)                   # درصدِ موجودی در هر معامله
+
+
+def demo_open_symbols():
+    import paper
+    return sorted({p["symbol"] for p in paper.list_positions()["open"] if p.get("strategy") == DEMO_STRATEGY})
+
+
+def open_demo(symbol, risk_pct=0.5, price=None, now_rows=None):
+    """پوزیشنِ دمو برای سیگنالِ قابل‌اقدامِ امروز: خرید در قیمتِ فعلی با حدضررِ قاعده، بی‌هدف،
+    هزینهٔ اسپات (بی‌فاندینگ)، حجم = موجودیِ دمو × ریسک٪ ÷ فاصلهٔ حدضرر — و بی‌اهرم."""
+    import paper
+    rows = now_rows if now_rows is not None else (snapshot().get("now") or [])
+    row = next((r for r in rows if r["sym"] == symbol), None)
+    if row is None or row.get("category") not in ("new", "join"):
+        raise ValueError(f"{symbol} الان سیگنالِ ورود یا پیوستن ندارد")
+    if symbol in demo_open_symbols():
+        raise ValueError(f"پوزیشنِ دموی روند روی {symbol} از قبل باز است")
+    price = float(price if price is not None else market.last_price(symbol))
+    stop = float(row["stop"])
+    if price <= stop:
+        raise ValueError("قیمت زیرِ حدضررِ قاعده است — ورود بی‌معناست")
+    risk_pct = min(max(float(risk_pct), DEMO_RISK_RANGE[0]), DEMO_RISK_RANGE[1])
+    w = paper.wallet_summary()
+    equity = float(w.get("equity") or w.get("balance") or 0.0)
+    if equity <= 0:
+        raise ValueError("موجودیِ دمو صفر است")
+    size = min(equity * risk_pct / 100.0 / ((price - stop) / price), equity)
+    label = "ورودِ تازه" if row["category"] == "new" else f"پیوستن — روزِ {row.get('days_in')}"
+    return paper.open_position(symbol, "1d", "long", price, stop, None, round(size, 2), DEMO_MAX_HOLD_MIN,
+                               grade=f"روند: {label}", opened_by="user",
+                               cost_pct=explore.SPOT_ROUND_TRIP_PCT, strategy=DEMO_STRATEGY, market="spot")
+
+
+def sync_demo(now_rows=None, price_fn=None):
+    """حدضررِ پوزیشن‌های دموی روند را هم‌پای قاعده فقط بالا می‌برد؛ اگر قاعده بیرون آمده، می‌بندد."""
+    import paper
+    rows = {r["sym"]: r for r in (now_rows if now_rows is not None else (snapshot().get("now") or []))}
+    price_fn = price_fn or market.last_price
+    moved = closed = 0
+    for p in paper.list_positions()["open"]:
+        if p.get("strategy") != DEMO_STRATEGY:
+            continue
+        r = rows.get(p["symbol"])
+        if r is None:
+            continue                                 # بی‌داده: دست نزن
+        if r.get("in_position") or r.get("category") == "new":
+            if float(r["stop"]) > float(p["sl"]) * (1 + 1e-9) and paper.move_sl(p["id"], float(r["stop"])):
+                moved += 1
+        elif paper.close_with(p["id"], float(price_fn(p["symbol"])), "خروجِ قاعدهٔ روند"):
+            closed += 1                              # قاعده دیگر در پوزیشن نیست
+    return {"moved": moved, "closed": closed}
+
+
 def snapshot(force=False, fetch=None):
     """برای ‎/api/trend‎ — کشِ ۳۰ دقیقه‌ای؛ کندلِ روزانه فقط روزی یک‌بار عوض می‌شود."""
     with _lock:
