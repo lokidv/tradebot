@@ -10,12 +10,40 @@
  "daily_loss_halt_pct": 1.0,
  "weekly_loss_halt_pct": 2.5,
  "allowed_combos": [],
- "allowed_symbols": [],
+ "allowed_symbols": [
+  "ADAUSDT",
+  "APTUSDT",
+  "ARBUSDT",
+  "ATOMUSDT",
+  "AVAXUSDT",
+  "BCHUSDT",
+  "BNBUSDT",
+  "BTCUSDT",
+  "DOGEUSDT",
+  "DOTUSDT",
+  "ETCUSDT",
+  "ETHUSDT",
+  "FILUSDT",
+  "LINKUSDT",
+  "LTCUSDT",
+  "NEARUSDT",
+  "SOLUSDT",
+  "TRXUSDT",
+  "UNIUSDT",
+  "XRPUSDT"
+ ],
  "gate_results": {},
  "history": [
   {
    "ts": 1789440149.9179063,
    "reason": "preregistered trial 1",
+   "allowed_combos": [],
+   "live_allowed": false,
+   "max_risk_pct_per_trade": 0.25
+  },
+  {
+   "ts": 1789440511.4909215,
+   "reason": "judged prereg 0bbcca393520",
    "allowed_combos": [],
    "live_allowed": false,
    "max_risk_pct_per_trade": 0.25
