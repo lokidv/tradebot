@@ -174,20 +174,23 @@ def walk(o, h, l, c, a, e, side, entry, R, trail_atr=None, max_hold=120, exit_fn
     last = min(e + max_hold - 1, n - 1)
     for j in range(e, last + 1):
         if (side == 1 and o[j] <= stop) or (side == -1 and o[j] >= stop):
-            return {"exit_idx": j, "exit_px": float(o[j]), "outcome": "gap_stop"}
+            return {"exit_idx": j, "exit_px": float(o[j]), "outcome": "gap_stop", "stop": stop}
         if (side == 1 and l[j] <= stop) or (side == -1 and h[j] >= stop):
-            return {"exit_idx": j, "exit_px": float(stop), "outcome": "stop"}
+            return {"exit_idx": j, "exit_px": float(stop), "outcome": "stop", "stop": stop}
         if exit_fn is not None and exit_fn(j):
             if j + 1 < n:
-                return {"exit_idx": j + 1, "exit_px": float(o[j + 1]), "outcome": "signal"}
-            return {"exit_idx": j, "exit_px": float(c[j]), "outcome": "end_of_data"}
+                return {"exit_idx": j + 1, "exit_px": float(o[j + 1]), "outcome": "signal", "stop": stop}
+            # سیگنالِ خروج روی آخرین بستهٔ موجود: خروج در openِ کندلی که هنوز نیامده
+            return {"exit_idx": j, "exit_px": float(c[j]), "outcome": "end_of_data",
+                    "stop": stop, "exit_pending": True}
         if trail_atr:
             best = max(best, float(c[j])) if side == 1 else min(best, float(c[j]))
             cand = best - side * trail_atr * float(a[j])
             stop = max(stop, cand) if side == 1 else min(stop, cand)
     censored = last == n - 1 and last < e + max_hold - 1
+    # ``stop`` = حدِ معتبر برای کندلِ بعد؛ برای معاملهٔ هنوز باز همان حدضررِ امروز است
     return {"exit_idx": last, "exit_px": float(c[last]),
-            "outcome": "end_of_data" if censored else "timeout"}
+            "outcome": "end_of_data" if censored else "timeout", "stop": stop}
 
 
 def _typical_funding_pct(side, entry_ts, exit_ts):
@@ -211,42 +214,62 @@ def _trade(sym, tf, side, i, e, res, entry, R, k):
 
 
 # ───────────────────────── خانواده‌ها ─────────────────────────
-def trend_trades(panel, snaps, spec):
+def trend_paths(sym, k, spec, snaps, start_idx=0):
+    """حلقهٔ واحدِ قاعدهٔ روند روی یک نماد — هم پژوهش و هم ردیابیِ زنده (trend.py) از همین
+    می‌خوانند تا «آنچه آزموده شد» و «آنچه ردیابی می‌شود» هرگز از هم جدا نشوند.
+
+    خروجی: ``(i, e, entry, R, res)`` برای هر معامله؛ ``i`` کندلِ سیگنال، ``e`` کندلِ ورود.
+    سیگنال روی **آخرین** بستهٔ موجود هم برگردانده می‌شود با ``e = n`` و ``res = None``
+    (ورود در openِ کندلی که هنوز نیامده). ``start_idx``: زنجیرهٔ معامله‌ها از این کندل
+    و بی‌پوزیشن شروع می‌شود (ردیابیِ رو-به-جلو)؛ شاخص‌ها روی کلِ سری حساب می‌شوند.
+    """
     side, n_look = spec["side"], spec["n"]
+    o, h, l, c, t = k["o"], k["h"], k["l"], k["c"], k["t"]
+    n = len(c)
+    a = engine.atr(h, l, c, 20)
+    ma = sma(c, n_look) if spec["rule"] == "sma_cross" else None
+    if spec["rule"] == "donchian":
+        def entry_ok(i):
+            window = h[i - n_look:i] if side == 1 else l[i - n_look:i]
+            return c[i] > window.max() if side == 1 else c[i] < window.min()
+        exit_fn, trail, max_hold = None, TREND_TRAIL_ATR, 120
+    else:
+        def entry_ok(i):
+            if not (np.isfinite(ma[i]) and np.isfinite(ma[i - 1])):
+                return False
+            return (c[i] > ma[i] and c[i - 1] <= ma[i - 1]) if side == 1 else \
+                (c[i] < ma[i] and c[i - 1] >= ma[i - 1])
+
+        def exit_fn(j):
+            return (c[j] < ma[j]) if side == 1 else (c[j] > ma[j])
+        trail, max_hold = None, 250
+    i = max(n_look + 1, 22, int(start_idx))
+    while i < n:
+        if not entry_ok(i) or not universe.in_universe(snaps, sym, int(t[i])):
+            i += 1
+            continue
+        R = TREND_STOP_ATR * float(a[i])
+        if i == n - 1:
+            if R > 0:
+                yield i, n, None, R, None                  # سیگنالِ امروز؛ ورود فردا صبح
+            return
+        e = i + 1
+        entry = float(o[e])
+        if R <= 0 or entry <= 0:
+            i += 1
+            continue
+        res = walk(o, h, l, c, a, e, side, entry, R, trail_atr=trail, max_hold=max_hold,
+                   exit_fn=exit_fn)
+        yield i, e, entry, R, res
+        i = max(res["exit_idx"], i + 1)       # یک پوزیشن در هر نماد؛ اسکن از خروج ادامه
+
+
+def trend_trades(panel, snaps, spec):
     out = []
     for sym, k in panel.items():
-        o, h, l, c, t = k["o"], k["h"], k["l"], k["c"], k["t"]
-        n = len(c)
-        a = engine.atr(h, l, c, 20)
-        ma = sma(c, n_look) if spec["rule"] == "sma_cross" else None
-        if spec["rule"] == "donchian":
-            def entry_ok(i):
-                window = h[i - n_look:i] if side == 1 else l[i - n_look:i]
-                return c[i] > window.max() if side == 1 else c[i] < window.min()
-            exit_fn, trail, max_hold = None, TREND_TRAIL_ATR, 120
-        else:
-            def entry_ok(i):
-                if not (np.isfinite(ma[i]) and np.isfinite(ma[i - 1])):
-                    return False
-                return (c[i] > ma[i] and c[i - 1] <= ma[i - 1]) if side == 1 else \
-                    (c[i] < ma[i] and c[i - 1] >= ma[i - 1])
-            def exit_fn(j):
-                return (c[j] < ma[j]) if side == 1 else (c[j] > ma[j])
-            trail, max_hold = None, 250
-        i = max(n_look, 21) + 1
-        while i < n - 1:
-            if not entry_ok(i) or not universe.in_universe(snaps, sym, int(t[i])):
-                i += 1
-                continue
-            e = i + 1
-            entry, R = float(o[e]), TREND_STOP_ATR * float(a[i])
-            if R <= 0 or entry <= 0:
-                i += 1
-                continue
-            res = walk(o, h, l, c, a, e, side, entry, R, trail_atr=trail, max_hold=max_hold,
-                       exit_fn=exit_fn)
-            out.append(_trade(sym, "1d", side, i, e, res, entry, R, k))
-            i = max(res["exit_idx"], i + 1)       # یک پوزیشن در هر نماد؛ اسکن از خروج ادامه
+        for i, e, entry, R, res in trend_paths(sym, k, spec, snaps):
+            if res is not None:
+                out.append(_trade(sym, "1d", spec["side"], i, e, res, entry, R, k))
     return out
 
 

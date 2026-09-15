@@ -36,6 +36,7 @@ import shadow
 import autotrader
 import advisor
 import gates
+import trend
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
@@ -477,6 +478,11 @@ def _startup():
                     last_week = week
             except Exception:  # noqa: BLE001
                 log.exc("health/report loop")
+            try:
+                # دفترِ رو-به-جلوِ روند باید حتی وقتی کسی صفحه را باز نکرده ثبت شود
+                trend.snapshot()
+            except Exception:  # noqa: BLE001
+                log.exc("trend tracker")
             time.sleep(600)
     threading.Thread(target=_health_and_report, daemon=True).start()
     autotrader.init(overview, DRIFT_CAP, get_analysis, health_fn=health)   # 🤖 ربات معامله‌گر خودکار
@@ -528,6 +534,13 @@ def report_now(write: bool = False):
     if write:
         rep["path"] = report.write(rep)
     return rep
+
+
+@app.get("/api/trend")
+def trend_status(force: bool = False):
+    """روندِ روزانه — نامزدِ پژوهشی و اثبات‌نشده: وضعیتِ قاعده‌ها روی ۲۰ ارزِ بزرگ،
+    سیگنال‌های امروز، دفترِ رو-به-جلو و شواهدِ اکتشاف. هیچ مجوزی نمی‌دهد."""
+    return trend.snapshot(force=force)
 
 
 @app.get("/api/research")
