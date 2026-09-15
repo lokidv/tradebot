@@ -598,6 +598,8 @@ def research_status():
 
 HEALTH_MAX_CANDIDATE_AGE_SEC = 3 * max(ANALYSIS_TTL.values())
 HEALTH_MAX_MODEL_AGE_DAYS = 30
+# پس از بسته‌شدنِ هر کندل این‌قدر مهلت تا کش تازه شود (حلقه‌ها هر ۱ تا ۳۰ دقیقه می‌گیرند)
+KLINE_GRACE_SEC = {"15m": 180, "1h": 300, "4h": 600, "1d": 1800}
 
 
 @app.get("/api/health")
@@ -642,10 +644,18 @@ def health():
 
     try:
         out["data"] = market.cache_stats()
+        now_s = time.time()
         for tf, row in (out["data"].get("klines_by_tf") or {}).items():
-            limit = 3 * market.KLINE_TTL.get(tf, 300)
-            if row.get("oldest_age_sec", 0) > limit:
-                warnings.append(f"کشِ کندلِ {tf} کهنه است ({row['oldest_age_sec'] / 60:.0f} دقیقه)")
+            # کهنه یعنی: این تایم‌فریم در حالِ استفاده است، مهلتِ پس از بسته‌شدنِ کندل گذشته،
+            # و حتی تازه‌ترین داده آخرین کندلِ بسته‌شده را ندارد. قاعدهٔ قبلی (سن از زمانِ دریافت)
+            # هر کندلِ ساعتی را پس از ۶ دقیقه «کهنه» می‌خواند، سلامت را همیشه زرد می‌کرد و گیتِ
+            # عملیات (۹۹٪ سبز) را هرگز قبول‌شدنی نمی‌گذاشت.
+            tf_sec = market.TF_MINUTES.get(tf, 60) * 60
+            in_use = (row.get("newest_age_sec") or 1e12) < 2 * tf_sec
+            past_grace = now_s % tf_sec > KLINE_GRACE_SEC.get(tf, 300)
+            behind = row.get("behind_candles_min") or 0
+            if in_use and past_grace and behind >= 1:
+                warnings.append(f"دادهٔ کندلِ {tf} عقب است: تازه‌ترین کش {behind} کندل پشتِ آخرین بسته است")
     except Exception as e:  # noqa: BLE001
         out["data"] = {"error": str(e)}
         problems.append("لایهٔ داده پاسخ نداد")

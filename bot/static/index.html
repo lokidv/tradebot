@@ -339,7 +339,7 @@
     <input type="search" id="q" placeholder="جستجوی ارز — کلید /" oninput="VIEW.q=this.value.trim().toUpperCase();renderTable()">
     <span class="fchip on" data-f="all" onclick="setFilter(this)">همه</span>
     <span class="fchip" data-f="predict" onclick="setFilter(this)">🎯 پیش‌بینی جهت</span>
-    <span class="fchip" data-f="ok" onclick="setFilter(this)">سیگنالِ تأییدشده ✅</span>
+    <span class="fchip" data-f="ok" onclick="setFilter(this)">📈 سیگنال‌های قابل‌اقدام</span>
     <span class="fchip" data-f="sided" onclick="setFilter(this)">سیگنال‌دار</span>
     <span class="fchip" data-f="blocked" onclick="setFilter(this)">مسدود</span>
     <span class="fchip" data-f="waiting" onclick="setFilter(this)">منتظر</span>
@@ -677,6 +677,8 @@ async function loadTrendBanner(){
       ${(d.missing_data||[]).length ? `<div class="sub" style="color:var(--brass)">بی‌داده: ${d.missing_data.map(coin).join("، ")}</div>` : ""}
       ${trendTestnetHtml(x)}
     </div>`;
+    window.TREND = d;
+    if(VIEW.filter === "ok") renderTable();              // فیلترِ «قابل‌اقدام» از همین داده می‌خواند
     notifyTrendSignals(d);
   }catch(e){ setTimeout(loadTrendBanner, 15000); }   // خطای شبکه در بالا آمدنِ سرور — ۱۰ دقیقه صبر نکن
 }
@@ -930,14 +932,46 @@ async function openLean(sym, side, p, tradeable){
 }
 function leanDir(c){ const p=c.p_up==null?50:c.p_up; return p>=52?"long":p<=48?"short":"neutral"; }
 function leanConf(c){ const p=c.p_up==null?50:c.p_up; return Math.abs(p-50); }
+// «قابل‌اقدام» = سیگنال‌های امروزِ روندِ روزانه (ورودِ تازه / پیوستن)، نه ردیف‌های مجاز در
+// قفلِ ایمنی: قفل تا عبورِ یک فرضیه از آزمونِ منجمد خالی است و فیلتر همیشه خالی نشان می‌داد.
+function trendSignalRows(){
+  const t = window.TREND;
+  if(!t || !t.now) return `<tr><td colspan="13" class="loading">در حالِ خواندنِ سیگنال‌های روند…</td></tr>`;
+  const coin = s => s.replace("USDT","");
+  let cap = 0, risk = 0.5;
+  try{ cap = parseFloat(localStorage.trCapital||"0")||0; risk = parseFloat(localStorage.trRisk||"0.5")||0.5; }catch(e){}
+  let act = t.now.filter(x => x.category === "new" || x.category === "join");
+  if(VIEW.q) act = act.filter(x => x.sym.includes(VIEW.q));
+  const head = `<tr><td colspan="13" style="padding:10px 12px;line-height:1.8;color:var(--dim)">
+      📈 <b style="color:var(--ink)">سیگنال‌های قابل‌اقدامِ امروز</b> — استراتژیِ روندِ روزانه: فقط خرید، روی هر صرافیِ اسپات، بی‌اهرم.
+      بهترین شواهدِ پژوهش، ولی <b>اثبات‌نشده</b> — با ریسکِ کم. سیگنال‌های کوتاه‌مدتِ ستون‌های جدول از آزمون رد شده‌اند و این‌جا نمی‌آیند.</td></tr>`;
+  if(!act.length){
+    const near = t.now.filter(x => x.category === "watch").slice(0, 3)
+      .map(x => `${coin(x.sym)} (بستهٔ بالای ${px(x.trigger)} — ${fmt(x.distance_pct,1)}٪ فاصله)`).join("، ");
+    return head + `<tr><td colspan="13" class="loading">امروز سیگنالِ ورود یا پیوستن نیست. نزدیک‌ترین‌ها: ${near || "—"}</td></tr>`;
+  }
+  return head + act.map(x => `<tr><td colspan="13" style="padding:11px 12px;line-height:1.9">
+      <b style="font-size:15px">${coin(x.sym)}</b> &nbsp;
+      ${x.category === "new" ? `<span class="up">🟢 ورودِ تازه — شکستِ سقفِ ۲۰روزه</span>`
+                             : `<span class="up">🟡 پیوستن مجاز — روزِ ${x.days_in} روند</span>`}
+      · ورود ~<b class="num">${px(x.last)}</b>
+      · حدضرر <b class="num">${px(x.stop)}</b> <small class="mid">(−${fmt(x.stop_distance_pct,1)}٪)</small>
+      · ${cap > 0 ? `خرید به ارزشِ <b class="num">${fmt(cap*risk/x.stop_distance_pct,0)} USDT</b> <small class="mid">(ریسکِ ${risk}٪ از ${fmt(cap,0)})</small>`
+                  : `<span class="mid">حجم: سرمایه را در پنلِ روند وارد کنید</span>`}
+      · <span class="mid">خروج: حدضررِ دنباله‌دار — هر روز ۳:۳۰ بامدادِ تهران از پنلِ روند بخوانید و فقط بالا ببرید</span>
+    </td></tr>`).join("");
+}
+
 function renderTable(){
+  const F = VIEW.filter;
+  const thead = ($("#rows") && $("#rows").closest("table")) ? $("#rows").closest("table").querySelector("thead") : null;
+  if(thead) thead.style.display = F === "ok" ? "none" : "";
+  if(F === "ok"){ $("#rows").innerHTML = trendSignalRows(); window.LASTROWS = []; return; }
   const d = window.OV;
   if(!d) return;
   let rows = d.coins.filter(c=>!c.error);
   if(VIEW.q) rows = rows.filter(c=>c.symbol.toUpperCase().includes(VIEW.q));
-  const F = VIEW.filter;
-  if(F==="ok") rows = rows.filter(c=>c.tradeable);
-  else if(F==="predict") rows = rows.filter(c=>leanDir(c)!=="neutral");   // پیش‌بینیِ جهت
+  if(F==="predict") rows = rows.filter(c=>leanDir(c)!=="neutral");   // پیش‌بینیِ جهت
   else if(F==="sided") rows = rows.filter(c=>c.side);
   else if(F==="blocked") rows = rows.filter(c=>c.side && !c.tradeable);
   else if(F==="waiting") rows = rows.filter(c=>!c.side);

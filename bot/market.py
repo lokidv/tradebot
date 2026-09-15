@@ -120,18 +120,32 @@ def get_top_symbols(n=15):
     return symbols, tickers
 
 
-def cache_stats():
-    """سنِ کشِ کندل‌ها به تفکیکِ تایم‌فریم — برای پایشِ سلامت (بدونِ تماسِ شبکه)."""
-    now = time.time()
+def cache_stats(now=None):
+    """سنِ کشِ کندل‌ها به تفکیکِ تایم‌فریم — برای پایشِ سلامت (بدونِ تماسِ شبکه).
+
+    ``behind_candles_min``: تازه‌ترین دادهٔ کش چند کندل پشتِ آخرین کندلِ بسته‌شده است.
+    «سن از زمانِ دریافت» معیارِ کهنگی نیست: ``get_klines`` عمداً تا بسته‌شدنِ کندلِ بعد
+    دوباره نمی‌گیرد، پس کندلِ روزانه‌ای که ظهر گرفته شده تا نیمه‌شب کاملاً به‌روز است.
+    """
+    now = time.time() if now is None else now
     out = {}
     with _lock:
-        for (sym, tf), (ts, _data) in _kline_cache.items():
-            row = out.setdefault(tf, {"symbols": 0, "newest_age_sec": None, "oldest_age_sec": None})
-            row["symbols"] += 1
-            age = now - ts
-            row["newest_age_sec"] = age if row["newest_age_sec"] is None else min(row["newest_age_sec"], age)
-            row["oldest_age_sec"] = age if row["oldest_age_sec"] is None else max(row["oldest_age_sec"], age)
+        items = list(_kline_cache.items())
         top_age = now - _top_cache["ts"] if _top_cache["ts"] else None
+    for (sym, tf), (ts, data) in items:
+        row = out.setdefault(tf, {"symbols": 0, "newest_age_sec": None, "oldest_age_sec": None,
+                                  "behind_candles_min": None})
+        row["symbols"] += 1
+        age = now - ts
+        row["newest_age_sec"] = age if row["newest_age_sec"] is None else min(row["newest_age_sec"], age)
+        row["oldest_age_sec"] = age if row["oldest_age_sec"] is None else max(row["oldest_age_sec"], age)
+        t = (data or {}).get("t") or []
+        if t:
+            tf_ms = TF_MINUTES[tf] * 60000
+            boundary = int(now * 1000) // tf_ms * tf_ms      # بسته‌شدنِ آخرین کندل = openِ کندلِ جاری
+            behind = max(0, (boundary - (int(t[-1]) + tf_ms)) // tf_ms)
+            prev = row["behind_candles_min"]
+            row["behind_candles_min"] = behind if prev is None else min(prev, behind)
     for row in out.values():
         row["newest_age_sec"] = round(row["newest_age_sec"], 1)
         row["oldest_age_sec"] = round(row["oldest_age_sec"], 1)

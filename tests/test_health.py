@@ -56,6 +56,41 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(h["status"], "amber")
         self.assertEqual(h["problems"], [])
 
+    def _cache_health(self, klines_by_tf, now):
+        stats = {"klines_by_tf": klines_by_tf, "universe_age_sec": 5.0, "universe_size": 200}
+        with mock.patch.object(main.market, "cache_stats", return_value=stats), \
+                mock.patch.object(main.time, "time", return_value=now):
+            return self._health()
+
+    def test_a_daily_candle_fetched_hours_ago_is_not_stale(self):
+        """کندلِ روزانهٔ دیروز که ۶ ساعت پیش گرفته شده تا نیمه‌شب کاملاً به‌روز است."""
+        now = 1_789_516_800 + 18 * 3600                       # ساعتِ ۱۸ UTC
+        h = self._cache_health({"1d": {"symbols": 20, "newest_age_sec": 6 * 3600,
+                                       "oldest_age_sec": 6 * 3600, "behind_candles_min": 0}}, now)
+        self.assertFalse([w for w in h["warnings"] if "کندل" in w], h["warnings"])
+
+    def test_data_left_behind_after_the_grace_period_is_flagged(self):
+        now = 1_789_516_800 + 3600 + 20 * 60                  # ۲۰ دقیقه پس از بسته‌شدنِ کندلِ ساعتی
+        h = self._cache_health({"1h": {"symbols": 30, "newest_age_sec": 70 * 60,
+                                       "oldest_age_sec": 80 * 60, "behind_candles_min": 1}}, now)
+        self.assertTrue(any("1h" in w and "عقب" in w for w in h["warnings"]), h["warnings"])
+
+    def test_an_unused_timeframe_is_not_a_health_problem(self):
+        now = 1_789_516_800 + 3 * 3600 + 20 * 60
+        h = self._cache_health({"15m": {"symbols": 5, "newest_age_sec": 3 * 3600,
+                                        "oldest_age_sec": 3 * 3600, "behind_candles_min": 12}}, now)
+        self.assertFalse([w for w in h["warnings"] if "کندل" in w], h["warnings"])
+
+    def test_cache_stats_counts_candles_behind_the_last_close(self):
+        tf_ms = 3_600_000
+        now = (1_789_516_800_000 + 5 * tf_ms + 10 * 60_000) / 1000      # ۱۰ دقیقه پس از بسته‌شدنِ کندلِ ۵
+        fresh = {"t": [1_789_516_800_000 + 4 * tf_ms]}                  # آخرین کندلِ بسته‌شده ⇒ ۰
+        old = {"t": [1_789_516_800_000 + 2 * tf_ms]}                    # دو کندل عقب
+        with mock.patch.dict(main.market._kline_cache, {("A", "1h"): (now - 60, fresh),
+                                                         ("B", "1h"): (now - 9000, old)}, clear=True):
+            row = main.market.cache_stats(now=now)["klines_by_tf"]["1h"]
+        self.assertEqual(row["behind_candles_min"], 0)
+
     def test_report_always_carries_the_capital_lock_state(self):
         h = self._health()
         self.assertIn("gates", h)
