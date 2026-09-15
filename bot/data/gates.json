@@ -1,7 +1,7 @@
 {
  "version": 1,
- "preregistered_at": null,
- "preregistration_hash": null,
+ "preregistered_at": 1789440149.9178932,
+ "preregistration_hash": "0bbcca3935202be66b36b4ce40605bcde60139aaaf75f8d97ffc28c3aa1b1cb6",
  "live_allowed": false,
  "max_risk_pct_per_trade": 0.25,
  "max_open": 3,
@@ -12,5 +12,13 @@
  "allowed_combos": [],
  "allowed_symbols": [],
  "gate_results": {},
- "history": []
+ "history": [
+  {
+   "ts": 1789440149.9179063,
+   "reason": "preregistered trial 1",
+   "allowed_combos": [],
+   "live_allowed": false,
+   "max_risk_pct_per_trade": 0.25
+  }
+ ]
 }

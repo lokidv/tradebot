@@ -1,0 +1,100 @@
+{
+ "schema": 1,
+ "registered_at": 1789440149.9165537,
+ "note": "auto: first build with frozen-test support",
+ "family": [
+  {
+   "tf": "4h",
+   "setup": "zx",
+   "side": "long"
+  },
+  {
+   "tf": "4h",
+   "setup": "zx",
+   "side": "short"
+  },
+  {
+   "tf": "4h",
+   "setup": "sq",
+   "side": "long"
+  },
+  {
+   "tf": "4h",
+   "setup": "sq",
+   "side": "short"
+  },
+  {
+   "tf": "1d",
+   "setup": "zx",
+   "side": "long"
+  },
+  {
+   "tf": "1d",
+   "setup": "zx",
+   "side": "short"
+  },
+  {
+   "tf": "1d",
+   "setup": "sq",
+   "side": "long"
+  },
+  {
+   "tf": "1d",
+   "setup": "sq",
+   "side": "short"
+  }
+ ],
+ "symbols": [
+  "ADAUSDT",
+  "APTUSDT",
+  "ARBUSDT",
+  "ATOMUSDT",
+  "AVAXUSDT",
+  "BCHUSDT",
+  "BNBUSDT",
+  "BTCUSDT",
+  "DOGEUSDT",
+  "DOTUSDT",
+  "ETCUSDT",
+  "ETHUSDT",
+  "FILUSDT",
+  "LINKUSDT",
+  "LTCUSDT",
+  "NEARUSDT",
+  "SOLUSDT",
+  "TRXUSDT",
+  "UNIUSDT",
+  "XRPUSDT"
+ ],
+ "gates": {
+  "min_n": 300,
+  "min_n_eff": 100,
+  "lcb_alpha": 0.05,
+  "min_mean_net_r": 0.1,
+  "min_profit_factor": 1.15,
+  "max_drawdown_r": 15.0,
+  "family_alpha": 0.05,
+  "min_positive_quarters": 3
+ },
+ "bracket": {
+  "r_atr_mult": 1.3,
+  "r_min_pct": 0.0025,
+  "tp_r": 1.8,
+  "max_bars": 40,
+  "entry": "next_bar_open"
+ },
+ "cost_model": "costs.event_cost_pct (point-in-time tier + funding)",
+ "final_windows": {
+  "1d": {
+   "start_ms": 1727481600000,
+   "end_ms": 1785715200000
+  },
+  "4h": {
+   "start_ms": 1754164800000,
+   "end_ms": 1788796800000
+  }
+ },
+ "n_trials": 1,
+ "previous_hash": null,
+ "hash": "0bbcca3935202be66b36b4ce40605bcde60139aaaf75f8d97ffc28c3aa1b1cb6"
+}
