@@ -37,10 +37,32 @@ _risk_off_day = None               # 🛑 روزی که حدِ ضررِ روزا
 _toxic_1d_pass = 0.0               # آخرین گذرِ پاکسازی پوزیشن‌های سمی ۱روزه
 
 
-def init(overview_fn, drift_cap, analysis_fn=None):
+def init(overview_fn, drift_cap, analysis_fn=None, health_fn=None):
     _fns["overview"] = overview_fn
     _fns["drift_cap"] = drift_cap
     _fns["analysis"] = analysis_fn
+    _fns["health"] = health_fn
+
+
+def kill_switch(reason):
+    """قطعِ اضطراری: همهٔ پوزیشن‌های ربات بسته، سفارش‌ها لغو، ربات خاموش، گیت‌ها بسته."""
+    closed = 0
+    db = paper.list_positions()
+    for p in db["open"]:
+        if p.get("opened_by") != "bot" or p.get("mode") == "testnet":
+            continue
+        lp = _live(p["symbol"]) or p.get("last_price") or p["entry"]
+        if paper.close_with(p["id"], lp, f"🛑 قطعِ اضطراری: {reason}"):
+            closed += 1
+    _clear_pending("kill_switch")
+    cfg = load_cfg()
+    cfg["enabled"] = False
+    save_cfg(cfg)
+    gates.kill(reason)
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    _set_risk_off(today)
+    think(f"🛑 قطعِ اضطراری: {reason} — {closed} پوزیشن بسته، ربات خاموش، فهرستِ مجاز خالی.", "close")
+    return {"closed": closed, "enabled": False}
 
 
 # ───────────────────── پیکربندی ─────────────────────
@@ -68,13 +90,19 @@ def level_params(lv):
     lv = max(1, min(int(lv), 10))
     # 15m هرگز اسکن نمی‌شود: هزینهٔ رفت‌وبرگشت ~۰٫۲R هر معامله و بازده خالصِ تاریخی −۰٫۲۱R
     scan = ["1h"] if lv <= 3 else ["1h", "4h"]
+    caps = gates.risk_caps()
+    # سطحِ فعالیت فقط **درونِ** سقف‌های gates.json حرکت می‌کند؛ هرگز شل‌ترشان نمی‌کند.
+    # قبلاً سطحِ ۱۰ ریسکِ ۰٫۵٪ و گرمای ۲٫۸٪ می‌داد، مستقل از اینکه چه چیزی اثبات شده بود.
     return {
         "level": lv,
         "min_score": round(82 - lv * 2.5),                 # ۱→۸۰، ۱۰→۵۷
         "min_open": 0,
-        "max_open": 2 + (lv - 1) // 3,                    # ۲ تا حداکثر ۵
-        "risk_pct_equity": round(0.25 + lv * 0.025, 2),   # ۰٫۲۸٪ تا حداکثر ۰٫۵٪
-        "heat_cap": round(1.25 + lv * 0.15, 1),           # ۱٫۴٪ تا حداکثر ۲٫۸٪
+        "max_open": min(2 + (lv - 1) // 3, caps["max_open"]),
+        "max_side_open": caps["max_side_open"],
+        "risk_pct_equity": min(round(0.25 + lv * 0.025, 2), caps["max_risk_pct_per_trade"]),
+        "heat_cap": min(round(1.25 + lv * 0.15, 1), caps["heat_cap_pct"]),
+        "daily_loss_halt_pct": caps["daily_loss_halt_pct"],
+        "weekly_loss_halt_pct": caps["weekly_loss_halt_pct"],
         "scan_tfs": scan,
         "allow_lean": False,
         "opens_per_cycle": 1 if lv <= 6 else 2,
@@ -273,6 +301,32 @@ def _daily_pnl_bot(db):
     return realized + open_loss
 
 
+def _weekly_pnl_bot(db, now=None):
+    """زیانِ ۷ روزِ اخیرِ ربات (بسته + بازِ زیان‌ده)."""
+    from datetime import datetime, timedelta, timezone as _tz
+    cutoff = (datetime.now(_tz.utc) - timedelta(days=7)).isoformat()
+    realized = sum(p.get("pnl_usdt", 0) for p in db["closed"]
+                   if p.get("opened_by") == "bot" and str(p.get("closed_at", "")) >= cutoff)
+    open_loss = sum(min(p.get("pnl_usdt", 0), 0) for p in db["open"]
+                    if p.get("opened_by") == "bot")
+    return realized + open_loss
+
+
+def _health_blocks_entries():
+    """سلامتِ قرمز = دادهٔ کهنه یا مدلِ ناسازگار ⇒ ورودِ تازه ممنوع (خروج‌ها ادامه دارند)."""
+    fn = _fns.get("health")
+    if fn is None:
+        return None
+    try:
+        h = fn()
+    except Exception:  # noqa: BLE001
+        log.exc("health check")
+        return "سلامت قابلِ‌سنجش نیست"
+    if h.get("status") == "red":
+        return "؛ ".join(h.get("problems") or ["سلامت قرمز"])
+    return None
+
+
 def _loss_streak(db):
     """تعدادِ باخت‌های پیاپیِ اخیرِ ربات (جدیدترین اول) — معاملاتِ تقریباً-صفر (زیر ۱$) نویزند، نه باخت."""
     n = 0
@@ -375,7 +429,7 @@ def _process_pending():
             P = level_params(load_cfg()["level"])
             bot_open = [p for p in db["open"] if p.get("opened_by") == "bot"]
             same_side = sum(1 for p in bot_open if p.get("side") == o["side"])
-            max_same = max(2, round(P["max_open"] * 0.6))
+            max_same = min(max(1, round(P["max_open"] * 0.6)), P["max_side_open"])   # سقفِ هم‌جهتِ gates.json
             if len(bot_open) >= P["max_open"] or same_side >= max_same:
                 _pending.pop(sym, None)
                 fill_quality.log_event("cancelled", symbol=sym, why="capacity", authority=o.get("authority"))
@@ -701,12 +755,28 @@ def _cycle():
     # 🛑 حدِ ضررِ روزانه: اگر امروز بیش از حدِ مجاز باختم، تا فردا فقط نظاره‌گرم (دیسیپلین > هیجان)
     today = time.strftime("%Y-%m-%d", time.gmtime())
     day_pnl = _daily_pnl_bot(db)
-    day_limit = equity * 1.5 / 100
+    day_limit = equity * P["daily_loss_halt_pct"] / 100     # از gates.json (قبلاً ۱٫۵٪ ثابت)
     if day_pnl <= -day_limit and _risk_off_day != today:
         _set_risk_off(today)
         think(f"🛑 حدِ ضررِ روزانه فعال شد: امروز {day_pnl:+.1f}$ (حدِ مجاز −{day_limit:.0f}$). "
               f"تا پایانِ روز ورودِ جدید ممنوع — بدترین کار بعد از باخت، تلاش برای جبرانِ فوری است.", "close")
     risk_off = _risk_off_day == today
+
+    # 🛑 حدِ ضررِ هفتگی: فراتر از آن، ورودِ تازه تا بازبینیِ دستی بسته می‌ماند
+    week_pnl = _weekly_pnl_bot(db)
+    week_limit = equity * P["weekly_loss_halt_pct"] / 100
+    if week_pnl <= -week_limit:
+        if _risk_off_day != today:
+            _set_risk_off(today)
+        think(f"🛑 حدِ ضررِ هفتگی: ۷ روزِ اخیر {week_pnl:+.1f}$ (حد −{week_limit:.0f}$) — "
+              "ورودِ تازه بسته است تا کسی دستی بازبینی کند.", "close")
+        risk_off = True
+
+    # 🩺 سلامتِ قرمز ⇒ ورودِ تازه ممنوع
+    health_block = _health_blocks_entries()
+    if health_block:
+        think(f"🩺 سلامتِ سیستم قرمز است — ورودِ تازه ممنوع: {health_block}", "warn")
+        risk_off = True
 
     # 🎯 ضدِ تیلت: بعد از ۳ باختِ پیاپی، ریسکِ معامله‌های بعدی نصف می‌شود تا یک برد بیاید
     streak = _loss_streak(db)
@@ -765,7 +835,7 @@ def _cycle():
     opened = 0
     # سقفِ تمرکزِ هم‌جهت: خلافِ باد حداکثر ۳؛ هم‌جهت با باد هم حداکثر ~۷۰٪ ظرفیت
     # (درسِ پایشِ ۸ساعته: ۱۲/۱۲ شورت = یک شرطِ واحد که ±۴۰$ در ساعت نفس می‌کشید)
-    max_same = max(2, round(P["max_open"] * 0.6))
+    max_same = min(max(1, round(P["max_open"] * 0.6)), P["max_side_open"])   # سقفِ هم‌جهتِ gates.json
     _warned_side = set()
     for score, tf, c, kind in cands:
         if opened >= budget:
@@ -773,7 +843,8 @@ def _cycle():
         if c["symbol"] in held:
             continue                                 # هر ارز فقط یک پوزیشن (حتی اگر چند تایم‌فریم سیگنال بدهند)
         sd = c.get("side")
-        cap_side = 3 if _against_wind(c) else max_same       # بادِ کلان (درسِ ALLO: چهارمین لانگ در بازارِ ریزشی)
+        # خلافِ بادِ کلان **سخت‌تر** است نه شل‌تر: حداکثر یکی. قبلاً ۳ بود، یعنی بیشتر از سقفِ عادی (درسِ ALLO)
+        cap_side = min(1, max_same) if _against_wind(c) else max_same
         if sd and side_ct.get(sd, 0) >= cap_side:
             if sd not in _warned_side:
                 _warned_side.add(sd)

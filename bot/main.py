@@ -439,7 +439,24 @@ def _startup():
             except Exception:  # noqa: BLE001
                 log.exc()
     threading.Thread(target=_daily_retrain, daemon=True).start()
-    autotrader.init(overview, DRIFT_CAP, get_analysis)     # 🤖 ربات معامله‌گر خودکار
+
+    def _health_and_report():
+        # نمونهٔ سلامت هر ۱۰ دقیقه (برای گیتِ عملیات: ۹۹٪ سبز در ۳۰ روز) + گزارشِ هفتگی
+        import report
+        last_week = None
+        while True:
+            try:
+                h = health()
+                report.record_health_sample(h.get("status"), h.get("problems"))
+                week = time.strftime("%Y-%W", time.gmtime())
+                if week != last_week:
+                    report.write(report.build(closed_positions=paper.list_positions().get("closed") or []))
+                    last_week = week
+            except Exception:  # noqa: BLE001
+                log.exc("health/report loop")
+            time.sleep(600)
+    threading.Thread(target=_health_and_report, daemon=True).start()
+    autotrader.init(overview, DRIFT_CAP, get_analysis, health_fn=health)   # 🤖 ربات معامله‌گر خودکار
     autotrader.start()
 
 
@@ -467,6 +484,27 @@ def calib_status():
 def gates_status():
     """قفلِ ایمنیِ سرمایه: ترکیب‌های مجاز، وضعیتِ لایو و سقف‌های ریسک (فقط‌خواندنی)."""
     return gates.status()
+
+
+class KillReq(BaseModel):
+    reason: str = "دستی"
+
+
+@app.post("/api/kill")
+def kill(req: KillReq):
+    """🛑 کلیدِ قطعِ اضطراری — پوزیشن‌های ربات بسته، ربات خاموش، فهرستِ مجاز و لایو خاموش."""
+    return {"ok": True, **autotrader.kill_switch(req.reason)}
+
+
+@app.get("/api/report")
+def report_now(write: bool = False):
+    """گزارشِ مرحله‌ای: سایه، اجرا، یکپارچگی، عملیات — و آماده‌بودن برای لایو."""
+    import report
+    db = paper.list_positions()
+    rep = report.build(closed_positions=db.get("closed") or [])
+    if write:
+        rep["path"] = report.write(rep)
+    return rep
 
 
 @app.get("/api/research")

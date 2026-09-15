@@ -102,7 +102,33 @@ def _save(data, reason):
     os.replace(tmp, GATES_PATH)
     with _lock:
         _cache.update(mtime=os.path.getmtime(GATES_PATH), data=data)
+    # هر تغییرِ گیت در ژورنال — در طولِ دورهٔ اثبات، ساعت را صفر می‌کند (report.py)
+    try:
+        import journal
+        journal.append(journal.GATE_CHANGE, reason=reason,
+                       allowed_combos=list(data["allowed_combos"]),
+                       live_allowed=data["live_allowed"],
+                       max_risk_pct_per_trade=data["max_risk_pct_per_trade"])
+    except Exception:  # noqa: BLE001, silent-ok — gates پیش از لاگ بارگذاری می‌شود؛ ژورنال اختیاری است
+        pass
     return data
+
+
+def set_live_risk(risk_pct, reason, report_token=None):
+    """فقط تصمیمِ پیش‌ثبت‌شدهٔ مقیاس (report.live_scale_decision) ریسکِ لایو را عوض می‌کند."""
+    g = dict(load_gates())
+    if report_token != f"scale:{g['version']}":
+        raise GateError("تغییرِ ریسکِ لایو فقط از مسیرِ تصمیمِ مقیاسِ پیش‌ثبت‌شده مجاز است")
+    g["max_risk_pct_per_trade"] = float(risk_pct)
+    return _save(g, reason)
+
+
+def kill(reason):
+    """کلیدِ قطعِ اضطراری: لایو خاموش و فهرستِ مجاز خالی. برگرداندنش پیش‌ثبت و قضاوتِ تازه می‌خواهد."""
+    g = dict(load_gates())
+    g["live_allowed"] = False
+    g["allowed_combos"] = []
+    return _save(g, f"KILL: {reason}")
 
 
 def is_combo_allowed(tf, setup, side, symbol=None):
