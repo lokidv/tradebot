@@ -25,6 +25,7 @@ import numpy as np
 import market
 import candidates
 import engine
+import features
 import paper
 import broker
 import calib
@@ -156,7 +157,7 @@ _fz_pending: set = set()
 _oi_cache: dict = {}      # sym -> (ts, oi_stats)
 _oi_pending: set = set()
 _btc_macro_cache = {"ts": 0.0, "data": None}
-_macro_cache: dict = {}   # tf -> (ts, {"gold": x, "dxy": y})
+_macro_cache: dict = {}   # tf -> (ts, {"gold": x})
 
 
 def _rs_rank(tf):
@@ -183,25 +184,21 @@ def _rs_rank(tf):
 
 
 def _macro(tf):
-    """مومنتوم زنده طلا (PAXG) و شاخص دلار — از همان منبع و نرمال‌سازی آموزش (بدون skew)."""
+    """مومنتوم زندهٔ طلا (PAXG) — از همان منبع و نرمال‌سازیِ آموزش (بدون skew).
+
+    شاخصِ دلار حذف شد: فایلِ dxy_daily.json هرگز پر نشد و ویژگی در تمامِ آموزش
+    ثابتِ ۰ بود؛ زنده‌کردنش بعداً یعنی دادنِ ورودیِ ندیده به مدل.
+    """
     now = time.time()
     hit = _macro_cache.get(tf)
     if hit and now - hit[0] < 900:
         return hit[1]
-    out = {"gold": 0.0, "dxy": 0.0}
+    out = {"gold": 0.0}
     try:
         gk = market.get_history("PAXGUSDT", tf, calib.BARS.get(tf, 3000))
         gmap = calib.mom_norm_map(gk["t"], gk["c"])
         if gmap:
             out["gold"] = list(gmap.values())[-1]
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        rows = market.get_dxy_daily()
-        if rows:
-            dmap = calib.mom_norm_map([r[0] for r in rows], [r[1] for r in rows])
-            if dmap:
-                out["dxy"] = list(dmap.values())[-1]
     except Exception:  # noqa: BLE001
         pass
     _macro_cache[tf] = (now, out)
@@ -363,7 +360,9 @@ def get_analysis(symbol: str, tf: str, max_age=None):
                 htf_sign = 1 if (hz or 0) > 0.3 else -1 if (hz or 0) < -0.3 else 0
         finfo = _funding_info(symbol)
         oinfo = _oi_info(symbol)
-        extras = {"funding_z": float(finfo.get("z") or 0.0),
+        extras = {# ویژگیِ مدل با فرمولِ آموزش ساخته می‌شود، نه با z شلوغیِ متا-گیت
+                  "funding_z": features.live_funding_z(symbol),
+                  "funding_crowd_z": float(finfo.get("z") or 0.0),
                   "funding_persist": int(finfo.get("persist") or 0),
                   "crowded_long": bool(finfo.get("crowded_long")),
                   "crowded_short": bool(finfo.get("crowded_short")),

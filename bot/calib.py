@@ -15,6 +15,7 @@ import numpy as np
 
 import bracket
 import engine
+import features
 import market
 
 try:
@@ -26,8 +27,9 @@ except Exception:  # noqa: BLE001
 CALIB_PATH = os.path.join(os.path.dirname(__file__), "data", "calib.json")
 COST_PCT = 0.15
 REBUILD_SEC = 86400
-CALIB_VERSION = 18       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+CALIB_VERSION = 19       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
 # ۱۸: براکتِ واحد (bracket.py) — برچسب‌ها حالا گپِ پشتِ حدضرر را روی قیمتِ مشاهده‌شده می‌بندند
+# ۱۹: حذفِ ویژگیِ مردهٔ dxy_dir (۲۴ → ۲۳ ویژگی) + یکسان‌سازیِ فرمولِ فاندینگِ آموزش/اجرا
 WF_FOLDS = 5             # تعداد فولدهای Walk-Forward
 WF_EMBARGO = 24          # fallback فقط برای ورودی‌های بدون timestamp
 MIN_BRIER_SKILL = 0.01   # حداقل ۱٪ بهبود نسبت به پیش‌بینیِ ثابتِ نرخ پایه
@@ -1376,18 +1378,6 @@ def mom_norm_map(ts_list, closes, look=20, win=250):
     return out
 
 
-def _dxy_at(dxy_map, ts):
-    """مقدار DXY برای روزِ حاوی ts (تا ۶ روز عقب‌گرد برای تعطیلات)."""
-    if not dxy_map:
-        return 0.0
-    day = (ts // 86400000) * 86400000
-    for k in range(7):
-        v = dxy_map.get(day - k * 86400000)
-        if v is not None:
-            return v
-    return 0.0
-
-
 def _htf_sign(zmap, ts, htf):
     """جهت آخرین کندل بسته‌شده تایم بالاتر پیش از ts — بدون نگاه به آینده."""
     if not zmap or htf is None:
@@ -1403,7 +1393,7 @@ def _htf_sign(zmap, ts, htf):
 
 
 # ───────────────────── استخراج رویدادها + نمونه‌های جهت‌یاب ─────────────────────
-def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=None, dxy_map=None,
+def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=None,
                    breadth_map=None, dom_map=None, ethbtc_map=None):
     o = np.array(kl["o"], float); h = np.array(kl["h"], float)
     l = np.array(kl["l"], float); c = np.array(kl["c"], float)
@@ -1430,7 +1420,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
             funding_z=_fz_at(fz_list, ts),
             rs_rank=(rs_map.get(ts, {}) or {}).get(sym, 0.5),
             htf_sign=_htf_sign(htf_zmap, ts, HTF_OF[tf]),
-            gold_m=(gold_map or {}).get(ts, 0.0), dxy_m=_dxy_at(dxy_map, ts),
+            gold_m=(gold_map or {}).get(ts, 0.0),
             breadth_m=(breadth_map or {}).get(ts, 0.0), dom_m=(dom_map or {}).get(ts, 0.0),
             ethbtc_m=(ethbtc_map or {}).get(ts, 0.0),
         )
@@ -1473,7 +1463,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
             rs_rank=(rs_map.get(ts, {}) or {}).get(sym, 0.5),
             htf_sign=_htf_sign(htf_zmap, ts, HTF_OF[tf]),
             btc_align=btc_align,
-            gold_m=(gold_map or {}).get(ts, 0.0), dxy_m=_dxy_at(dxy_map, ts),
+            gold_m=(gold_map or {}).get(ts, 0.0),
             breadth_m=(breadth_map or {}).get(ts, 0.0), dom_m=(dom_map or {}).get(ts, 0.0),
             ethbtc_m=(ethbtc_map or {}).get(ts, 0.0))
         events.append({"ts": ts, "dir": sig, "setup": setup, "feats": feats,
@@ -1605,9 +1595,6 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                 return s, []
         with ThreadPoolExecutor(max_workers=8) as pool:      # دریافتِ موازیِ فاندینگ (I/O شبکه)
             fz = dict(pool.map(_fz_one, symbols))
-        dxy_rows = market.get_dxy_daily()
-        dxy_norm = mom_norm_map([r[0] for r in dxy_rows], [r[1] for r in dxy_rows]) if dxy_rows else {}
-        dxy_map = {(t // 86400000) * 86400000: v for t, v in dxy_norm.items()}
         table = {"built_at": time.time(), "cost_pct": COST_PCT, "version": CALIB_VERSION, "tfs": {}}
         zmaps = {}                                        # tf -> sym -> {ts: z}
         pending = {}                                      # tf -> ورودی‌های آموزش (آموزشِ همه در پایان، موازی)
@@ -1692,7 +1679,7 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                 try:
                     evs, zmap, dx, dy, dr = extract_events(sym, hists[sym], tf, fz.get(sym, []),
                                                            rs_map, htf_zmap, btc_events_zmap_src,
-                                                           gold_map, dxy_map,
+                                                           gold_map,
                                                            breadth_map, dom_map, ethbtc_map)
                 except Exception:  # noqa: BLE001
                     evs, zmap, dx, dy, dr = [], {}, [], [], []
@@ -1720,21 +1707,21 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
 
         def _train_tf(tf):
             cells, all_events, dx, dy, dr = pending[tf]
-            old_tab = load() or {}
-            # قهرمان فقط از جدول‌های v9+ پذیرفته می‌شود: Platt جدول‌های قدیمی‌تر روی دادهٔ دیده‌شده
-            # بازبرازش شده و آلوده به بیش‌اطمینانی است — یک‌بار پاک‌سازیِ کامل، بعد دادگاهِ منصفانه
-            # (v9 هم قهرمانِ مجاز است: کالیبراسیونش سالم است و آستانه‌های تطبیقی در همین آموزش اضافه می‌شوند)
-            old_ok = old_tab.get("version") == CALIB_VERSION
-            old_tf = (old_tab.get("tfs") or {}).get(tf, {}) if old_ok else {}
-            old_ts = float(old_tab.get("built_at") or 0)   # مبنای «تازگی» اگر قهرمان trained_ts نداشته باشد
-            # نسخهٔ جدید هر بار با همان دادگاهِ سه‌پنجره‌ای بازسازی می‌شود؛
-            # نگه‌داشتن champion قدیمی می‌تواند پنجرهٔ آزمون را دوباره مصرف کند.
+            # ── سلامتِ ویژگی‌ها پیش از آموزش ──
+            # ویژگیِ با واریانسِ صفر چیزی برای یادگرفتن ندارد و فقط بُعد اضافه می‌کند؛
+            # dxy_dir دقیقاً همین بود و کسی متوجه نشد. حالا در جدول ثبت می‌شود.
+            feat_health = features.health([e["feats"] for e in all_events])
+            if feat_health["dead"]:
+                with _lock:
+                    _state["progress"] = (f"⚠️ {tf}: ویژگیِ بی‌واریانس "
+                                          f"{', '.join(feat_health['dead'])}")
             model = _train_logistic(all_events, tf)
             edge_model = _fit_edge_model(all_events, tf, COST_PCT)
             policy_model = _fit_policy_model(all_events, tf, COST_PCT)
             dir_model = _train_dir_model(dx, dy, dr, tf)
             action_model = _fit_action_policy(dx, dy, dr, tf, COST_PCT)
             return tf, {"cells": cells, "events": len(all_events),
+                        "feature_health": feat_health,
                         "model": model, "edge_model": edge_model,
                         "policy_model": policy_model, "dir_model": dir_model,
                         "action_model": action_model}
@@ -1780,6 +1767,12 @@ def status():
         st["built_at"] = t.get("built_at")
         st["age_hours"] = round((time.time() - t["built_at"]) / 3600, 1)
         st["events"] = {tf: d.get("events", 0) for tf, d in t.get("tfs", {}).items()}
+        st["breakeven_win_rate"] = round(bracket.breakeven_win_rate() * 100, 1)
+        st["feature_health"] = {
+            tf: {k: (d.get("feature_health") or {}).get(k)
+                 for k in ("ok", "dead", "low_coverage", "n", "n_feat")}
+            for tf, d in t.get("tfs", {}).items() if d.get("feature_health")
+        }
         st["models"] = {}
         for tf, d in t.get("tfs", {}).items():
             m = d.get("model")

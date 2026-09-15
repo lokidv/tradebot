@@ -320,14 +320,17 @@ def setup_signal(cs, o, h, l, c, i):
     return 0, None
 
 
+# «dxy_dir» حذف شد: منبعِ آن (stooq) هرگز پاسخ نداد و فایلِ dxy_daily.json صفر ردیف
+# داشت، پس این ویژگی در تمامِ ردیف‌های آموزش ثابتِ ۰ بود — وزنِ مرده با این خطر که
+# یک fetchِ موفق در آینده، ویژگی‌ای را زنده کند که مدل هرگز تغییرش را ندیده است.
 FEATS = ["z_dir", "votes", "trend_w", "atr_pct", "rsi_dir", "kdist_dir", "funding_dir",
          "rs_dir", "htf_align", "btc_align", "setup_pb", "setup_sq", "setup_fd", "setup_rg",
-         "hour_sin", "hour_cos", "gold_dir", "dxy_dir",
+         "hour_sin", "hour_cos", "gold_dir",
          "breadth_dir", "dom_dir", "ethbtc_dir", "vol_ts", "dow_sin", "dow_cos"]
 
 
 def event_features(cs, c, i, sig, setup, ts_ms, funding_z=0.0, rs_rank=0.5, htf_sign=0, btc_align=True,
-                   gold_m=0.0, dxy_m=0.0, breadth_m=0.0, dom_m=0.0, ethbtc_m=0.0):
+                   gold_m=0.0, breadth_m=0.0, dom_m=0.0, ethbtc_m=0.0):
     """بردار ویژگی جهت‌دار برای مدل متا-لیبلینگ — ترتیب دقیقاً مطابق FEATS."""
     b, s = votes_at(cs, i)
     votes = (b if sig == 1 else s) / 4.0
@@ -354,7 +357,6 @@ def event_features(cs, c, i, sig, setup, ts_ms, funding_z=0.0, rs_rank=0.5, htf_
         math.sin(2 * math.pi * hour / 24),
         math.cos(2 * math.pi * hour / 24),
         clamp(gold_m) * sig,      # مومنتوم طلا (PAXG) هم‌جهت با معامله
-        clamp(dxy_m) * sig,       # مومنتوم شاخص دلار هم‌جهت با معامله (رابطه معکوس را مدل یاد می‌گیرد)
         clamp(breadth_m) * sig,   # پهنای بازار: چند درصد ارزها بالای EMA50 خودشان‌اند (نرمال‌شده −۱..۱)
         clamp(dom_m) * sig,       # مومنتوم دامیننس BTC — دامیننسِ رو به رشد معمولاً آلت-نزولی است
         clamp(ethbtc_m) * sig,    # مومنتوم ETH/BTC — دماسنجِ اشتهای ریسکِ آلت‌ها
@@ -580,7 +582,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             funding_z=ex.get("funding_z", 0.0),
             rs_rank=ex.get("rs_rank", 0.5),
             htf_sign=ex.get("htf_sign", 0),
-            gold_m=ex.get("gold", 0.0), dxy_m=ex.get("dxy", 0.0),
+            gold_m=ex.get("gold", 0.0),
             breadth_m=ex.get("breadth", 0.0), dom_m=ex.get("dom", 0.0),
             ethbtc_m=ex.get("ethbtc", 0.0),
         )
@@ -641,7 +643,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
                                rs_rank=ex.get("rs_rank", 0.5),
                                htf_sign=ex.get("htf_sign", 0),
                                btc_align=btc_align,
-                               gold_m=ex.get("gold", 0.0), dxy_m=ex.get("dxy", 0.0),
+                               gold_m=ex.get("gold", 0.0),
                                 breadth_m=ex.get("breadth", 0.0), dom_m=ex.get("dom", 0.0),
                                 ethbtc_m=ex.get("ethbtc", 0.0))
         stats = action_stats if action_used else (
