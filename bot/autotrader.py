@@ -12,6 +12,7 @@ from collections import deque
 import advisor
 import fill_quality
 import gates
+import journal
 import market
 import paper
 
@@ -147,6 +148,74 @@ def _bars(symbol, tf):
     return market.get_klines_cached(symbol, tf)
 
 
+# ───────────── وضعیتِ ریسکِ ماندگار (ژورنال) ─────────────
+def _set_cooldown(symbol, until):
+    """کول‌داون هم در حافظه و هم در ژورنال — تا ری‌استارت آن را پاک نکند."""
+    _cooldown[symbol] = max(float(_cooldown.get(symbol, 0)), float(until))
+    try:
+        journal.append(journal.COOLDOWN_SET, symbol=symbol, until=_cooldown[symbol])
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _set_storm(until):
+    global _storm_until
+    _storm_until = float(until)
+    try:
+        journal.append(journal.STORM, until=_storm_until)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _set_risk_off(day):
+    global _risk_off_day
+    _risk_off_day = day
+    try:
+        journal.append(journal.RISK_OFF, day=day)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _clear_pending(why):
+    """لغوِ همهٔ سفارش‌های صبور — با ثبتِ تک‌تک، تا replay آن‌ها را زنده نکند."""
+    for sym, o in list(_pending.items()):
+        _pending.pop(sym, None)
+        fill_quality.log_event("cancelled", symbol=sym, tf=(o or {}).get("tf"),
+                               side=(o or {}).get("side"), why=why,
+                               authority=(o or {}).get("authority"))
+
+
+def restore_state():
+    """بازسازیِ ترمزهای ریسک پس از ری‌استارت.
+
+    بدونِ این، رباتی که حدِ ضررِ روزانه‌اش را زده بود با یک ری‌استارت دوباره
+    شروع به معامله می‌کرد — یعنی ترمز عملاً وجود نداشت.
+    """
+    global _storm_until, _risk_off_day
+    try:
+        st = journal.replay()
+    except Exception:  # noqa: BLE001
+        return None
+    _pending.update(st["pending"])
+    _cooldown.update(st["cooldown"])
+    _storm_until = max(_storm_until, st["storm_until"])
+    if st["risk_off_day"]:
+        _risk_off_day = st["risk_off_day"]
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    notes = []
+    if _risk_off_day == today:
+        notes.append("توقفِ ورودِ روزانه هنوز برقرار است")
+    if _storm_until > time.time():
+        notes.append(f"ترمزِ طوفان تا {int(_storm_until - time.time())} ثانیهٔ دیگر")
+    if _pending:
+        notes.append(f"{len(_pending)} سفارشِ صبورِ زنده")
+    if _cooldown:
+        notes.append(f"{len(_cooldown)} ارز در کول‌داون")
+    if notes:
+        think("🧠 وضعیتِ ریسک از ژورنال بازیابی شد — " + "، ".join(notes), "warn")
+    return st
+
+
 def _refresh(prices):
     """به‌روزرسانیِ واقع‌گرا: ویکِ کندل‌ها + لغزشِ استاپ + فاندینگِ پرپچوال."""
     return paper.refresh(prices, klines_fn=_bars, funding_fn=market.get_funding_history)
@@ -183,7 +252,7 @@ def _announce_closes(db, before_ids):
               f"({p.get('close_reason')}) → {p.get('pnl_usdt'):+.1f}$", "open" if win else "close")
         # کول‌داونِ همگانی بعد از هر بسته‌شدن: ضدِ انتقام بعد از ضرر (۳۰ دق) و ضدِ حلقهٔ بازشدنِ فوری بعد از هر خروج (۱۵ دق)
         cd = COOLDOWN_SEC if p.get("pnl_usdt", 0) <= 0 else 900
-        _cooldown[p["symbol"]] = max(_cooldown.get(p["symbol"], 0), time.time() + cd)
+        _set_cooldown(p["symbol"], time.time() + cd)
     if len(_announced) > 400:
         _announced.clear()
 
@@ -231,7 +300,7 @@ def _retire_toxic_1d():
         reason = ("ربات: قفل سود — خروج از ۱d سمی" if pnl >= 0
                   else "ربات: قطع زیان — تایم‌فریم ۱d در کارنامه زنده سمی است")
         paper.close_with(p["id"], lp, reason)
-        _cooldown[p["symbol"]] = now + COOLDOWN_SEC
+        _set_cooldown(p["symbol"], now + COOLDOWN_SEC)
         think(f"{'💰' if pnl >= 0 else '✂️'} {p['symbol'].replace('USDT','')}: {reason} "
               f"({pnl:+.1f}$)", "close")
 
@@ -242,10 +311,7 @@ def _process_pending():
     if not _pending:
         return
     if _risk_off_day == time.strftime("%Y-%m-%d", time.gmtime()) or now < _storm_until:
-        for sym, o in list(_pending.items()):
-            fill_quality.log_event("cancelled", symbol=sym, tf=o.get("tf"), side=o.get("side"),
-                                   why="storm_or_risk_off", authority=o.get("authority"))
-        _pending.clear()
+        _clear_pending("storm_or_risk_off")
         return
     db = paper.list_positions()
     held = {p["symbol"] for p in db["open"]}
@@ -340,7 +406,7 @@ def _monitor():
     """👁 پایشِ لحظه‌ای (هر ۱۲ ثانیه، جدا از چرخهٔ تحلیل): سفارش‌های صبور، حدها، برداشتِ پله‌ای، حدضررِ متحرک."""
     cfg = load_cfg()
     if not cfg["enabled"]:
-        _pending.clear()
+        _clear_pending("bot_disabled")
         # خاموش‌کردنِ ورودی‌های تازه نباید حفاظتِ پوزیشن‌های قبلی را خاموش کند.
         db = paper.list_positions()
         bot_local = [p for p in db["open"] if p.get("opened_by") == "bot"
@@ -503,6 +569,7 @@ def _open_from_candidate(c, tf, kind, P, equity, db, risk_mult=1.0):
                          "signal_ts": c.get("zt"), "expires": time.time() + PENDING_TTL.get(tf, 1200),
                          "meta_size_mult": c.get("meta_size_mult"),
                          "authority": c.get("authority")}
+        journal.append(journal.ORDER_PLACED, symbol=sym, order=_pending[sym])
         think(f"🎯 {nm}: سفارشِ صبور در {target:.6g} (زنده {live:.6g}) — "
               f"حجم {size:.0f}$ (ریسک {new_risk:.0f}$){meta_note} — "
               f"حداکثر {PENDING_TTL.get(tf, 1200) // 60} دقیقه", "info")
@@ -580,7 +647,7 @@ def _cycle():
             # ⚰️ جفتِ حذف‌شده/فیدِ یخ‌زده: پول را در چارتِ مرده حبس نکن
             paper.close_with(p["id"], p.get("last_price") or p["entry"], "ربات: جفتِ حذف‌شده — فیدِ مرده")
             think(f"⚰️ {p['symbol'].replace('USDT','')}: فیدِ داده مرده است (جفتِ حذف‌شده) — بستم و در لیستِ سیاهِ موقت گذاشتم.", "close")
-            _cooldown[p["symbol"]] = time.time() + 86400
+            _set_cooldown(p["symbol"], time.time() + 86400)
             continue
         if not row or row.get("p_up") is None or not row.get("p_calibrated"):
             continue
@@ -590,7 +657,7 @@ def _cycle():
             if lp:
                 reason = "ربات: قفل سود 🧭" if adv["action"] == "lock_profit" else "ربات: مشاور — " + adv["title"]
                 paper.close_with(p["id"], lp, reason)
-                _cooldown[p["symbol"]] = time.time() + COOLDOWN_SEC
+                _set_cooldown(p["symbol"], time.time() + COOLDOWN_SEC)
                 think(f"🧭 {p['symbol'].replace('USDT','')}: {adv['title']} — {adv['reasons'][0]}. "
                       f"تا ۳۰ دقیقه سراغش نمی‌روم.", "close")
         elif adv["action"] == "move_be" and p.get("mode") != "testnet":
@@ -602,7 +669,7 @@ def _cycle():
                 lp = prices.get(p["symbol"]) or _live(p["symbol"])
                 if lp:
                     paper.close_with(p["id"], lp, "ربات: خروج زمانی — سرمایه آزاد شد")
-                    _cooldown[p["symbol"]] = time.time() + COOLDOWN_SEC
+                    _set_cooldown(p["symbol"], time.time() + COOLDOWN_SEC)
                     think(f"⏳ {p['symbol'].replace('USDT','')}: {adv['reasons'][0]} — بستم و سرمایه را آزاد کردم.", "close")
             else:
                 think(f"🧭 {p['symbol'].replace('USDT','')}: {adv['title']} — {adv['reasons'][0]}", "warn")
@@ -622,7 +689,7 @@ def _cycle():
             if now >= _storm_until:
                 think(f"⛈ طوفانِ بازار: بیت‌کوین z={bz:+.1f} — تا ۱۰ دقیقه پوزیشنِ تازه باز نمی‌کنم؛ "
                       f"فقط پوزیشن‌های باز را مدیریت می‌کنم. حرفه‌ای‌ها در آشوب معامله نمی‌سازند.", "warn")
-            _storm_until = now + 600
+            _set_storm(now + 600)
             break
 
     # 🛑 حدِ ضررِ روزانه: اگر امروز بیش از حدِ مجاز باختم، تا فردا فقط نظاره‌گرم (دیسیپلین > هیجان)
@@ -630,7 +697,7 @@ def _cycle():
     day_pnl = _daily_pnl_bot(db)
     day_limit = equity * 1.5 / 100
     if day_pnl <= -day_limit and _risk_off_day != today:
-        _risk_off_day = today
+        _set_risk_off(today)
         think(f"🛑 حدِ ضررِ روزانه فعال شد: امروز {day_pnl:+.1f}$ (حدِ مجاز −{day_limit:.0f}$). "
               f"تا پایانِ روز ورودِ جدید ممنوع — بدترین کار بعد از باخت، تلاش برای جبرانِ فوری است.", "close")
     risk_off = _risk_off_day == today
@@ -642,7 +709,7 @@ def _cycle():
         think(f"🎯 {streak} باختِ پیاپی — ریسکِ ورودی‌های بعدی را نصف می‌کنم تا دوباره برد ببینم.", "warn")
 
     if risk_off or now < _storm_until:
-        _pending.clear()                                 # سفارش‌های صبورِ معلق هم در شرایطِ خطر لغو می‌شوند
+        _clear_pending("risk_off_or_storm")              # سفارش‌های صبورِ معلق در شرایطِ خطر لغو می‌شوند
         with _lock:
             _status["current"] = "🛑 توقفِ ورود (حدِ روزانه)" if risk_off else "⛈ ترمزِ طوفان — فقط مدیریتِ پوزیشن‌ها"
         return
@@ -766,5 +833,6 @@ def start():
     if _started:
         return
     _started = True
+    restore_state()                      # ترمزهای ریسک نباید با ری‌استارت پاک شوند
     threading.Thread(target=_loop, daemon=True).start()
     threading.Thread(target=_monitor_loop, daemon=True).start()

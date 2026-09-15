@@ -30,6 +30,17 @@ def _save(db):
     os.replace(tmp, PATH)
 
 
+import journal
+
+# هر رویدادِ سفارش هم‌زمان به ژورنالِ ماندگار می‌رود تا ری‌استارت وضعیتِ
+# سفارش‌های صبور را گم نکند (قبلاً ``_pending`` فقط در حافظه بود).
+_JOURNAL_KIND = {
+    "filled": journal.ORDER_FILLED,
+    "expired": journal.ORDER_EXPIRED,
+    "cancelled": journal.ORDER_CANCELLED,
+}
+
+
 def log_event(kind: str, **kw):
     """kind: filled | expired | cancelled"""
     with _lock:
@@ -38,6 +49,12 @@ def log_event(kind: str, **kw):
         db["events"] = (db.get("events") or [])[-500:]
         db["events"].append(ev)
         _save(db)
+    jk = _JOURNAL_KIND.get(kind)
+    if jk:
+        try:
+            journal.append(jk, **kw)
+        except Exception:  # noqa: BLE001 — ژورنال نباید مسیرِ معامله را بشکند
+            pass
 
 
 def summary(days=14) -> dict[str, Any]:
