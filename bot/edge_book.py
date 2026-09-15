@@ -13,6 +13,7 @@ import time
 from typing import Any
 
 import shadow
+import stats
 
 # آستانه‌های ازپیش‌تعیین‌شده (قبل از دیدن جیب فعلی)
 MIN_N = 18
@@ -34,17 +35,20 @@ BLOCKED_TFS = ("1d",)
 _cache = {"ts": 0.0, "pockets": {}, "suspended": {}, "health": {}}
 
 
-def _lcb(avg, sd, n, z=1.28):
-    """کران پایین تقریبی میانگین (یک‌طرفه ~۹۰٪)."""
-    if n <= 1:
-        return avg
-    return avg - z * (sd / math.sqrt(n))
+BLOCK_MS = 40 * 3600 * 1000     # طولِ بلوکِ بوت‌استرپ = افقِ برچسب روی ۱ ساعته
 
 
-def _series_quality(rs: list[float]) -> dict[str, Any]:
+def _series_quality(rs: list[float], ts: list[float] | None = None) -> dict[str, Any]:
+    """کیفیتِ یک سطل. کرانِ پایین با **بوت‌استرپِ بلوکی** حساب می‌شود، نه ``sd/√n``.
+
+    فرمولِ قبلی استقلالِ نمونه‌ها را فرض می‌کرد؛ با هم‌پوشانیِ برچسب و همبستگیِ
+    مقطعیِ ~۰٫۶ این فرض غلط است و کران را به‌شدت خوش‌بین می‌کرد. اگر رویدادها
+    در چند بلوکِ زمانیِ متمایز پخش نشده باشند، کران ``None`` می‌ماند — یعنی
+    «نامعلوم»، نه «اثبات‌شده».
+    """
     n = len(rs)
     if n == 0:
-        return {"n": 0, "avg_r": None, "win_rate": None, "lcb_r": None,
+        return {"n": 0, "avg_r": None, "win_rate": None, "lcb_r": None, "n_eff": None,
                 "sd": None, "half0": None, "half1": None, "recent": None}
     avg = sum(rs) / n
     wr = sum(1 for x in rs if x > 0) / n * 100
@@ -56,11 +60,15 @@ def _series_quality(rs: list[float]) -> dict[str, Any]:
     # ۱۵تای آخر (یا نصف آخر اگر کمتر)
     tail = rs[-max(8, min(15, n)):]
     recent = sum(tail) / len(tail)
+    stamps = ts if ts else list(range(n))
+    lcb = stats.block_bootstrap_lcb(rs, stamps, BLOCK_MS, alpha=0.10, B=400)
     return {
         "n": n,
         "avg_r": round(avg, 3),
         "win_rate": round(wr, 1),
-        "lcb_r": round(_lcb(avg, sd, n), 3),
+        "lcb_r": lcb,
+        "n_eff": stats.effective_n(rs, stamps, BLOCK_MS),
+        "n_blocks": stats.n_blocks(stamps, BLOCK_MS),
         "sd": round(sd, 3),
         "half0": round(h0, 3) if h0 is not None else None,
         "half1": round(h1, 3) if h1 is not None else None,
@@ -69,19 +77,25 @@ def _series_quality(rs: list[float]) -> dict[str, Any]:
 
 
 def _combo_rows(days=30):
-    """از signals_log ردیف‌های R را بر اساس tf|setup|side جمع می‌کند."""
+    """از signals_log ردیف‌های R را بر اساس tf|setup|side جمع می‌کند.
+
+    خروجی: ``key -> (values, timestamps)`` — مهرِ زمانی لازم است تا کرانِ پایین
+    با بوت‌استرپِ بلوکی حساب شود، نه با فرضِ استقلالِ نمونه‌ها.
+    """
     with shadow._lock:
         db = shadow._load()
     cutoff = (time.time() - days * 86400) * 1000
-    buckets: dict[str, list[float]] = {}
+    buckets: dict[str, tuple[list[float], list[float]]] = {}
     for r in db.get("resolved") or []:
         if r.get("ts", 0) < cutoff or not shadow.is_clean_row(r):
             continue                       # ردیفِ مسموم (ریسکِ صفر / R پرت) آمار را وارونه می‌کرد
-        rm = r.get("r_mult")
-        key = f"{r.get('tf')}|{r.get('setup') or 'zx'}|{r.get('side') or '?'}"
-        buckets.setdefault(key, []).append(float(rm))
-        key2 = f"{r.get('tf')}|{r.get('setup') or 'zx'}"
-        buckets.setdefault(key2, []).append(float(rm))
+        rm = float(r.get("r_mult"))
+        ts = float(r.get("ts") or 0)
+        for key in (f"{r.get('tf')}|{r.get('setup') or 'zx'}|{r.get('side') or '?'}",
+                    f"{r.get('tf')}|{r.get('setup') or 'zx'}"):
+            vals, stamps = buckets.setdefault(key, ([], []))
+            vals.append(rm)
+            stamps.append(ts)
     return buckets
 
 
@@ -91,8 +105,8 @@ def refresh(force=False):
         return _cache["pockets"], _cache["suspended"], _cache["health"]
     pockets, suspended = {}, {}
     buckets = _combo_rows(30)
-    for key, rs in buckets.items():
-        q = _series_quality(rs)
+    for key, (rs, stamps) in buckets.items():
+        q = _series_quality(rs, stamps)
         n, avg, wr = q["n"], q["avg_r"], q["win_rate"]
         if avg is None or n < 12:
             continue

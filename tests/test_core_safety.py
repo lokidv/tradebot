@@ -60,7 +60,7 @@ class ValidationSafetyTests(unittest.TestCase):
     def test_direct_net_return_model_must_pass_temporal_holdout(self):
         rng = np.random.RandomState(17)
         events = []
-        for i in range(900):
+        for i in range(1500):
             x = rng.normal(size=6)
             risk_pct = 1.0
             net_r = 0.62 * x[0] + 0.12 * rng.normal()
@@ -83,7 +83,7 @@ class ValidationSafetyTests(unittest.TestCase):
     def test_final_policy_is_selected_before_untouched_temporal_test(self):
         rng = np.random.RandomState(29)
         events = []
-        for i in range(1_200):
+        for i in range(2_200):
             x = rng.normal(size=6)
             net_r = 0.85 * x[0] + 0.10 * rng.normal()
             events.append({
@@ -103,16 +103,18 @@ class ValidationSafetyTests(unittest.TestCase):
         self.assertGreater(model["test"]["uplift_r"], calib.POLICY_MIN_UPLIFT_R)
 
     def test_dense_action_policy_can_choose_long_short_or_no_trade(self):
+        # ۱۰ ارز در هر لحظه (≥ حداقلِ گروهِ مقطعی) روی ۸۰۰ ساعت: هر پنجرهٔ
+        # dev/cal/test باید پهن‌تر از purge (= افقِ برچسب، ۳۶ ساعت) باشد.
         rng = np.random.RandomState(37)
         dx, dy, dr = [], [], []
-        for i in range(4_000):
+        for i in range(8_000):
             x = rng.normal(size=6)
             long_x, short_x = x.copy(), x.copy()
             short_x[0] *= -1
             net_long = 0.72 * long_x[0] + 0.10 * rng.normal()
             net_short = 0.72 * short_x[0] + 0.10 * rng.normal()
             dx.append((long_x.tolist(), short_x.tolist()))
-            dy.append(((i // 20) * calib.TF_MS["1h"], float(net_long > net_short)))
+            dy.append(((i // 10) * calib.TF_MS["1h"], float(net_long > net_short)))
             dr.append((float(net_long + calib.COST_PCT),
                        float(net_short + calib.COST_PCT), 1.0))
         with mock.patch.object(calib, "HAS_LGBM", False):

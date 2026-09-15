@@ -18,6 +18,7 @@ import log
 import engine
 import features
 import market
+import stats
 
 try:
     import lightgbm as lgb
@@ -329,6 +330,21 @@ def _walk_forward_splits(ts, embargo_ms=0):
     return out
 
 
+def _purge_boundary(rows_a, rows_b, ts, purge_ms):
+    """ردیف‌هایی از پنجرهٔ قبلی که پنجرهٔ برچسبشان وارد پنجرهٔ بعدی می‌شود را حذف می‌کند.
+
+    embargo فقط روی مرزِ فولدهای Walk-Forward اعمال می‌شد؛ مرزهای dev/cal/test
+    با اندیسِ ردیف بریده می‌شدند، پس برچسبِ آخرین رویدادهای dev تا داخلِ cal و
+    test ادامه داشت — نشتی‌ای که «آزمونِ دست‌نخورده» را آلوده می‌کرد.
+    """
+    if ts is None or not len(rows_a) or not len(rows_b) or purge_ms <= 0:
+        return rows_a
+    ts = np.asarray(ts, dtype=np.float64)
+    start_b = float(ts[rows_b].min())
+    keep = ts[rows_a] < start_b - float(purge_ms)
+    return rows_a[keep]
+
+
 def _walk_forward(X, y, kind, extra=None, ts=None, embargo_ms=0):
     """پیش‌بینی‌های برون‌نمونه‌ایِ Walk-Forward با embargo (بدون نشتیِ زمانی).
     هر فولد (و برای شبکهٔ عصبی، هر seed از هر فولد) یک تسکِ مستقل روی نودهای یادگیری است."""
@@ -429,6 +445,9 @@ def _fit_model(X, y, champion=None, ts=None, champion_ts=0.0, embargo_ms=0):
     dev_end = int(len(idx) * 0.60)
     cal_end = int(len(idx) * 0.80)
     st, cal_rows, test_rows = idx[:dev_end], idx[dev_end:cal_end], idx[cal_end:]
+    ts_arr = np.asarray(ts, dtype=np.float64) if ts is not None else None
+    st = _purge_boundary(st, cal_rows, ts_arr, embargo_ms)
+    cal_rows = _purge_boundary(cal_rows, test_rows, ts_arr, embargo_ms)
     if min(len(st), len(cal_rows), len(test_rows)) < 60:
         return None, None, None
 
@@ -655,6 +674,9 @@ def _fit_edge_model(events, tf, cost_pct=COST_PCT):
     dev_end = int(len(idx) * 0.60)
     cal_end = int(len(idx) * 0.80)
     dev, cal_rows, test_rows = idx[:dev_end], idx[dev_end:cal_end], idx[cal_end:]
+    purge = bracket.MAX_BARS * TF_MS[tf]
+    dev = _purge_boundary(dev, cal_rows, ts, purge)
+    cal_rows = _purge_boundary(cal_rows, test_rows, ts, purge)
     if min(len(dev), len(cal_rows), len(test_rows)) < 60:
         return None
 
@@ -787,24 +809,38 @@ def _profit_factor(values):
     return gains / losses if losses > 1e-12 else (99.0 if gains > 0 else 0.0)
 
 
-def _policy_sample_stats(values, baseline=0.0):
-    """آمار محافظه‌کارانهٔ یک سیاست؛ n مؤثر یک‌چهارم n است چون رویدادهای بازار هم‌بسته‌اند."""
+def _policy_sample_stats(values, baseline=0.0, ts=None, block_ms=None):
+    """آمارِ یک سیاست با کرانِ پایینِ بوت‌استرپِ بلوکی.
+
+    نسخهٔ قبلی ``n`` مؤثر را حدسی «یک‌چهارمِ n» می‌گرفت و کران را با ``sd/√n``
+    می‌ساخت. با مهرِ زمانی، حالا بلوک‌های زمانی دست‌نخورده نمونه‌برداری می‌شوند
+    و ``n`` مؤثر از هم‌پوشانیِ واقعی و همبستگیِ مقطعی درمی‌آید. اگر مهرِ زمانی
+    در دست نباشد همان تقریبِ محافظه‌کارِ قبلی می‌ماند.
+    """
     values = np.asarray(values, float)
     if not len(values):
         return {
-            "n": 0, "avg_net_r": None, "profit_factor": None,
-            "win_rate": None, "lcb_net_r": None, "uplift_r": None,
+            "n": 0, "n_eff": 0.0, "avg_net_r": None, "profit_factor": None,
+            "win_rate": None, "lcb_net_r": None, "uplift_r": None, "sd_net_r": None,
         }
     avg = float(values.mean())
     sd = float(values.std())
-    effective_n = max(len(values) / 4.0, 1.0)
-    lcb = avg - 1.28 * sd / math.sqrt(effective_n)
+    if ts is not None and len(ts) == len(values):
+        block = block_ms or (bracket.MAX_BARS * TF_MS["1h"])
+        n_eff = stats.effective_n(values, ts, block)
+        lcb = stats.block_bootstrap_lcb(values, ts, block, alpha=0.10, B=400)
+        if lcb is None:                       # خوشهٔ واحد: عدم‌قطعیت برآوردپذیر نیست
+            lcb = avg - 1.28 * sd / math.sqrt(max(n_eff, 1.0))
+    else:
+        n_eff = max(len(values) / 4.0, 1.0)
+        lcb = avg - 1.28 * sd / math.sqrt(n_eff)
     return {
         "n": int(len(values)),
+        "n_eff": round(float(n_eff), 2),
         "avg_net_r": round(avg, 4),
         "profit_factor": round(_profit_factor(values), 4),
         "win_rate": round(float((values > 0).mean()) * 100, 2),
-        "lcb_net_r": round(lcb, 4),
+        "lcb_net_r": round(float(lcb), 4),
         "uplift_r": round(avg - float(baseline), 4),
         "sd_net_r": round(sd, 4),
     }
@@ -843,6 +879,8 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
     dev_end = int(len(idx) * 0.50)
     cal_end = int(len(idx) * 0.75)
     dev, cal_rows, test_rows = idx[:dev_end], idx[dev_end:cal_end], idx[cal_end:]
+    dev = _purge_boundary(dev, cal_rows, ts, embargo)
+    cal_rows = _purge_boundary(cal_rows, test_rows, ts, embargo)
     if min(len(dev), len(cal_rows), len(test_rows)) < 90:
         return None
 
@@ -893,7 +931,8 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
             chosen = net_r[cal_rows][score >= threshold]
             if len(chosen) < min_selected:
                 continue
-            st = _policy_sample_stats(chosen, float(net_r[cal_rows].mean()))
+            st = _policy_sample_stats(chosen, float(net_r[cal_rows].mean()),
+                                      ts=ts[cal_rows][score >= threshold], block_ms=embargo)
             # معیار انتخاب، میانگینِ جریمه‌شده با خطای نمونه و تمرکز است؛ test هنوز دیده نشده.
             objective = float(st["avg_net_r"]) - 0.50 * float(st["sd_net_r"]) / math.sqrt(max(len(chosen) / 4, 1))
             objective += 0.04 * min(float(st["profit_factor"]) - 1.0, 1.0)
@@ -918,7 +957,8 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
     selected_mask = test_score >= design["threshold"]
     selected_rows = test_rows[selected_mask]
     selected_values = net_r[selected_rows]
-    test_stats = _policy_sample_stats(selected_values, float(net_r[test_rows].mean()))
+    test_stats = _policy_sample_stats(selected_values, float(net_r[test_rows].mean()),
+                                      ts=ts[selected_rows], block_ms=embargo)
     half = len(test_rows) // 2
     halves = []
     for rows in (test_rows[:half], test_rows[half:]):
@@ -938,7 +978,7 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
         rows = [i for i in selected_rows if evs[i].get("regime") == regime]
         if not rows:
             continue
-        rst = _policy_sample_stats(net_r[rows])
+        rst = _policy_sample_stats(net_r[rows], ts=ts[rows], block_ms=embargo)
         by_regime[regime] = rst
         by_regime[regime]["veto"] = bool(
             rst["n"] >= 20 and float(rst["avg_net_r"]) < -0.05
@@ -1055,7 +1095,7 @@ def _score_policy(m, feats, risk_pct, cost_pct, regime=None):
     }
 
 
-def _time_partitions(rows, timestamps):
+def _time_partitions(rows, timestamps, purge_ms=0):
     """سه بخش زمانی بدون شکستن گروه‌های دارای timestamp یکسان."""
     rows = np.asarray(rows, dtype=int)
     if not len(rows):
@@ -1066,7 +1106,11 @@ def _time_partitions(rows, timestamps):
         return np.array([], int), np.array([], int), np.array([], int)
     dcut = uniq[min(int(len(uniq) * 0.50), len(uniq) - 2)]
     ccut = uniq[min(int(len(uniq) * 0.75), len(uniq) - 1)]
-    return rows[ts[rows] < dcut], rows[(ts[rows] >= dcut) & (ts[rows] < ccut)], rows[ts[rows] >= ccut]
+    purge = int(purge_ms or 0)
+    dev = rows[ts[rows] < dcut - purge]                 # purge روی مرز، نه فقط برش
+    cal = rows[(ts[rows] >= dcut) & (ts[rows] < ccut - purge)]
+    test = rows[ts[rows] >= ccut]
+    return dev, cal, test
 
 
 def _cross_section_mask(score, rows, timestamps, quantile, min_group=8):
@@ -1125,7 +1169,7 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     for pred in oof_all.values():
         valid &= ~np.isnan(pred[0::2]) & ~np.isnan(pred[1::2])
     rows = np.where(valid)[0]
-    dev, cal_rows, test_rows = _time_partitions(rows, timestamps)
+    dev, cal_rows, test_rows = _time_partitions(rows, timestamps, purge_ms=embargo)
     if min(len(dev), len(cal_rows), len(test_rows)) < 180:
         return None
 
@@ -1170,7 +1214,8 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
             if len(vals) < min_selected:
                 continue
             static_cal = max(float(net_long[cal_rows].mean()), float(net_short[cal_rows].mean()))
-            st = _policy_sample_stats(vals, static_cal)
+            st = _policy_sample_stats(vals, static_cal,
+                                      ts=timestamps[cal_rows][select_mask], block_ms=embargo)
             objective = float(st["avg_net_r"]) - 0.50 * float(st["sd_net_r"]) / math.sqrt(max(len(vals) / 4, 1))
             objective += 0.04 * min(float(st["profit_factor"]) - 1.0, 1.0)
             candidates.append({
@@ -1180,6 +1225,17 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     if not candidates:
         return None
     design = max(candidates, key=lambda x: x["objective"])
+
+    def _evaluate_ts(base_rows):
+        """مهرِ زمانیِ سطرهای انتخاب‌شده — برای بوت‌استرپِ بلوکی لازم است."""
+        _vals, _all, _score = None, None, None
+        pl = np.clip(slope * raw[0::2][base_rows] + intercept, -1.5, 2.2)
+        ps = np.clip(slope * raw[1::2][base_rows] + intercept, -1.5, 2.2)
+        strength = np.maximum(pl, ps)
+        margin = np.abs(pl - ps)
+        score = (strength - s_mu) / s_sd + design["margin_weight"] * ((margin - m_mu) / m_sd)
+        mask = _cross_section_mask(score, base_rows, timestamps, design["quantile"])
+        return timestamps[base_rows][mask]
 
     def _evaluate(base_rows):
         pl = np.clip(slope * raw[0::2][base_rows] + intercept, -1.5, 2.2)
@@ -1196,7 +1252,9 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     # benchmark واقعی، سیاستِ پیش‌بینی‌گر نیست: بهترین سمت ثابتِ long یا short در
     # همان test (حتی با مزیت نگاه پس از واقعه). سیاست باید از این حریفِ سخت بهتر باشد.
     static_test = max(float(net_long[test_rows].mean()), float(net_short[test_rows].mean()))
-    test_stats = _policy_sample_stats(selected_test, static_test)
+    _sel_ts = _evaluate_ts(test_rows)
+    test_stats = _policy_sample_stats(selected_test, static_test,
+                                      ts=_sel_ts, block_ms=embargo)
     halves = []
     test_ts = np.unique(timestamps[test_rows])
     hcut = test_ts[len(test_ts) // 2]
