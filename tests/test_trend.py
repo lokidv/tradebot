@@ -150,6 +150,31 @@ class ForwardTrackingTests(unittest.TestCase):
             self.assertEqual(row["category"], "join" if days_after <= trend.JOIN_MAX_DAYS else "late")
             self.assertAlmostEqual(row["stop_distance_pct"], (row["last"] - row["stop"]) / row["last"] * 100)
 
+    def test_the_extension_is_thirty_distinct_non_major_coins(self):
+        self.assertEqual(len(trend.EXT_SYMBOLS), 30)
+        self.assertEqual(len(set(trend.ALL_SYMBOLS)), 50)
+        self.assertFalse(set(trend.SYMBOLS) & set(trend.EXT_SYMBOLS))
+        self.assertFalse([s for s in trend.EXT_SYMBOLS if explore._excluded(s)])
+        self.assertNotIn("PAXGUSDT", trend.EXT_SYMBOLS)                 # طلا دارایی دیگری است
+        self.assertEqual((trend.universe_of("BTCUSDT"), trend.universe_of("SUIUSDT")), ("majors", "top50"))
+
+    def test_forward_record_keeps_the_majors_and_the_extension_apart(self):
+        rows = [{"kind": "exit", "rule": trend.PRIMARY, "sym": "BTCUSDT", "net_r": 1.0, "entry_ts": 1},
+                {"kind": "exit", "rule": trend.PRIMARY, "sym": "SUIUSDT", "net_r": -1.0, "entry_ts": 2},
+                {"kind": "exit", "rule": trend.PRIMARY, "sym": "PEPEUSDT", "net_r": 2.0, "entry_ts": 3,
+                 "universe": "top50"}]
+        fwd = trend.forward_stats(rows)
+        self.assertEqual(fwd[trend.PRIMARY]["n"], 1)
+        self.assertEqual(fwd[f"{trend.PRIMARY}@top50"]["n"], 2)
+        self.assertEqual(fwd[f"{trend.PRIMARY}@top50"]["sum_r"], 1.0)
+
+    def test_the_prestated_expansion_rule_needs_all_four_conditions(self):
+        ok = {"n": 800, "mean": 0.38, "lcb": 0.14, "first_half_mean": 0.63, "second_half_mean": 0.14,
+              "mean_stressed": 0.32}
+        self.assertTrue(explore.expansion_passes(ok))
+        for k, bad in (("lcb", -0.01), ("second_half_mean", -0.02), ("mean_stressed", -0.1), ("mean", -0.1)):
+            self.assertFalse(explore.expansion_passes(dict(ok, **{k: bad})), k)
+
     def test_snapshot_reports_missing_and_off_grid_data_and_never_authorizes(self):
         good = _as_lists(_series())
         okx = _as_lists(_series(seed=9))

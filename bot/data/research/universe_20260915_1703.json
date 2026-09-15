@@ -1,0 +1,191 @@
+{
+ "generated_at": 1789491805.6480238,
+ "cutoff_ms": 1727481600000,
+ "rule": "T_don20_long",
+ "symbols_with_daily_history": 295,
+ "top20": {
+  "n": 628,
+  "n_eff": 102.3,
+  "n_blocks": 69,
+  "mean": 0.3074,
+  "sd": 1.9382,
+  "lcb": 0.0626,
+  "t_stat": 1.604,
+  "win_rate": 40.13,
+  "profit_factor": 1.7693,
+  "uplift": 0.3074,
+  "alpha": 0.05,
+  "first_half_mean": 0.5644,
+  "second_half_mean": 0.0504,
+  "max_drawdown": 40.07,
+  "by_year": {
+   "2018": {
+    "n": 24,
+    "mean": -0.6639
+   },
+   "2019": {
+    "n": 89,
+    "mean": 0.3515
+   },
+   "2020": {
+    "n": 119,
+    "mean": 0.6509
+   },
+   "2021": {
+    "n": 107,
+    "mean": 0.7557
+   },
+   "2022": {
+    "n": 76,
+    "mean": -0.3134
+   },
+   "2023": {
+    "n": 111,
+    "mean": 0.5222
+   },
+   "2024": {
+    "n": 102,
+    "mean": -0.1447
+   }
+  },
+  "positive_years": "4/7",
+  "mean_spot": 0.3263,
+  "mean_stressed": 0.2263,
+  "avg_cost_pct": 0.782,
+  "symbols": 103
+ },
+ "top50": {
+  "n": 1415,
+  "n_eff": 115.158,
+  "n_blocks": 75,
+  "mean": 0.3579,
+  "sd": 2.048,
+  "lcb": 0.1369,
+  "t_stat": 1.875,
+  "win_rate": 40.28,
+  "profit_factor": 1.9001,
+  "uplift": 0.3579,
+  "alpha": 0.05,
+  "first_half_mean": 0.6329,
+  "second_half_mean": 0.0833,
+  "max_drawdown": 93.917,
+  "by_year": {
+   "2018": {
+    "n": 24,
+    "mean": -0.6639
+   },
+   "2019": {
+    "n": 138,
+    "mean": 0.1331
+   },
+   "2020": {
+    "n": 284,
+    "mean": 0.763
+   },
+   "2021": {
+    "n": 284,
+    "mean": 0.75
+   },
+   "2022": {
+    "n": 188,
+    "mean": -0.3751
+   },
+   "2023": {
+    "n": 268,
+    "mean": 0.5491
+   },
+   "2024": {
+    "n": 229,
+    "mean": -0.01
+   }
+  },
+  "positive_years": "4/7",
+  "mean_spot": 0.3762,
+  "mean_stressed": 0.2846,
+  "avg_cost_pct": 0.806,
+  "symbols": 188
+ },
+ "ranks_21_50": {
+  "n": 811,
+  "n_eff": 99.626,
+  "n_blocks": 66,
+  "mean": 0.3846,
+  "sd": 2.1124,
+  "lcb": 0.1381,
+  "t_stat": 1.817,
+  "win_rate": 39.95,
+  "profit_factor": 1.9654,
+  "uplift": 0.3846,
+  "alpha": 0.05,
+  "first_half_mean": 0.6331,
+  "second_half_mean": 0.1366,
+  "max_drawdown": 65.581,
+  "by_year": {
+   "2019": {
+    "n": 50,
+    "mean": -0.2763
+   },
+   "2020": {
+    "n": 168,
+    "mean": 0.8314
+   },
+   "2021": {
+    "n": 183,
+    "mean": 0.7299
+   },
+   "2022": {
+    "n": 113,
+    "mean": -0.4112
+   },
+   "2023": {
+    "n": 166,
+    "mean": 0.5352
+   },
+   "2024": {
+    "n": 131,
+    "mean": 0.077
+   }
+  },
+  "positive_years": "4/6",
+  "mean_spot": 0.4022,
+  "mean_stressed": 0.3174,
+  "avg_cost_pct": 0.82,
+  "symbols": 172
+ },
+ "decision_rule": "extend only if ranks 21-50 alone: mean>0, LCB>0, both halves>0, stressed>0",
+ "extend_to_top50": true,
+ "romano_wolf": {
+  "U_top50": {
+   "t_stat": 6.574,
+   "p_adj": 0.011,
+   "reject_null": true
+  },
+  "U_ranks21_50": {
+   "t_stat": 5.184,
+   "p_adj": 0.059,
+   "reject_null": false
+  },
+  "J_join5d": {
+   "t_stat": 2.859,
+   "p_adj": 0.444,
+   "reject_null": false
+  },
+  "J_join10d": {
+   "t_stat": 2.771,
+   "p_adj": 0.479,
+   "reject_null": false
+  },
+  "J_join20d": {
+   "t_stat": 1.558,
+   "p_adj": 0.869,
+   "reject_null": false
+  }
+ },
+ "romano_wolf_top20_same_data": {
+  "t_stat": 3.975,
+  "p_adj": 0.194,
+  "reject_null": false
+ },
+ "rw_family_size": 20,
+ "n_trials_project": 28
+}

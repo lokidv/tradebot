@@ -655,6 +655,7 @@ async function loadTrendBanner(){
     if(!d.rules){ setTimeout(loadTrendBanner, 15000); return; }   // سرور تازه بالا آمده — زود دوباره
     const P = d.primary, evd = d.evidence || {}, ev = (evd.rules||{})[P] || {}, acct = ev.account || {};
     const jn = (evd.joins||{}).offsets || {}, fw = (d.forward||{})[P] || {n:0};
+    const fw50 = (d.forward||{})[P + "@top50"] || {n:0}, uv = evd.universe || {};
     const day = ms => new Date(ms).toLocaleDateString("fa-IR");
     const coin = s => s.replace("USDT","");
     // اندازهٔ معامله: ارزشِ پوزیشن = سرمایه × ریسک٪ ÷ فاصلهٔ حدضرر٪
@@ -665,7 +666,8 @@ async function loadTrendBanner(){
     const by = c => now.filter(x => x.category === c);
     const act = [...by("new"), ...by("join")], late = by("late"), watch = by("watch");
     window.TREND = d;                                    // دکمهٔ دمو وضعیتِ «باز است» را از همین می‌خواند
-    const buy = (x, label) => `<tr><td><b>${coin(x.sym)}</b></td><td class="up">${label}</td>
+    const tag = x => x.universe === "top50" ? ` <small class="mid">۵۰برتر</small>` : "";
+    const buy = (x, label) => `<tr><td><b>${coin(x.sym)}</b>${tag(x)}</td><td class="up">${label}</td>
         <td class="num">ورود ~${px(x.last)}</td><td class="num">حدضرر ${px(x.stop)} <small class="mid">(−${fmt(x.stop_distance_pct,1)}٪)</small></td>
         <td class="num">${size(x.stop_distance_pct)}</td><td>${trendDemoBtn(x)}</td></tr>`;
     const actRows = act.map(x => x.category === "new"
@@ -687,13 +689,16 @@ async function loadTrendBanner(){
       ${actRows.length ? table(actRows) : `<div class="sub" style="margin-top:6px"><b>امروز سیگنالِ ورود یا پیوستن نیست.</b> ارزهای «در کمین» پایین‌تر آمده‌اند.</div>`}
       ${table(watchRows)}
       ${lateRows.length ? `<details style="margin-top:6px"><summary class="sub" style="cursor:pointer">${lateRows.length} روندِ قدیمی‌تر (برای ورود دیر؛ حدضررِ امروز برای کسی که از قبل دارد)</summary>${table(lateRows)}</details>` : ""}
-      <div class="sub" style="margin-top:8px">شواهد روی ۲۰۱۸–۲۰۲۴ (پیش از پنجره‌های منجمد؛ R = مبلغی که روی هر معامله ریسک می‌کنید):
-        ورود در شکست ${fmt(evd.joins ? evd.joins.breakout_spot_mean : ev.mean,2)}R در هر معامله با کارمزدِ اسپات ·
+      <div class="sub" style="margin-top:8px">شواهد روی ۲۰۱۸–۲۰۲۴ (پیش از پنجره‌های منجمد؛ R = مبلغی که روی هر معامله ریسک می‌کنید؛ با کارمزدِ اسپات):
+        ورود در شکست — ۲۰ ارزِ اصلی ${fmt((uv.top20||{}).mean_spot,2)}R · ۵۰ ارز ${fmt((uv.top50||{}).mean_spot,2)}R
+        (فقط رتبه‌های ۲۱–۵۰: ${fmt((uv.ranks_21_50||{}).mean_spot,2)}R) در هر معامله ·
         پیوستن ۵ و ۱۰ روز بعد ${fmt(j5.mean_spot,2)} و ${fmt(j10.mean_spot,2)}R ·
-        حسابِ فرضی با ریسکِ ۰٫۵٪: ${fmt(acct.cagr_pct,1)}٪ سالانه، افتِ بیشینه ${fmt(acct.max_drawdown_pct,1)}٪ ·
-        فقط ${fmt(ev.win_rate,0)}٪ معامله‌ها سود می‌دهند — بیشترِ معامله‌ها با ضررِ کوچک بسته می‌شوند و سود از چند روندِ بزرگ می‌آید ·
-        پس از تصحیح برای ${(evd.joins||{}).rw_family_size||"—"} فرضیهٔ آزموده‌شده روی همین داده، معنادار نیست (p=${fmt(ev.p_adj,2)}) و لبه کوچک‌تر شده است.</div>
-      <div class="sub">کارنامهٔ رو-به-جلو از ${day(d.tracking_start_ms)}: ${fw.n||0} معاملهٔ بسته${fw.n?` · میانگین ${fmt(fw.mean,2)}R · جمع ${fmt(fw.sum_r,2)}R`:""}</div>
+        حسابِ فرضی (۲۰ ارز، ریسکِ ۰٫۵٪): ${fmt(acct.cagr_pct,1)}٪ سالانه، افتِ بیشینه ${fmt(acct.max_drawdown_pct,1)}٪ ·
+        فقط ${fmt(ev.win_rate,0)}٪ معامله‌ها سود می‌دهند — بیشترِ معامله‌ها با ضررِ کوچک بسته می‌شوند و سود از چند روندِ بزرگ می‌آید.
+        پس از تصحیح برای ${uv.rw_family_size||20} فرضیه: ۵۰ ارز <b>p=${fmt(uv.p_adj_top50,3)}</b> (معنادار)، ۲۰ ارز p=${fmt(ev.p_adj,2)} (نه) —
+        ولی ارزهای حذف‌شده از صرافی در داده نیستند، پس احتمالاً کمی خوش‌بینانه است؛ و لبه در سال‌های گاوی بوده (۲۰۲۲ منفی، ۲۰۲۴ نزدیکِ صفر).</div>
+      <div class="sub">کارنامهٔ رو-به-جلو از ${day(d.tracking_start_ms)} — ۲۰ ارزِ اصلی: ${fw.n||0} معاملهٔ بسته${fw.n?` · میانگین ${fmt(fw.mean,2)}R`:""}
+        · ۳۰ ارزِ افزوده: ${fw50.n||0}${fw50.n?` · میانگین ${fmt(fw50.mean,2)}R`:""}</div>
       ${(d.missing_data||[]).length ? `<div class="sub" style="color:var(--brass)">بی‌داده: ${d.missing_data.map(coin).join("، ")}</div>` : ""}
       ${trendTestnetHtml(x)}
     </div>`;
@@ -971,7 +976,7 @@ function trendSignalRows(){
     return head + `<tr><td colspan="13" class="loading">امروز سیگنالِ ورود یا پیوستن نیست. نزدیک‌ترین‌ها: ${near || "—"}</td></tr>`;
   }
   return head + act.map(x => `<tr><td colspan="13" style="padding:11px 12px;line-height:1.9">
-      <b style="font-size:15px">${coin(x.sym)}</b> &nbsp;
+      <b style="font-size:15px">${coin(x.sym)}</b>${x.universe === "top50" ? ` <small class="mid">۵۰برتر</small>` : ""} &nbsp;
       ${x.category === "new" ? `<span class="up">🟢 ورودِ تازه — شکستِ سقفِ ۲۰روزه</span>`
                              : `<span class="up">🟡 پیوستن مجاز — روزِ ${x.days_in} روند</span>`}
       · ورود ~<b class="num">${px(x.last)}</b>

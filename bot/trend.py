@@ -40,9 +40,25 @@ RULES = {v["key"]: v for v in explore.VARIANTS if v["key"] in RULE_KEYS}
 PRIMARY = "T_don20_long"
 TRACKING_START_MS = 1_789_430_400_000          # 2026-09-15 00:00 UTC
 SYMBOLS = tuple(research.MAJORS)
+# گسترش به ۵۰ ارز (explore.universe_report، data/research/universe_20260915_1657.json): رتبه‌های
+# ۲۱ تا ۵۰ جداگانه معیارِ ازپیش‌گفته را داشتند (+۰٫۳۹R، کرانِ پایین +۰٫۱۴، مثبت در هر دو نیمه و زیرِ
+# فشارِ هزینه). فهرست **ثابت** است، ۲۰۲۶-۰۹-۱۵ پیش از بسته‌شدنِ کندلِ آن روز فقط با حجمِ دلاریِ ۳۰
+# روزهٔ اسپاتِ بایننس انتخاب شد: ۳۰ ارزِ بزرگ‌ترِ غیرِ اصلی با دستِ‌کم ۴۰۰ روز سابقه (سهامِ
+# توکنی و ارزهای خیلی تازه بیرون می‌مانند)، بی‌استیبل/میخ‌شده/رپ‌شده، و بی‌طلا (PAXG: دارایی
+# دیگری است). کارنامهٔ رو-به-جلوی این‌ها جدا از ۲۰ ارزِ اصلی شمرده می‌شود.
+EXT_SYMBOLS = ("ZECUSDT", "SUIUSDT", "ENAUSDT", "TRUMPUSDT", "PEPEUSDT", "TAOUSDT", "WLDUSDT",
+               "DASHUSDT", "AAVEUSDT", "BMTUSDT", "XLMUSDT", "ONDOUSDT", "PENGUUSDT", "FETUSDT",
+               "INJUSDT", "HBARUSDT", "POLUSDT", "THEUSDT", "LSKUSDT", "ICPUSDT", "ZROUSDT",
+               "RAYUSDT", "ETHFIUSDT", "ZENUSDT", "VIRTUALUSDT", "CAKEUSDT", "SHIBUSDT", "OPUSDT",
+               "REZUSDT", "GPSUSDT")
+ALL_SYMBOLS = SYMBOLS + EXT_SYMBOLS
 KLINE_LIMIT = 420
 REFRESH_SEC = 1800
-_FIXED_UNIVERSE = [(0, frozenset(SYMBOLS))]
+_FIXED_UNIVERSE = [(0, frozenset(ALL_SYMBOLS))]
+
+
+def universe_of(sym):
+    return "majors" if sym in SYMBOLS else "top50"
 
 _lock = threading.Lock()
 _cache = {"ts": 0.0, "data": None}
@@ -52,7 +68,7 @@ def _arrays(k):
     return {key: np.asarray(k[key], np.int64 if key == "t" else float) for key in ("t", "o", "h", "l", "c", "v")}
 
 
-def load_daily(fetch=None, symbols=SYMBOLS):
+def load_daily(fetch=None, symbols=ALL_SYMBOLS):
     """کندل‌های روزانهٔ **بسته‌شده**. دادهٔ غیرِ بایننس (کندلِ ۱۶:۰۰ از OKX) کنار می‌رود."""
     fetch = fetch or (lambda s: market.get_klines(s, "1d", KLINE_LIMIT))
     out, missing = {}, []
@@ -91,7 +107,8 @@ def state_now(daily, key):
         if n < 30:
             continue
         last = float(k["c"][-1])
-        row = {"sym": sym, "last": last, "in_position": False, "category": "watch"}
+        row = {"sym": sym, "last": last, "in_position": False, "category": "watch",
+               "universe": universe_of(sym)}
         for i, e, entry, R, res in explore.trend_paths(sym, k, spec, _FIXED_UNIVERSE):
             if res is not None and res["outcome"] == "end_of_data":
                 stop = float(res["stop"])
@@ -127,10 +144,12 @@ def evaluate(daily, start_ms=TRACKING_START_MS):
                 continue
             for i, e, entry, R, res in explore.trend_paths(sym, k, spec, _FIXED_UNIVERSE, start_idx):
                 sig_ts = int(k["t"][i])
+                uni = universe_of(sym)
                 if res is None:
                     close = float(k["c"][i])
                     rows["signals"].append({"sym": sym, "signal_ts": sig_ts, "close": close,
-                                            "stop_distance": R, "risk_pct": R / close * 100})
+                                            "stop_distance": R, "risk_pct": R / close * 100,
+                                            "universe": uni})
                     continue
                 trade_id = f"{key}:{sym}:{sig_ts}"
                 if res["outcome"] == "end_of_data":
@@ -139,10 +158,10 @@ def evaluate(daily, start_ms=TRACKING_START_MS):
                         "id": trade_id, "sym": sym, "signal_ts": sig_ts, "entry_ts": int(k["t"][e]),
                         "entry_px": entry, "stop": float(res["stop"]), "last": last,
                         "open_r": spec["side"] * (last - entry) / R, "risk_pct": R / entry * 100,
-                        "exiting_next_open": bool(res.get("exit_pending"))})
+                        "exiting_next_open": bool(res.get("exit_pending")), "universe": uni})
                     continue
                 tr = explore._trade(sym, "1d", spec["side"], i, e, res, entry, R, k)
-                tr.update(id=trade_id, rule=key, entry_px=entry, exit_px=res["exit_px"])
+                tr.update(id=trade_id, rule=key, entry_px=entry, exit_px=res["exit_px"], universe=uni)
                 rows["closed"].append(tr)
         out[key] = rows
     return out
@@ -169,11 +188,12 @@ def record(state):
     for key, rows in state.items():
         for pos in rows["open"]:
             if ("entry", pos["id"]) not in seen:
-                new.append({"kind": "entry", "rule": key, **{k: pos[k] for k in
-                            ("id", "sym", "signal_ts", "entry_ts", "entry_px", "risk_pct")}})
+                new.append({"kind": "entry", "rule": key, "universe": universe_of(pos["sym"]),
+                            **{k: pos[k] for k in ("id", "sym", "signal_ts", "entry_ts", "entry_px", "risk_pct")}})
         for tr in rows["closed"]:
             if ("entry", tr["id"]) not in seen:
                 new.append({"kind": "entry", "rule": key, "id": tr["id"], "sym": tr["sym"],
+                            "universe": universe_of(tr["sym"]),
                             "signal_ts": tr["ts"], "entry_ts": tr["entry_ts"],
                             "entry_px": tr["entry_px"], "risk_pct": tr["risk_pct"]})
             if ("exit", tr["id"]) not in seen:
@@ -188,16 +208,19 @@ def record(state):
 
 
 def forward_stats(rows=None):
+    """کارنامهٔ رو-به-جلو. ``rule`` = ۲۰ ارزِ اصلیِ پیش‌ثبت‌شده؛ ``rule@top50`` = گسترش، جدا."""
     rows = _read() if rows is None else rows
     exits = [r for r in rows if r.get("kind") == "exit"]
     out = {}
     for key in RULES:
-        mine = [r for r in exits if r.get("rule") == key]
-        vals = [float(r["net_r"]) for r in mine]
-        s = stats.summarize(vals, [int(r["entry_ts"]) for r in mine], explore.TREND_BLOCK_MS,
-                            alpha=explore.ALPHA, B=500) if vals else {"n": 0}
-        s["sum_r"] = round(float(np.sum(vals)), 3) if vals else 0.0
-        out[key] = s
+        for uni, name in (("majors", key), ("top50", f"{key}@top50")):
+            mine = [r for r in exits if r.get("rule") == key
+                    and (r.get("universe") or universe_of(r.get("sym", ""))) == uni]
+            vals = [float(r["net_r"]) for r in mine]
+            s = stats.summarize(vals, [int(r["entry_ts"]) for r in mine], explore.TREND_BLOCK_MS,
+                                alpha=explore.ALPHA, B=500) if vals else {"n": 0}
+            s["sum_r"] = round(float(np.sum(vals)), 3) if vals else 0.0
+            out[name] = s
     return out
 
 
@@ -239,9 +262,21 @@ def dev_evidence():
                                  "mean_spot": s.get("mean_spot"),
                                  "p_adj": (s.get("romano_wolf") or {}).get("p_adj")}
                              for k, s in (jr.get("joins") or {}).items()}}
+    uni = None
+    ufiles = sorted(glob.glob(os.path.join(explore.OUT_DIR, "universe_*.json")))
+    if ufiles:
+        with open(ufiles[-1], "r", encoding="utf-8") as f:
+            ur = json.load(f)
+        pick = lambda s: {k: (s or {}).get(k) for k in ("n", "mean", "lcb", "mean_spot", "mean_stressed",
+                                                        "first_half_mean", "second_half_mean", "win_rate")}
+        uni = {"report": os.path.basename(ufiles[-1]), "top20": pick(ur.get("top20")),
+               "top50": pick(ur.get("top50")), "ranks_21_50": pick(ur.get("ranks_21_50")),
+               "p_adj_top50": ((ur.get("romano_wolf") or {}).get("U_top50") or {}).get("p_adj"),
+               "rw_family_size": ur.get("rw_family_size"),
+               "extend_to_top50": ur.get("extend_to_top50")}
     return {"report": os.path.basename(files[-1]), "cutoff_ms": rep.get("cutoff_ms"),
             "btc_buy_and_hold": (rep.get("robustness") or {}).get("btc_buy_and_hold"), "rules": rules,
-            "joins": joins, "join_max_days": JOIN_MAX_DAYS}
+            "joins": joins, "join_max_days": JOIN_MAX_DAYS, "universe": uni}
 
 
 # ───────────────────────── پوزیشنِ دمو برای سیگنالِ امروز ─────────────────────────
@@ -319,7 +354,9 @@ def snapshot(force=False, fetch=None):
         "authorized": False,
         "primary": PRIMARY,
         "tracking_start_ms": TRACKING_START_MS,
-        "symbols": list(SYMBOLS),
+        "symbols": list(ALL_SYMBOLS),
+        "majors": list(SYMBOLS),
+        "extension": list(EXT_SYMBOLS),
         "missing_data": missing,
         "last_closed_bar_ms": last_bar,
         "rules": {key: {"spec": RULES[key], "open": rows["open"], "signals": rows["signals"],

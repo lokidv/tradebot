@@ -744,6 +744,62 @@ def join_report(cutoff_ms=None, hist_dir=None, key="T_don20_long"):
     return out
 
 
+# ───────────────────────── جهانِ بزرگ‌تر: ۵۰ ارز ─────────────────────────
+# معیارِ تصمیم، پیش از اجرا ثابت شد (به کاربر هم گفته شد): سیگنال‌ها فقط وقتی به ۵۰ ارز
+# گسترش می‌یابند که **خودِ رتبه‌های ۲۱ تا ۵۰** جداگانه هر سه را داشته باشند —
+# میانگین و کرانِ پایینِ مثبت با هزینهٔ رده‌ایِ همان لحظه، مثبت در هر دو نیمه، مثبت زیرِ فشارِ هزینه.
+def expansion_passes(s):
+    return bool(s.get("n") and (s.get("mean") or 0) > 0 and (s.get("lcb") or 0) > 0
+                and (s.get("first_half_mean") or 0) > 0 and (s.get("second_half_mean") or 0) > 0
+                and (s.get("mean_stressed") or 0) > 0)
+
+
+def universe_report(cutoff_ms=None, hist_dir=None, key="T_don20_long", top_small=20, top_big=50):
+    """همان قاعده روی ۲۰ و ۵۰ ارزِ برترِ هر ماه، و جداگانه رتبه‌های ۲۱ تا ۵۰."""
+    cutoff_ms = int(cutoff_ms if cutoff_ms is not None else dev_cutoff_ms())
+    daily = load_panel("1d", cutoff_ms, hist_dir=hist_dir)
+    hist = {s: {"t": k["t"].tolist(), "c": k["c"].tolist(), "v": k["v"].tolist()} for s, k in daily.items()}
+    small = universe.snapshots_from_histories(hist, top_n=top_small)
+    big = universe.snapshots_from_histories(hist, top_n=top_big)
+    spec = {v["key"]: v for v in VARIANTS}[key]
+
+    def pack(rows):
+        vals = [r["net_r"] for r in rows]
+        s = describe(vals, [r["entry_ts"] for r in rows], TREND_BLOCK_MS)
+        s["mean_spot"] = round(float(np.mean([bracket.net_r(r["gross_r"], r["risk_pct"], SPOT_ROUND_TRIP_PCT)
+                                              for r in rows])), 4) if rows else None
+        s["mean_stressed"] = round(float(np.mean([stressed_r(r) for r in rows])), 4) if rows else None
+        s["avg_cost_pct"] = round(float(np.mean([r["cost_pct"] for r in rows])), 3) if rows else None
+        s["symbols"] = len({r["sym"] for r in rows})
+        return s
+
+    in_small = trend_trades({s: k for s, k in daily.items()
+                             if s in set().union(*[u for _t, u in small])}, small, spec)
+    in_big = trend_trades({s: k for s, k in daily.items()
+                           if s in set().union(*[u for _t, u in big])}, big, spec)
+    extra = [r for r in in_big if not universe.in_universe(small, r["sym"], r["ts"])]
+    out = {"generated_at": time.time(), "cutoff_ms": cutoff_ms, "rule": key,
+           "symbols_with_daily_history": len(daily),
+           f"top{top_small}": pack(in_small), f"top{top_big}": pack(in_big),
+           f"ranks_{top_small + 1}_{top_big}": pack(extra),
+           "decision_rule": "extend only if ranks 21-50 alone: mean>0, LCB>0, both halves>0, stressed>0"}
+    out["extend_to_top50"] = expansion_passes(out[f"ranks_{top_small + 1}_{top_big}"])
+    # بهای جست‌وجو: همهٔ خانوادهٔ قبلی + این دو فرضیهٔ تازه
+    series = lambda rows: (np.asarray([r["net_r"] for r in rows], float),
+                           np.asarray([r["entry_ts"] for r in rows], np.int64))
+    fam = {f"U_top{top_big}": series(in_big), f"U_ranks{top_small + 1}_{top_big}": series(extra)}
+    # سه پیوستنِ قبلی هم در همین خانواده — وگرنه p_adj فقط کنارِ ۱۵ واریانت و خوش‌بینانه است
+    for off in JOIN_OFFSETS:
+        fam[f"J_join{off}d"] = series(join_trades(daily, small, spec, off))
+    fam = {k: v for k, v in fam.items() if len(v[0]) >= 2}
+    full = run(cutoff_ms=cutoff_ms, hist_dir=hist_dir, progress=lambda *_: None, extra_series=fam)
+    out["romano_wolf"] = full["extra_romano_wolf"]
+    out["romano_wolf_top20_same_data"] = full["variants"][key]["romano_wolf"]
+    out["rw_family_size"] = len(full["variants"]) + len(fam)
+    out["n_trials_project"] = full["n_trials_project"]
+    return out
+
+
 def write_join_report(rep, out_dir=None):
     out_dir = out_dir or OUT_DIR
     os.makedirs(out_dir, exist_ok=True)

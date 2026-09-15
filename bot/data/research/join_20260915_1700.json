@@ -1,0 +1,248 @@
+{
+ "generated_at": 1789491646.6596158,
+ "cutoff_ms": 1727481600000,
+ "rule": "T_don20_long",
+ "spot_round_trip_pct": 0.4,
+ "breakout": {
+  "n": 628,
+  "n_eff": 102.3,
+  "n_blocks": 69,
+  "mean": 0.3074,
+  "sd": 1.9382,
+  "lcb": 0.0626,
+  "t_stat": 1.604,
+  "win_rate": 40.13,
+  "profit_factor": 1.7693,
+  "uplift": 0.3074,
+  "alpha": 0.05,
+  "first_half_mean": 0.5644,
+  "second_half_mean": 0.0504,
+  "max_drawdown": 40.07,
+  "by_year": {
+   "2018": {
+    "n": 24,
+    "mean": -0.6639
+   },
+   "2019": {
+    "n": 89,
+    "mean": 0.3515
+   },
+   "2020": {
+    "n": 119,
+    "mean": 0.6509
+   },
+   "2021": {
+    "n": 107,
+    "mean": 0.7557
+   },
+   "2022": {
+    "n": 76,
+    "mean": -0.3134
+   },
+   "2023": {
+    "n": 111,
+    "mean": 0.5222
+   },
+   "2024": {
+    "n": 102,
+    "mean": -0.1447
+   }
+  },
+  "positive_years": "4/7",
+  "mean_spot": 0.3263,
+  "mean_stressed": 0.2263,
+  "btc_eth": {
+   "n": 73,
+   "mean": 0.5665
+  },
+  "avg_risk_pct": 24.75,
+  "romano_wolf": {
+   "t_stat": 3.975,
+   "p_adj": 0.194,
+   "reject_null": false
+  }
+ },
+ "joins": {
+  "5d": {
+   "n": 565,
+   "n_eff": 98.82,
+   "n_blocks": 67,
+   "mean": 0.3905,
+   "sd": 3.2461,
+   "lcb": 0.0477,
+   "t_stat": 1.196,
+   "win_rate": 37.7,
+   "profit_factor": 1.849,
+   "uplift": 0.3905,
+   "alpha": 0.05,
+   "first_half_mean": 0.8508,
+   "second_half_mean": -0.0683,
+   "max_drawdown": 44.507,
+   "by_year": {
+    "2018": {
+     "n": 21,
+     "mean": -0.7249
+    },
+    "2019": {
+     "n": 78,
+     "mean": 0.5518
+    },
+    "2020": {
+     "n": 108,
+     "mean": 0.8752
+    },
+    "2021": {
+     "n": 93,
+     "mean": 1.2379
+    },
+    "2022": {
+     "n": 69,
+     "mean": -0.4159
+    },
+    "2023": {
+     "n": 103,
+     "mean": 0.4353
+    },
+    "2024": {
+     "n": 93,
+     "mean": -0.3546
+    }
+   },
+   "positive_years": "4/7",
+   "mean_spot": 0.4088,
+   "mean_stressed": 0.2924,
+   "btc_eth": {
+    "n": 67,
+    "mean": 0.41
+   },
+   "avg_risk_pct": 19.25,
+   "romano_wolf": {
+    "t_stat": 2.859,
+    "p_adj": 0.444,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.9439
+  },
+  "10d": {
+   "n": 456,
+   "n_eff": 91.034,
+   "n_blocks": 64,
+   "mean": 0.4234,
+   "sd": 3.2632,
+   "lcb": 0.0372,
+   "t_stat": 1.238,
+   "win_rate": 35.31,
+   "profit_factor": 1.8866,
+   "uplift": 0.4234,
+   "alpha": 0.05,
+   "first_half_mean": 0.7935,
+   "second_half_mean": 0.0534,
+   "max_drawdown": 34.531,
+   "by_year": {
+    "2018": {
+     "n": 5,
+     "mean": -0.8418
+    },
+    "2019": {
+     "n": 65,
+     "mean": 0.193
+    },
+    "2020": {
+     "n": 97,
+     "mean": 0.7399
+    },
+    "2021": {
+     "n": 78,
+     "mean": 1.2788
+    },
+    "2022": {
+     "n": 59,
+     "mean": -0.4283
+    },
+    "2023": {
+     "n": 89,
+     "mean": 0.7289
+    },
+    "2024": {
+     "n": 63,
+     "mean": -0.4185
+    }
+   },
+   "positive_years": "4/7",
+   "mean_spot": 0.4408,
+   "mean_stressed": 0.3151,
+   "btc_eth": {
+    "n": 54,
+    "mean": 0.5686
+   },
+   "avg_risk_pct": 17.48,
+   "romano_wolf": {
+    "t_stat": 2.771,
+    "p_adj": 0.479,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.9886
+  },
+  "20d": {
+   "n": 276,
+   "n_eff": 66.298,
+   "n_blocks": 48,
+   "mean": 0.2611,
+   "sd": 2.7836,
+   "lcb": -0.0214,
+   "t_stat": 0.764,
+   "win_rate": 32.25,
+   "profit_factor": 1.5295,
+   "uplift": 0.2611,
+   "alpha": 0.05,
+   "first_half_mean": 0.732,
+   "second_half_mean": -0.2097,
+   "max_drawdown": 30.506,
+   "by_year": {
+    "2018": {
+     "n": 1,
+     "mean": -1.0249
+    },
+    "2019": {
+     "n": 41,
+     "mean": 0.6853
+    },
+    "2020": {
+     "n": 69,
+     "mean": 0.4198
+    },
+    "2021": {
+     "n": 51,
+     "mean": 0.6821
+    },
+    "2022": {
+     "n": 27,
+     "mean": -0.3844
+    },
+    "2023": {
+     "n": 59,
+     "mean": 0.0985
+    },
+    "2024": {
+     "n": 28,
+     "mean": -0.5069
+    }
+   },
+   "positive_years": "4/7",
+   "mean_spot": 0.2776,
+   "mean_stressed": 0.1581,
+   "btc_eth": {
+    "n": 33,
+    "mean": 0.7424
+   },
+   "avg_risk_pct": 17.17,
+   "romano_wolf": {
+    "t_stat": 1.558,
+    "p_adj": 0.869,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.9882
+  }
+ },
+ "n_trials_project": 26
+}
