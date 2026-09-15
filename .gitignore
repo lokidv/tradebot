@@ -14,6 +14,7 @@ bot/data/health_samples.jsonl
 bot/data/journal.jsonl
 bot/data/journal.jsonl.lock
 bot/data/trend_ledger.jsonl
+bot/data/trend_exec.jsonl
 bot/data/logs/
 bot/data/reports/
 *.tmp
