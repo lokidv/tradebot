@@ -30,6 +30,7 @@ _cooldown = {}                     # symbol -> تا این زمان دوباره
 COOLDOWN_SEC = 1800
 _peak = {}                         # pos_id -> بهترین R دیده‌شده (برای حدضررِ متحرک)
 _pending = {}                      # symbol -> سفارشِ صبور (لیمیتِ بازگشتی — تعقیبِ قیمت ممنوع)
+_pending_lock = threading.RLock()  # _monitor پر می‌کند و _cycle می‌گذارد/لغو می‌کند — یک قفل برای هر دو
 PENDING_TTL = {"15m": 300, "1h": 1200, "4h": 4800, "1d": 14400}   # مهلتِ پر شدن (ثانیه)
 _announced = set()                 # بسته‌شده‌هایی که یک‌بار اعلام شده‌اند (جلوگیری از اعلامِ دوباره)
 _storm_until = 0.0                 # ⛈ ترمزِ طوفان: تا این زمان پوزیشنِ جدید باز نکن
@@ -212,11 +213,12 @@ def _set_risk_off(day):
 
 def _clear_pending(why):
     """لغوِ همهٔ سفارش‌های صبور — با ثبتِ تک‌تک، تا replay آن‌ها را زنده نکند."""
-    for sym, o in list(_pending.items()):
-        _pending.pop(sym, None)
-        fill_quality.log_event("cancelled", symbol=sym, tf=(o or {}).get("tf"),
-                               side=(o or {}).get("side"), why=why,
-                               authority=(o or {}).get("authority"))
+    with _pending_lock:
+        for sym, o in list(_pending.items()):
+            _pending.pop(sym, None)
+            fill_quality.log_event("cancelled", symbol=sym, tf=(o or {}).get("tf"),
+                                   side=(o or {}).get("side"), why=why,
+                                   authority=(o or {}).get("authority"))
 
 
 def restore_state():
@@ -366,7 +368,16 @@ def _retire_toxic_1d():
 
 
 def _process_pending():
-    """🎯 سفارش‌های صبور: قیمت به لیمیت رسید → باز کن؛ مهلت گذشت → با دیسیپلین رد شو."""
+    """🎯 سفارش‌های صبور: قیمت به لیمیت رسید → باز کن؛ مهلت گذشت → با دیسیپلین رد شو.
+
+    کلِ گذر زیرِ ``_pending_lock`` است تا لغوِ هم‌زمان از نخِ دیگر نتواند بینِ
+    خواندنِ سفارش و بازکردنِ پوزیشن جا بیفتد.
+    """
+    with _pending_lock:
+        return _process_pending_locked()
+
+
+def _process_pending_locked():
     now = time.time()
     if not _pending:
         return
@@ -419,10 +430,9 @@ def _process_pending():
             # لغزش نسبت به هدف: منفی = ارزان‌تر (خوب برای لانگ)
             r_abs = max(float(o.get("r_abs") or 0), 1e-12)
             slip_r = d * (lp - o["target"]) / r_abs
-            # هزینهٔ واقع‌گرایانه: اگر پر شدن بدتر از هدف بود، کمی هزینه اضافه
-            cost = float(o.get("cost") or 0.15)
-            if slip_r > 0.05:
-                cost = min(cost + 0.03, 0.28)
+            # لغزشِ واقعی را شبیه‌ساز (paper.refresh با ویک و لغزشِ رده‌ای) حساب می‌کند؛
+            # شاخهٔ قبلیِ «slip_r > 0.05 ⇒ +۰٫۰۳» هرگز اجرا نمی‌شد چون شرطِ پرشدن slip_r ≤ ۰ است.
+            cost = float(o["cost"]) if o.get("cost") is not None else 0.15
             sl = lp - d * o["r_abs"]
             tp = lp + d * o["tp_abs"]
             new_risk = o["size"] * abs(lp - sl) / max(lp, 1e-12)
@@ -622,14 +632,17 @@ def _open_from_candidate(c, tf, kind, P, equity, db, risk_mult=1.0):
             meta_note = f" · متا {float(c.get('meta_score') or 0)*100:.0f}%/تلاقی {c.get('meta_confluence')}"
         if c.get("authority"):
             meta_note += f" · مرجع {c.get('authority')}"
-        _pending[sym] = {"side": side, "target": target, "tf": tf,
-                         "r_abs": abs(entry0 - sl0), "tp_abs": abs(tp0 - entry0),
-                         "size": round(size, 1), "tstop": tstop, "grade": c.get("grade") or "",
-                         "score": c.get("signal_score"), "cost": c.get("cost") or 0.15,
-                         "signal_ts": c.get("zt"), "expires": time.time() + PENDING_TTL.get(tf, 1200),
-                         "meta_size_mult": c.get("meta_size_mult"),
-                         "authority": c.get("authority")}
-        journal.append(journal.ORDER_PLACED, symbol=sym, order=_pending[sym])
+        order = {"side": side, "target": target, "tf": tf,
+                 "r_abs": abs(entry0 - sl0), "tp_abs": abs(tp0 - entry0),
+                 "size": round(size, 1), "tstop": tstop, "grade": c.get("grade") or "",
+                 "score": c.get("signal_score"),
+                 "cost": c["cost"] if c.get("cost") is not None else 0.15,
+                 "signal_ts": c.get("zt"), "expires": time.time() + PENDING_TTL.get(tf, 1200),
+                 "meta_size_mult": c.get("meta_size_mult"),
+                 "authority": c.get("authority")}
+        with _pending_lock:
+            _pending[sym] = order
+            journal.append(journal.ORDER_PLACED, symbol=sym, order=order)
         think(f"🎯 {nm}: سفارشِ صبور در {target:.6g} (زنده {live:.6g}) — "
               f"حجم {size:.0f}$ (ریسک {new_risk:.0f}$){meta_note} — "
               f"حداکثر {PENDING_TTL.get(tf, 1200) // 60} دقیقه", "info")

@@ -115,11 +115,24 @@ def session_quality(now_ts=None):
     return {"tier": "thin", "mult": 0.78, "hour_utc": h}
 
 
+# کدهای بلاکی که بدونِ توجه به امتیاز، ورود را رد می‌کنند. صریح و ثابت —
+# نه برداشت از متنِ پیام که با هر ویرایشِ واژه عوض می‌شد.
+HARD_BLOCKS = frozenset({
+    "macro_extreme_against", "breadth_against", "funding_crowded", "oi_leverage_building",
+})
+
+
 def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
-    """خروجی: approve, score∈[0,1], reasons, size_mult, blocks."""
+    """خروجی: approve, score∈[0,1], reasons, size_mult, blocks, block_codes."""
     d = 1 if side == "long" else -1
     reasons = []
     blocks = []
+    codes = []
+
+    def block(code, text):
+        codes.append(code)
+        blocks.append(text)
+
     score = 0.55
 
     macro = extras.get("btc_macro") or {}
@@ -143,10 +156,10 @@ def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
     extreme_bull = regime == "bull" and float(macro.get("btc_vs_sma100") or 0) > 8 and breadth > 0.45
     extreme_bear = regime == "bear" and float(macro.get("btc_vs_sma100") or 0) < -8 and breadth < -0.45
     if extreme_bear and d == 1:
-        blocks.append("رژیم کلان نزولیِ شدید BTC — لانگ آلت رد شد")
+        block("macro_extreme_against", "رژیم کلان نزولیِ شدید BTC — لانگ آلت رد شد")
         score -= 0.40
     elif extreme_bull and d == -1:
-        blocks.append("رژیم کلان صعودیِ شدید BTC — شورت رد شد")
+        block("macro_extreme_against", "رژیم کلان صعودیِ شدید BTC — شورت رد شد")
         score -= 0.35
     elif regime == "bear" and d == 1:
         reasons.append("احتیاط: رژیم کلان نزولی")
@@ -166,10 +179,10 @@ def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
 
     # ۲) پهنای بازار
     if d == 1 and breadth < -0.35:
-        blocks.append(f"پهنای بازار ضعیف است ({breadth:+.2f}) — لانگ خلاف جریان")
+        block("breadth_against", f"پهنای بازار ضعیف است ({breadth:+.2f}) — لانگ خلاف جریان")
         score -= 0.25
     elif d == -1 and breadth > 0.35:
-        blocks.append(f"پهنای بازار قوی است ({breadth:+.2f}) — شورت خلاف جریان")
+        block("breadth_against", f"پهنای بازار قوی است ({breadth:+.2f}) — شورت خلاف جریان")
         score -= 0.25
     elif (d == 1 and breadth > 0.1) or (d == -1 and breadth < -0.1):
         reasons.append("پهنای بازار هم‌جهت")
@@ -177,10 +190,10 @@ def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
 
     # ۳) crowding فاندینگ
     if d == 1 and crowded_long:
-        blocks.append(f"لانگ‌ها شلوغ‌اند (funding z={fz:+.1f}, persist={persist})")
+        block("funding_crowded", f"لانگ‌ها شلوغ‌اند (funding z={fz:+.1f}, persist={persist})")
         score -= 0.30
     elif d == -1 and crowded_short:
-        blocks.append(f"شورت‌ها شلوغ‌اند (funding z={fz:+.1f}, persist={persist})")
+        block("funding_crowded", f"شورت‌ها شلوغ‌اند (funding z={fz:+.1f}, persist={persist})")
         score -= 0.30
     elif d == 1 and fz <= -1.0:
         reasons.append("فاندینگ به نفع لانگ")
@@ -193,10 +206,10 @@ def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
     if oi_ok:
         # لانگ وقتی فاندینگ مثبتِ شدید + OI بالا می‌آید = crowded long squeeze risk
         if d == 1 and fz >= 1.2 and (oi_rising or oi_z >= 1.0):
-            blocks.append(f"اهرم لانگ در حال انباشت (OI z={oi_z:+.1f}, Δ{oi_chg:+.1f}٪)")
+            block("oi_leverage_building", f"اهرم لانگ در حال انباشت (OI z={oi_z:+.1f}, Δ{oi_chg:+.1f}٪)")
             score -= 0.22
         elif d == -1 and fz <= -1.2 and (oi_rising or oi_z >= 1.0):
-            blocks.append(f"اهرم شورت در حال انباشت (OI z={oi_z:+.1f}, Δ{oi_chg:+.1f}٪)")
+            block("oi_leverage_building", f"اهرم شورت در حال انباشت (OI z={oi_z:+.1f}, Δ{oi_chg:+.1f}٪)")
             score -= 0.22
         # تأیید: حرکت قیمت هم‌جهت با کاهش OI (پوشش) یا افزایش OI در جهت سالم
         elif d == 1 and oi_falling and fz > 0.5:
@@ -212,7 +225,7 @@ def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
     hyst = extras.get("adx_hysteresis") or {}
     if hyst:
         if not hyst.get("stable"):
-            blocks.append(f"رژیم محلی ناپایدار ({'/'.join(hyst.get('recent') or [])})")
+            block("regime_unstable", f"رژیم محلی ناپایدار ({'/'.join(hyst.get('recent') or [])})")
             score -= 0.15
         elif hyst.get("local") == "trend":
             reasons.append(f"روند پایدار ({hyst.get('streak', 0)} کندل)")
@@ -229,7 +242,7 @@ def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
             reasons.append("هم‌راستا با تکانهٔ BTC")
             score += 0.08
         elif bz * d < -0.5:
-            blocks.append(f"مخالف تکانهٔ BTC (z={bz:+.1f})")
+            block("btc_momentum_against", f"مخالف تکانهٔ BTC (z={bz:+.1f})")
             score -= 0.20
 
     # ۷) کیفیت نشست
@@ -255,10 +268,7 @@ def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
             reasons.append("قدرت نسبی هم‌جهت")
 
     score = float(engine.clamp(score, 0.0, 1.0))
-    hard = any(
-        "شدید" in x or "شلوغ" in x or "اهرم" in x or (x.startswith("پهنای بازار") and "خلاف" in x)
-        for x in blocks
-    )
+    hard = bool(HARD_BLOCKS.intersection(codes))
     approve = (not hard) and score >= 0.45
     if hard:
         approve = False
@@ -276,6 +286,7 @@ def evaluate(side: str, extras: dict, cs=None) -> dict[str, Any]:
         "size_mult": size_mult,
         "reasons": reasons[:5],
         "blocks": blocks[:4],
+        "block_codes": list(codes),
         "regime": regime,
         "hard_block": hard,
         "session_tier": sess.get("tier"),
