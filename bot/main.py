@@ -12,8 +12,8 @@ from concurrent.futures import ThreadPoolExecutor
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:  # noqa: BLE001
-        log.exc()
+    except Exception:  # noqa: BLE001, silent-ok — پیش از import log اجرا می‌شود؛ ارجاع به log اینجا NameError می‌داد
+        pass
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +27,7 @@ import market
 import candidates
 import engine
 import features
+import universe
 import paper
 import broker
 import calib
@@ -48,7 +49,7 @@ def _market_state(tf):
         return hit[1]
     out = {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0}
     try:
-        symbols, _ = market.get_top_symbols(200)
+        symbols, _ = market.get_top_symbols(calib.CALIB_UNIVERSE_N)   # همان جمعیتِ آموزش
         above = []
         volq: dict = {}
         btcv: dict = {}
@@ -63,7 +64,7 @@ def _market_state(tf):
                 volq[t] = volq.get(t, 0.0) + c_ * v_
                 if s == "BTCUSDT":
                     btcv[t] = c_ * v_
-        if len(above) >= 20:
+        if len(above) >= universe.MIN_POPULATION:
             out["breadth"] = (sum(above) / len(above) - 0.5) * 2
         dom_ts = sorted(t for t in btcv if volq.get(t, 0) > 0)
         if len(dom_ts) > 60:
@@ -169,15 +170,15 @@ def _rs_rank(tf):
         return hit[1]
     ranks = {}
     try:
-        symbols, _ = market.get_top_symbols(TOP_N)
-        rets = []
+        # همان جمعیتِ آموزش: ۱۰۰ ارزِ برتر، با حداقلِ جمعیت (وگرنه همه خنثی).
+        # قبلاً روی کشِ نیمه‌خالیِ پس از ری‌استارت، چند ارز رتبهٔ ۰ یا ۱ می‌گرفتند.
+        symbols, _ = market.get_top_symbols(calib.CALIB_UNIVERSE_N)
+        rets = {}
         for s in symbols:
             kl = market.get_klines_cached(s, tf)
             if kl and len(kl["c"]) > 21:
-                rets.append((s, kl["c"][-1] / kl["c"][-21] - 1))
-        rets.sort(key=lambda x: x[1])
-        m = max(len(rets) - 1, 1)
-        ranks = {s: i / m for i, (s, _) in enumerate(rets)}
+                rets[s] = kl["c"][-1] / kl["c"][-21] - 1
+        ranks = universe.rank_within(rets)
     except Exception:  # noqa: BLE001
         log.exc()
     _rs_cache[tf] = (now, ranks)

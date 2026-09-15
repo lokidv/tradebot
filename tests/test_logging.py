@@ -127,6 +127,36 @@ class SwallowedExceptionTests(_LogMixin, unittest.TestCase):
         self.assertNotEqual(rows[0]["where"], rows[1]["where"])
 
 
+class ImportOrderTests(unittest.TestCase):
+    """``log.exc()`` پیش از ``import log`` یعنی NameError هنگامِ بالا آمدنِ برنامه.
+
+    این دقیقاً در main.py رخ داد: بلوکِ پیکربندیِ کنسول در خطِ ۱۲ اجرا می‌شد و
+    ``import log`` در خطِ ۲۵ بود؛ هر خطا در reconfigure برنامه را از کار می‌انداخت.
+    """
+
+    def test_log_is_imported_before_its_first_module_level_use(self):
+        offenders = []
+        bot = os.path.join(ROOT, "bot")
+        for name in sorted(os.listdir(bot)):
+            if not name.endswith(".py") or name == "log.py":
+                continue
+            with open(os.path.join(bot, name), "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            uses = [i for i, ln in enumerate(lines) if "log.exc(" in ln or "log.warn(" in ln
+                    or "log.info(" in ln or "log.error(" in ln]
+            if not uses:
+                continue
+            imports = [i for i, ln in enumerate(lines) if ln.strip() == "import log"]
+            if not imports:
+                offenders.append(f"{name}: log بدونِ import")
+                continue
+            # فقط استفاده‌های سطحِ ماژول (بدونِ تورفتگیِ تابع) پیش از import خطرناک‌اند
+            for i in uses:
+                if i < imports[0]:
+                    offenders.append(f"{name}:{i + 1} پیش از import log")
+        self.assertEqual(offenders, [], offenders)
+
+
 class SourceAuditTests(unittest.TestCase):
     """هیچ ``except: pass`` خاموشی نباید در ماژول‌های هسته باقی مانده باشد."""
 

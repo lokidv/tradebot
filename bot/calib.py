@@ -20,6 +20,7 @@ import engine
 import features
 import market
 import stats
+import universe
 
 try:
     import lightgbm as lgb
@@ -30,11 +31,13 @@ except Exception:  # noqa: BLE001
 CALIB_PATH = os.path.join(os.path.dirname(__file__), "data", "calib.json")
 COST_PCT = 0.15
 REBUILD_SEC = 86400
-CALIB_VERSION = 20       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+CALIB_VERSION = 21       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+# ۲۱: جهانِ نقطه‌-در-زمان — رویداد فقط اگر ارز در همان ماه جزوِ ۱۰۰ برتر بوده
 # ۲۰: هزینهٔ هر رویداد = ردهٔ نقدشوندگیِ لحظه‌ای + فاندینگِ واقعیِ مدتِ نگه‌داری
 # ۱۸: براکتِ واحد (bracket.py) — برچسب‌ها حالا گپِ پشتِ حدضرر را روی قیمتِ مشاهده‌شده می‌بندند
 # ۱۹: حذفِ ویژگیِ مردهٔ dxy_dir (۲۴ → ۲۳ ویژگی) + یکسان‌سازیِ فرمولِ فاندینگِ آموزش/اجرا
 WF_FOLDS = 5             # تعداد فولدهای Walk-Forward
+CALIB_UNIVERSE_N = 100   # اندازهٔ جهانِ نقطه‌-در-زمان در هر ماه
 WF_EMBARGO = 24          # fallback فقط برای ورودی‌های بدون timestamp
 MIN_BRIER_SKILL = 0.01   # حداقل ۱٪ بهبود نسبت به پیش‌بینیِ ثابتِ نرخ پایه
 MIN_SETUP_LIFT = 4.0
@@ -1676,6 +1679,7 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             fz = dict(pool.map(_fz_one, symbols))
             fraw = dict(pool.map(_fr_one, symbols))
         table = {"built_at": time.time(), "cost_pct": COST_PCT, "version": CALIB_VERSION, "tfs": {}}
+        universe_report, excluded_events = {}, {}
         zmaps = {}                                        # tf -> sym -> {ts: z}
         pending = {}                                      # tf -> ورودی‌های آموزش (آموزشِ همه در پایان، موازی)
         for tf in tfs:                                    # از بالا به پایین تا HTF آماده باشد
@@ -1695,15 +1699,25 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                         _state["progress"] = f"داده {tf} ({got}/{len(symbols)})"
                     if kl:
                         hists[sym] = kl
-            # رتبه قدرت نسبی مقطعی (بازده ۲۰ کندلی) در هر مهر زمانی
+            # ── جهانِ نقطه‌-در-زمان: برترین‌های هر ماه بر اساسِ حجمِ ۳۰ روزِ پیش از آن ──
+            # (نه ۱۰۰ ارزِ پرحجمِ امروز — آن سوگیریِ بقا و نگاه به آینده در انتخاب بود)
+            snaps = universe.snapshots_from_histories(hists, top_n=CALIB_UNIVERSE_N)
+            universe_report[tf] = universe.summary(snaps)
+
+            def _member(sym, ts_, _snaps=snaps):
+                return universe.in_universe(_snaps, sym, ts_)
+
+            # رتبه قدرت نسبی مقطعی (بازده ۲۰ کندلی) — فقط بینِ اعضای جهانِ همان لحظه
             rets = {}
             for sym, kl in hists.items():
                 cc = kl["c"]
                 for idx in range(20, len(cc)):
-                    rets.setdefault(kl["t"][idx], []).append((sym, cc[idx] / cc[idx - 20] - 1))
+                    t_ = kl["t"][idx]
+                    if _member(sym, t_):
+                        rets.setdefault(t_, []).append((sym, cc[idx] / cc[idx - 20] - 1))
             rs_map = {}
             for ts, lst in rets.items():
-                if len(lst) >= 8:
+                if len(lst) >= universe.MIN_POPULATION:
                     lst.sort(key=lambda x: x[1])
                     m = len(lst) - 1
                     rs_map[ts] = {sym: (k / m if m else 0.5) for k, (sym, _) in enumerate(lst)}
@@ -1727,11 +1741,13 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                 vv = np.array(kl["v"], float) * cc
                 for j in range(50, len(cc)):
                     ts_ = kl["t"][j]
-                    above.setdefault(ts_, []).append(1.0 if cc[j] > e50[j] else 0.0)
+                    if _member(sym, ts_):
+                        above.setdefault(ts_, []).append(1.0 if cc[j] > e50[j] else 0.0)
                     volq[ts_] = volq.get(ts_, 0.0) + float(vv[j])
                     if sym == "BTCUSDT":
                         btc_volq[ts_] = float(vv[j])
-            breadth_map = {t: (sum(v) / len(v) - 0.5) * 2 for t, v in above.items() if len(v) >= 8}
+            breadth_map = {t: (sum(v) / len(v) - 0.5) * 2 for t, v in above.items()
+                           if len(v) >= universe.MIN_POPULATION}
             dom_ts = sorted(t for t in btc_volq if t in volq and volq[t] > 0)
             dom_map = mom_norm_map(dom_ts, [btc_volq[t] / volq[t] for t in dom_ts]) if len(dom_ts) > 40 else {}
             ethbtc_map = {}
@@ -1763,8 +1779,17 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                                                            breadth_map, dom_map, ethbtc_map,
                                                            funding_rows=fraw.get(sym))
                 except Exception:  # noqa: BLE001
+                    log.exc(f"extract_events {sym} {tf}")
                     evs, zmap, dx, dy, dr = [], {}, [], [], []
                 zmaps[tf][sym] = zmap
+                # فقط رویدادهایی که ارزشان **در همان لحظه** عضوِ جهان بوده
+                kept = [e for e in evs if _member(sym, e["ts"])]
+                excluded_events[tf] = excluded_events.get(tf, 0) + (len(evs) - len(kept))
+                evs = kept
+                keep_dense = [k for k, yy in enumerate(dy) if _member(sym, yy[0])]
+                dx = [dx[k] for k in keep_dense]
+                dy = [dy[k] for k in keep_dense]
+                dr = [dr[k] for k in keep_dense]
                 if sym == "BTCUSDT":
                     btc_events_zmap_src = zmap
                 all_events.extend(evs)
@@ -1809,6 +1834,9 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
         with ThreadPoolExecutor(max_workers=len(pending) or 1) as pool:
             for tf, blob in pool.map(_train_tf, list(pending)):
                 table["tfs"][tf] = blob
+        table["universe"] = {"per_tf": universe_report,
+                             "excluded_events_outside_universe": excluded_events,
+                             "top_n": CALIB_UNIVERSE_N}
         os.makedirs(os.path.dirname(CALIB_PATH), exist_ok=True)
         tmp = CALIB_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
