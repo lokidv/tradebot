@@ -18,6 +18,19 @@ OKX = "https://www.okx.com"
 
 STABLE_BASES = {"USDC", "FDUSD", "TUSD", "BUSD", "DAI", "USDP", "PYUSD", "EUR", "AEUR", "USD1", "XUSD", "EURI"}
 LEVERAGED_SUFFIX = ("UP", "DOWN", "BULL", "BEAR")
+# فهرستِ نام‌ها همیشه عقب است: استیبل‌کوینِ تازهٔ «U» با قیمتِ 1.0002 در جدول
+# «ستاپ A» نشان می‌داد، و USDG در جمعیتِ آموزش و breadth/RS بود. دارایی‌ای که
+# بازهٔ ۲۴ساعته‌اش کمتر از این درصدِ قیمت است میخ‌شده است، نه بازار.
+# سنجیده روی ۲۹۹۹ روز: آرام‌ترین روزِ BTC ۰٫۳۴٪ و TRX ۰٫۳۹٪؛ میانهٔ USDG ۰٫۰۲٪.
+# ۰٫۱٪ با هر دو طرف فاصلهٔ چندبرابری دارد.
+PEG_MAX_RANGE_PCT = 0.1
+
+
+def _is_pegged(last, high, low):
+    try:
+        return last > 0 and (high - low) / last * 100 < PEG_MAX_RANGE_PCT
+    except (TypeError, ZeroDivisionError):
+        return False
 
 TF_BINANCE = {"15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
 TF_OKX = {"15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
@@ -63,7 +76,10 @@ def get_top_symbols(n=15):
             if base in STABLE_BASES or any(base.endswith(sfx) for sfx in LEVERAGED_SUFFIX):
                 continue
             try:
-                rows.append((float(t["quoteVolume"]), s, float(t["lastPrice"]), float(t["priceChangePercent"])))
+                last = float(t["lastPrice"])
+                if _is_pegged(last, float(t["highPrice"]), float(t["lowPrice"])):
+                    continue
+                rows.append((float(t["quoteVolume"]), s, last, float(t["priceChangePercent"])))
             except (KeyError, ValueError):
                 continue
         rows.sort(reverse=True)
@@ -83,6 +99,8 @@ def get_top_symbols(n=15):
                     continue
                 try:
                     last = float(t["last"])
+                    if _is_pegged(last, float(t["high24h"]), float(t["low24h"])):
+                        continue
                     open24 = float(t["open24h"]) or last
                     rows.append((float(t["volCcy24h"]), base + "USDT", last, (last / open24 - 1) * 100))
                 except (KeyError, ValueError, ZeroDivisionError):

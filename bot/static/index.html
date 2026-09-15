@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>میز فرمان CTP — پایش ۴۰ ارز برتر</title>
+<title>میز فرمان CTP — پایش ارزهای برتر</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
@@ -291,7 +291,7 @@
 
 <div class="pulse">
   <span class="led" id="led"></span>
-  <span id="pulseText">موتور زنده — ۴۰ ارز × ۴ تایم‌فریم × ۱۸ ویژگی × ۶ ستاپ</span>
+  <span id="pulseText">موتور زنده — در حالِ بارگذاری…</span>
   <span class="sep">|</span><span>بسته‌شدن کندل: <b class="num" id="candleCd">—</b></span>
   <span class="sep">|</span><span>تحلیل بعدی: <b class="num" id="refreshCd">—</b></span>
   <span class="sep">|</span><span id="engineCred">در حال خواندن اعتبارنامه مدل‌ها…</span>
@@ -593,7 +593,7 @@ async function loadEngineCred(){
       const n = action ? m.action_n : m.policy_n;
       const avg = action ? m.action_avg_net_r : m.policy_avg_net_r;
       const pf = action ? m.action_profit_factor : m.policy_profit_factor;
-      return `<b>${tf}</b>: ${action?"انتخاب عمل":"ستاپ"} ✅ n=${n}، میانگین ${fmt(avg,2)}R، PF=${fmt(pf,2)}`;
+      return `<b>${tf}</b>: ${action?"انتخاب عمل":"ستاپ"} n=${n}، میانگین ${fmt(avg,2)}R، PF=${fmt(pf,2)}`;
     }).filter(Boolean);
     const ev = Object.values(d.events||{}).reduce((a,b)=>a+b,0);
     let macro = "";
@@ -607,9 +607,11 @@ async function loadEngineCred(){
         macro += ` · جیب زنده: ${Object.keys(ov.edge_pockets).join("، ")}`;
       }
     }catch(e){}
+    // آزمونِ داخلیِ مدل پیش‌ثبت نشده و آزمونِ منجمد آن را نسنجیده؛ تیکِ سبز کنارِ
+    // «+0.26R» در حالی که قفلِ ایمنی بسته است، یعنی «لبه پیدا شد» — که نشده.
     $("#engineCred").innerHTML = parts.length
-      ? `سیاست‌های تأییدشده روی test زمانیِ دست‌نخورده: ${parts.join(" · ")} — از ${ev.toLocaleString("fa-IR")} رویداد${macro}`
-      : `حالت جیب‌زنده + متا-گیت — سیاست نهایی دادگاه را پاس نکرده · ${ev.toLocaleString("fa-IR")} رویداد${macro}`;
+      ? `<span title="پنجرهٔ test داخلیِ ساختِ مدل؛ جزوِ فرضیه‌های پیش‌ثبت‌شده نیست">تشخیصی — آزمونِ داخلیِ مدل (مرجعِ مجوز نیست):</span> ${parts.join(" · ")} — از ${ev.toLocaleString("fa-IR")} رویداد · مجوزِ ورود فقط از قفلِ ایمنی${macro}`
+      : `هیچ سیاستی حتی آزمونِ داخلیِ مدل را پاس نکرده · مجوزِ ورود فقط از قفلِ ایمنی · ${ev.toLocaleString("fa-IR")} رویداد${macro}`;
   }catch(e){}
 }
 
@@ -893,13 +895,14 @@ async function loadOverview(){
     const tr = d.tf_trust || {}, tn = $("#tfTrustNote");
     if(tn){
       if(tr.policy_ok)
-        tn.innerHTML = `✅ سیاست نهاییِ <b>${TF}</b> (${tr.policy_type==="action"?"انتخاب مستقیم لانگ/شورت/عدم معامله":"فیلتر ستاپ"}) روی test زمانیِ دست‌نخورده پاس شده: n=${tr.policy_n}، میانگین خالص ${fmt(tr.policy_avg_net_r,2)}R، کران پایین ${fmt(tr.policy_lcb_net_r,2)}R، PF=${fmt(tr.policy_profit_factor,2)}.`;
+        tn.innerHTML = `ℹ️ آزمونِ داخلیِ مدل برای <b>${TF}</b> (${tr.policy_type==="action"?"انتخاب مستقیم لانگ/شورت/عدم معامله":"فیلتر ستاپ"}): n=${tr.policy_n}، میانگین خالص ${fmt(tr.policy_avg_net_r,2)}R، کران پایین ${fmt(tr.policy_lcb_net_r,2)}R، PF=${fmt(tr.policy_profit_factor,2)} — <b>تشخیصی</b>: این سیاست جزوِ فرضیه‌های پیش‌ثبت‌شده نبوده و آزمونِ منجمد آن را نسنجیده؛ مجوزِ ورود فقط از قفلِ ایمنی.`;
       else
-        tn.innerHTML = `⚠️ سیاست نهاییِ تایم‌فریم <b>${TF}</b> هنوز test زمانیِ مستقل را پاس نکرده؛ پیش‌بینی جهت نمایش داده می‌شود اما مجوز ورود نیست.`;
+        tn.innerHTML = `⚠️ سیاستِ تایم‌فریمِ <b>${TF}</b> حتی آزمونِ داخلیِ مدل را پاس نکرده؛ پیش‌بینی فقط نمایشی است و مجوزِ ورود نیست.`;
     }
   }catch(e){ $("#rows").innerHTML = `<tr><td colspan="13" class="err loading">خطا در دریافت داده: ${e}</td></tr>`; }
   $("#led").classList.remove("busy"); nprog.done();
-  $("#pulseText").textContent = "موتور زنده — ۲۰۰ ارز × ۴ تایم‌فریم × ۲۴ ویژگی × سیاست نهاییِ آزموده‌شده";
+  const nCoins = ((window.OV && window.OV.coins) || []).length;
+  $("#pulseText").textContent = `موتور زنده — ${nCoins ? nCoins.toLocaleString("fa-IR") + " ارز × " : ""}۴ تایم‌فریم · مجوزِ ورود فقط از قفلِ ایمنی`;
   nextRefresh = Date.now() + 60000;
   loadLiveStats().then(()=>{ if(window.OV) renderStats(window.OV); });
 }
