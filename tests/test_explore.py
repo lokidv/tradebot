@@ -153,6 +153,38 @@ class EntryTimingTests(unittest.TestCase):
         self.assertEqual(fn("AAAUSDT", int(k["t"][99]) + DAY - 1), 0)
 
 
+class JoinTests(unittest.TestCase):
+    """پیوستن دیرتر به همان معامله: همان خروج، ولی ورود و R از روزِ پیوستن."""
+
+    def test_a_join_leaves_with_the_rule_and_is_measured_from_its_own_stop(self):
+        k = _arrays(_daily(400, drift=0.004, vol=0.02, seed=31))
+        snaps = [(T0 - DAY, frozenset({"AAAUSDT"}))]
+        spec = {"rule": "donchian", "n": 20, "side": 1}
+        rule = {t["entry_ts"]: t for t in explore.trend_trades({"AAAUSDT": k}, snaps, spec)}
+        joins = explore.join_trades({"AAAUSDT": k}, snaps, spec, 5)
+        self.assertGreater(len(joins), 0)
+        for jt in joins:
+            parent, = [t for ets, t in rule.items() if ets == jt["entry_ts"] - 5 * DAY]
+            self.assertEqual(jt["exit_ts"], parent["exit_ts"])             # همان روزِ خروجِ قاعده
+            d = int(np.searchsorted(k["t"], jt["entry_ts"]))
+            join_px = k["o"][d]
+            stop_px = join_px * (1 - jt["risk_pct"] / 100)
+            self.assertLess(stop_px, join_px)
+            # و همان قیمتِ خروج: فقط ورود و R فرق دارند
+            e = int(np.searchsorted(k["t"], parent["entry_ts"]))
+            parent_r = parent["risk_pct"] / 100 * k["o"][e]
+            parent_exit = k["o"][e] + parent["gross_r"] * parent_r
+            join_exit = join_px + jt["gross_r"] * (join_px - stop_px)
+            self.assertAlmostEqual(join_exit, parent_exit, places=6)
+
+    def test_spot_costs_have_no_funding(self):
+        k = _arrays(_daily(400, drift=0.004, vol=0.02, seed=31))
+        snaps = [(T0 - DAY, frozenset({"AAAUSDT"}))]
+        for jt in explore.join_trades({"AAAUSDT": k}, snaps, {"rule": "donchian", "n": 20, "side": 1}, 5):
+            self.assertAlmostEqual(jt["net_r_spot"],
+                                   jt["gross_r"] - explore.SPOT_ROUND_TRIP_PCT / max(jt["risk_pct"], 0.05))
+
+
 class SetupParityTests(unittest.TestCase):
     """ستاپ‌های اکتشاف باید دقیقاً همان رویدادهای آموزش باشند؛ وگرنه دو آزمون دو چیزِ متفاوت را می‌سنجند."""
 

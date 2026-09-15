@@ -161,18 +161,21 @@ def sma(x, n):
 
 
 # ───────────────────────── مسیرِ معامله ─────────────────────────
-def walk(o, h, l, c, a, e, side, entry, R, trail_atr=None, max_hold=120, exit_fn=None):
+def walk(o, h, l, c, a, e, side, entry, R, trail_atr=None, max_hold=120, exit_fn=None, stops=None):
     """یک معامله از کندلِ ورودِ ``e`` (ورود در openِ همان کندل) تا خروج.
 
     ترتیب در هر کندل: گپ پشتِ حدضرر (خروج با open) ← حدضررِ درون‌کندلی ← سیگنالِ
     خروج روی بسته (خروج در openِ کندلِ بعد) ← به‌روزرسانیِ حدضررِ دنباله‌دار با
     اطلاعاتِ همین بسته (از کندلِ بعد اعمال می‌شود). هیچ کندلی از آینده دیده نمی‌شود.
+    ``stops``: اگر فهرست باشد، حدضررِ معتبر در هر کندل (از ``e`` به بعد) به آن افزوده می‌شود.
     """
     n = len(c)
     stop = entry - side * R
     best = entry
     last = min(e + max_hold - 1, n - 1)
     for j in range(e, last + 1):
+        if stops is not None:
+            stops.append(stop)
         if (side == 1 and o[j] <= stop) or (side == -1 and o[j] >= stop):
             return {"exit_idx": j, "exit_px": float(o[j]), "outcome": "gap_stop", "stop": stop}
         if (side == 1 and l[j] <= stop) or (side == -1 and h[j] >= stop):
@@ -261,6 +264,10 @@ def trend_paths(sym, k, spec, snaps, start_idx=0):
         res = walk(o, h, l, c, a, e, side, entry, R, trail_atr=trail, max_hold=max_hold,
                    exit_fn=exit_fn)
         yield i, e, entry, R, res
+        if res["outcome"] == "end_of_data":
+            # پوزیشن هنوز باز است: سقفِ تازه در روندِ پیوسته «سیگنالِ ورود» نیست. بدونِ این،
+            # ردیابِ زنده برای ارزی که قاعده در آن پوزیشن دارد هر روز سیگنالِ ساختگی می‌ساخت.
+            return
         i = max(res["exit_idx"], i + 1)       # یک پوزیشن در هر نماد؛ اسکن از خروج ادامه
 
 
@@ -460,7 +467,9 @@ def classify(s, rw, deflated):
     return "inconclusive"
 
 
-def run(cutoff_ms=None, variants=VARIANTS, hist_dir=None, progress=print):
+def run(cutoff_ms=None, variants=VARIANTS, hist_dir=None, progress=print, extra_series=None):
+    """``extra_series``: ``{نام: (مقادیر، زمان‌ها)}`` که فقط در Romano-Wolf کنارِ واریانت‌ها
+    می‌نشینند (مثلاً پیوستن به روند) — تا بهای جست‌وجو روی **کلِ** خانواده حساب شود."""
     cutoff_ms = int(cutoff_ms if cutoff_ms is not None else dev_cutoff_ms())
     progress(f"مرزِ اکتشاف: {time.strftime('%Y-%m-%d', time.gmtime(cutoff_ms / 1000))}")
     daily = load_panel("1d", cutoff_ms, hist_dir=hist_dir)
@@ -519,8 +528,9 @@ def run(cutoff_ms=None, variants=VARIANTS, hist_dir=None, progress=print):
             family_series[spec["key"]] = (np.asarray(vals, float), np.asarray(ts, np.int64))
         progress(f"  {spec['key']}: n={s.get('n')} mean={s.get('mean')} lcb={s.get('lcb')}")
 
+    family_series.update(extra_series or {})
     rw = stats.romano_wolf(family_series, FAMILY_BLOCK_MS, alpha=ALPHA, B=B) if family_series else {}
-    n_trials = PRIOR_HYPOTHESES + len(variants)
+    n_trials = PRIOR_HYPOTHESES + len(variants) + len(extra_series or {})
     for key, blob in results.items():
         s = blob["stats"]
         blob["romano_wolf"] = rw.get(key, {})
@@ -534,6 +544,7 @@ def run(cutoff_ms=None, variants=VARIANTS, hist_dir=None, progress=print):
         "universe": universe.summary(snaps),
         "n_variants": len(variants),
         "n_trials_project": n_trials,
+        "extra_romano_wolf": {k: rw.get(k, {}) for k in (extra_series or {})},
         "notes": [
             "exploration only — no gate is changed; survivors need a pre-registered test on unseen data",
             "funding history covers ~33 days; the default 0.01%/settlement is charged to both sides",
@@ -644,6 +655,102 @@ def robustness(keys=("T_don20_long", "T_don55_long", "T_sma100_long"), cutoff_ms
         first = min(t["entry_ts"] for t in trend_trades(daily, snaps20, specs[keys[0]]))
         out["btc_buy_and_hold"] = buy_and_hold(daily["BTCUSDT"], first, cutoff_ms)
     return out
+
+
+# ───────────────────────── پیوستن به روندِ در جریان ─────────────────────────
+JOIN_OFFSETS = (5, 10, 20)       # چند روز پس از ورودِ قاعده
+# کارمزدِ رفت‌وبرگشتِ صرافیِ اسپات، بدبینانه (کوکوین ~۰٫۲٪، صرافی‌های داخلی تا ~۰٫۵٪) — بی‌فاندینگ
+SPOT_ROUND_TRIP_PCT = 0.4
+
+
+def join_trades(panel, snaps, spec, offset):
+    """کسی که ``offset`` روز پس از ورودِ قاعده، در openِ همان روز و با حدضررِ همان روزِ قاعده وارد شود.
+
+    حدضررِ او از آن روز همان حدضررِ قاعده است، پس دقیقاً با خودِ قاعده خارج می‌شود؛ فقط
+    قیمتِ ورود و فاصلهٔ حدضرر (R) فرق دارد. فقط برای قاعدهٔ دانچیان (حدضررِ دنباله‌دار).
+    """
+    side = spec["side"]
+    out = []
+    for sym, k in panel.items():
+        o, h, l, c, v, t = (k[x] for x in ("o", "h", "l", "c", "v", "t"))
+        a = engine.atr(h, l, c, 20)
+        for _i, e, entry, R, res in trend_paths(sym, k, spec, snaps):
+            if res is None:
+                continue
+            stops = []
+            walk(o, h, l, c, a, e, side, entry, R, trail_atr=TREND_TRAIL_ATR, max_hold=120, stops=stops)
+            d = e + offset
+            if d > res["exit_idx"] or offset >= len(stops):
+                continue                                 # قاعده پیش از آن روز بیرون آمده بود
+            stop, join = float(stops[offset]), float(o[d])
+            if (join - stop) * side <= 0:
+                continue                                 # گپ پشتِ حدضرر: چیزی برای پیوستن نیست
+            rj = abs(join - stop)
+            risk_pct = rj / join * 100
+            gross_r = side * (res["exit_px"] - join) / rj
+            entry_ts, exit_ts = int(t[d]), int(t[res["exit_idx"]])
+            cost = costs.point_in_time_tier(c, v, d - 1, "1d") + costs.funding_cost_pct(side, entry_ts, exit_ts, None)
+            out.append({"sym": sym, "side": side, "ts": int(t[d - 1]), "entry_ts": entry_ts,
+                        "exit_ts": exit_ts, "gross_r": gross_r, "risk_pct": risk_pct, "cost_pct": cost,
+                        "net_r": bracket.net_r(gross_r, risk_pct, cost),
+                        "net_r_spot": bracket.net_r(gross_r, risk_pct, SPOT_ROUND_TRIP_PCT),
+                        "bars": int(res["exit_idx"] - d + 1), "outcome": res["outcome"]})
+    return out
+
+
+def join_report(cutoff_ms=None, hist_dir=None, key="T_don20_long"):
+    """آیا پیوستن به روندی که چند روز پیش شروع شده هنوز می‌ارزد؟ + خودِ قاعده با هزینهٔ اسپات."""
+    cutoff_ms = int(cutoff_ms if cutoff_ms is not None else dev_cutoff_ms())
+    daily = load_panel("1d", cutoff_ms, hist_dir=hist_dir)
+    snaps = universe.snapshots_from_histories(
+        {s: {"t": k["t"].tolist(), "c": k["c"].tolist(), "v": k["v"].tolist()} for s, k in daily.items()},
+        top_n=TOP_N)
+    spec = {v["key"]: v for v in VARIANTS}[key]
+
+    def pack(rows):
+        vals = [r["net_r"] for r in rows]
+        s = describe(vals, [r["entry_ts"] for r in rows], TREND_BLOCK_MS)
+        spot = [r["net_r_spot"] for r in rows]
+        s["mean_spot"] = round(float(np.mean(spot)), 4) if spot else None
+        s["mean_stressed"] = round(float(np.mean([stressed_r(r) for r in rows])), 4) if rows else None
+        both = [r["net_r"] for r in rows if r["sym"] in ("BTCUSDT", "ETHUSDT")]
+        s["btc_eth"] = {"n": len(both), "mean": round(float(np.mean(both)), 4) if both else None}
+        s["avg_risk_pct"] = round(float(np.mean([r["risk_pct"] for r in rows])), 2) if rows else None
+        return s
+
+    base = trend_trades(daily, snaps, spec)
+    for r in base:
+        r["net_r_spot"] = bracket.net_r(r["gross_r"], r["risk_pct"], SPOT_ROUND_TRIP_PCT)
+    out = {"generated_at": time.time(), "cutoff_ms": cutoff_ms, "rule": key,
+           "spot_round_trip_pct": SPOT_ROUND_TRIP_PCT, "breakout": pack(base), "joins": {}}
+    extra = {}
+    for off in JOIN_OFFSETS:
+        rows = join_trades(daily, snaps, spec, off)
+        out["joins"][f"{off}d"] = pack(rows)
+        if len(rows) >= 2:
+            extra[f"J_join{off}d"] = (np.asarray([r["net_r"] for r in rows], float),
+                                      np.asarray([r["entry_ts"] for r in rows], np.int64))
+    # بهای جست‌وجو روی **کلِ** خانواده (۱۵ واریانت + پیوستن‌ها)، نه فقط بینِ همین سه —
+    # سه‌تایی به‌تنهایی p_adj=0.008 می‌داد که خوش‌بینانه بود
+    full = run(cutoff_ms=cutoff_ms, hist_dir=hist_dir, progress=lambda *_: None, extra_series=extra)
+    n_trials = full["n_trials_project"]
+    for off in JOIN_OFFSETS:
+        s = out["joins"][f"{off}d"]
+        s["romano_wolf"] = full["extra_romano_wolf"].get(f"J_join{off}d", {})
+        s["deflated_mean_threshold"] = stats.deflated_mean_threshold(
+            n_trials, s.get("sd") or 0, s.get("n_eff") or 0, ALPHA) if s.get("n") else None
+    out["breakout"]["romano_wolf"] = full["variants"][key]["romano_wolf"]
+    out["n_trials_project"] = n_trials
+    return out
+
+
+def write_join_report(rep, out_dir=None):
+    out_dir = out_dir or OUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, time.strftime("join_%Y%m%d_%H%M.json", time.gmtime(rep["generated_at"])))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rep, f, ensure_ascii=False, indent=1, default=float)
+    return path
 
 
 def write(report, out_dir=None):

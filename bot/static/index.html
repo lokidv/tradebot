@@ -583,10 +583,9 @@ function trendTestnetHtml(x){
   const coin = s => s.replace("USDT","");
   let line;
   if(!x.permitted)
-    line = `اجرای تست‌نت: <b>خاموش</b>`;
+    line = `اجرای خودکار روی تست‌نتِ بایننس (اختیاری): <b>خاموش</b>`;
   else if(x.broker !== "binance_testnet" || !x.has_keys)
-    line = `اجرای تست‌نت: <b>روشن، در انتظارِ کلید</b> — ⚙️ تنظیمات ← بروکر «تست‌نت بایننس» ← کلید و سکرتِ API
-            از <b>testnet.binancefuture.com</b> (پول مجازی). از آن لحظه سیگنال‌های تازه خودکار اجرا می‌شوند.`;
+    line = `اجرای خودکار روی تست‌نتِ بایننس (اختیاری — برای سیگنال لازم نیست): منتظرِ کلیدِ تست‌نت در ⚙️ تنظیمات`;
   else if(st === "broker_error")
     line = `اجرای تست‌نت: <b style="color:var(--dn)">خطای اتصال</b> — ${(x.last_step.result||{}).error||""}`;
   else
@@ -615,11 +614,16 @@ function notifyTrendSignals(d){
   try{ if(localStorage.sound==="1") beep(); }catch(e){}
   try{
     if(localStorage.notif==="1" && "Notification" in window && Notification.permission==="granted")
-      new Notification(`📈 سیگنالِ روندِ روزانه: ${names.join("، ")}`,
-        {body:"بستهٔ روزانه بالای سقفِ ۲۰روزه — ورود در openِ کندلِ جاری. نامزدِ پژوهشی، اثبات‌نشده."});
+      new Notification(`📈 سیگنالِ خرید (روندِ روزانه): ${names.join("، ")}`,
+        {body:"شکستِ سقفِ ۲۰روزه — قیمتِ ورود، حدضرر و حجم در پنلِ روند. اثبات‌نشده؛ با ریسکِ کم."});
   }catch(e){}
-  toast(`📈 سیگنالِ روند: ${names.join("، ")} — ورود در openِ کندلِ جاری`);
+  toast(`📈 سیگنالِ خرید: ${names.join("، ")} — ورود و حدضرر در پنلِ روند`);
   try{ localStorage.trendSeen = JSON.stringify(seen.concat(news).slice(-200)); }catch(e){}
+}
+
+function setTrendSizing(){
+  try{ localStorage.trCapital = $("#trCap").value.trim(); localStorage.trRisk = $("#trRisk").value.trim(); }catch(e){}
+  loadTrendBanner();
 }
 
 async function loadTrendBanner(){
@@ -630,37 +634,46 @@ async function loadTrendBanner(){
     ]);
     const el = $("#trendBanner"); if(!el) return;
     if(!d.rules){ setTimeout(loadTrendBanner, 15000); return; }   // سرور تازه بالا آمده — زود دوباره
-    const P = d.primary, ev = ((d.evidence||{}).rules||{})[P] || {}, acct = ev.account || {};
-    const fw = (d.forward||{})[P] || {n:0};
+    const P = d.primary, evd = d.evidence || {}, ev = (evd.rules||{})[P] || {}, acct = ev.account || {};
+    const jn = (evd.joins||{}).offsets || {}, fw = (d.forward||{})[P] || {n:0};
     const day = ms => new Date(ms).toLocaleDateString("fa-IR");
     const coin = s => s.replace("USDT","");
-    // نمای امروزِ قاعده روی هر ۲۰ ارز: پوزیشن‌ها و سیگنال‌ها، سپس نزدیک‌ترین‌ها به ماشه
+    // اندازهٔ معامله: ارزشِ پوزیشن = سرمایه × ریسک٪ ÷ فاصلهٔ حدضرر٪
+    let cap = 0, risk = 0.5;
+    try{ cap = parseFloat(localStorage.trCapital||"0")||0; risk = parseFloat(localStorage.trRisk||"0.5")||0.5; }catch(e){}
+    const size = dist => cap>0 && dist>0 ? `خرید به ارزشِ ${fmt(cap*risk/dist,0)} USDT` : `<span class="mid">سرمایه را وارد کنید</span>`;
     const now = d.now || [];
-    const active = now.filter(x => x.in_position || x.signal_today);
-    const near = now.filter(x => !x.in_position && !x.signal_today).slice(0, 6);
-    const rest = now.length - active.length - near.length;
-    const rows = [
-      ...active.map(x => x.in_position
-        ? `<tr><td><b>${coin(x.sym)}</b></td><td>${x.exiting_next_open?"خروج در openِ بعد":"در پوزیشن"} از ${day(x.entry_ts)}${x.counted?"":` <small class="mid">(پیش از شروعِ ردیابی — شمرده نمی‌شود)</small>`}</td>
-            <td class="num">ورود ${px(x.entry_px)}</td><td class="num">حدضررِ دنباله‌دار ${px(x.stop)}</td>
-            <td class="num ${cls(x.open_r)}">${x.open_r>=0?"+":""}${fmt(x.open_r,2)}R</td></tr>`
-        : `<tr><td><b>${coin(x.sym)}</b></td><td class="up">سیگنال روی آخرین بستهٔ روزانه</td>
-            <td class="num">ورود در openِ کندلِ جاری، ۰۰:۰۰ UTC (~${px(x.last)})</td><td></td><td></td></tr>`),
-      ...near.map(x => `<tr><td>${coin(x.sym)}</td><td class="mid">بی‌پوزیشن</td>
-          <td class="num">ماشه: بستهٔ بالای ${px(x.trigger)}</td><td class="num mid">${fmt(x.distance_pct,1)}٪ تا ماشه</td><td></td></tr>`),
-    ];
+    const by = c => now.filter(x => x.category === c);
+    const act = [...by("new"), ...by("join")], late = by("late"), watch = by("watch");
+    const buy = (x, label) => `<tr><td><b>${coin(x.sym)}</b></td><td class="up">${label}</td>
+        <td class="num">ورود ~${px(x.last)}</td><td class="num">حدضرر ${px(x.stop)} <small class="mid">(−${fmt(x.stop_distance_pct,1)}٪)</small></td>
+        <td class="num">${size(x.stop_distance_pct)}</td></tr>`;
+    const actRows = act.map(x => x.category === "new"
+        ? buy(x, "🟢 ورودِ تازه — شکستِ سقفِ ۲۰روزه")
+        : buy(x, `🟡 پیوستن مجاز — روزِ ${x.days_in} روند`));
+    const lateRows = late.map(x => `<tr><td>${coin(x.sym)}</td><td class="mid">⚪ روندِ ${x.days_in}روزه — برای ورود دیر است</td>
+        <td class="num mid">اگر دارید، حدضررِ امروز: ${px(x.stop)}</td><td></td><td></td></tr>`);
+    const watchRows = watch.slice(0, 5).map(x => `<tr><td>${coin(x.sym)}</td><td class="mid">👁 در کمین</td>
+        <td class="num">اگر بستهٔ روزانه بالای ${px(x.trigger)} شود</td><td class="num mid">${fmt(x.distance_pct,1)}٪ فاصله</td><td></td></tr>`);
+    const table = rows => rows.length ? `<div style="overflow-x:auto"><table class="mini"><tbody>${rows.join("")}</tbody></table></div>` : "";
+    const j5 = jn["5d"] || {}, j10 = jn["10d"] || {};
     el.innerHTML = `<div class="calbanner trend">
-      <div class="top"><span>📈 <b>روندِ روزانه</b> — نامزدِ پژوهشی · <b>اثبات‌نشده</b> · فقط کاغذی · مجوزِ ورود ندارد</span>
-        <span class="mid">شکستِ سقفِ ۲۰روزه · حدضرر و خروجِ دنباله‌دارِ 3×ATR · ${(d.symbols||[]).length} ارزِ بزرگ</span></div>
-      <div class="sub">اکتشاف ۲۰۱۸–۲۰۲۴ (پیش از پنجره‌های منجمد): ${fmt(ev.mean,2)}R در هر معامله · کرانِ پایین ${fmt(ev.lcb,2)}R ·
-        با هزینهٔ سنگین‌تر ${fmt(ev.stressed_mean,2)}R · حسابِ فرضی با ریسکِ ۰٫۵٪: ${fmt(acct.cagr_pct,1)}٪ سالانه، افتِ بیشینه ${fmt(acct.max_drawdown_pct,1)}٪ ·
-        پس از تصحیحِ جست‌وجوی چندگانه معنادار نیست (p=${fmt(ev.p_adj,2)})</div>
-      <div class="sub">ردیابیِ رو-به-جلو از ${day(d.tracking_start_ms)}: ${fw.n||0} معاملهٔ بسته${fw.n?` · میانگین ${fmt(fw.mean,2)}R · جمع ${fmt(fw.sum_r,2)}R`:""}
-        · برای تأییدِ آماریِ همین اثر ~${ev.n_eff_to_confirm||"؟"} معاملهٔ مستقل لازم است</div>
-      ${rows.length ? `<div class="sub" style="margin-top:8px">قاعده الان چه می‌گوید (فقط نمایش؛ کارنامه فقط معامله‌های پس از شروعِ ردیابی را می‌شمارد):</div>
-          <div style="overflow-x:auto"><table class="mini"><tbody>${rows.join("")}</tbody></table></div>
-          ${rest>0?`<div class="sub">${rest} ارزِ دیگر دورتر از ماشه‌اند.</div>`:""}`
-        : `<div class="sub">دادهٔ روزانه هنوز نرسیده است.</div>`}
+      <div class="top"><span>📈 <b>سیگنال‌های روندِ روزانه</b> — فقط خرید، روی هر صرافیِ اسپات · بی‌اهرم · <b>اثبات‌نشده</b></span>
+        <span class="mid">${(d.symbols||[]).length} ارزِ بزرگ · به‌روزرسانی هر روز ساعتِ ۳:۳۰ بامدادِ تهران (۰۰:۰۰ UTC)</span></div>
+      <div class="sub">روش: در قیمتِ فعلی بخرید و حدضررِ نوشته‌شده را در صرافی بگذارید. هدفِ ثابت ندارد — هر روز حدضررِ تازه را
+        از همین‌جا بخوانید و فقط رو به بالا جابه‌جا کنید، تا وقتی بخورد.
+        سرمایه: <input id="trCap" class="cfgin" style="width:90px;padding:2px 6px" value="${cap||""}" placeholder="USDT" onchange="setTrendSizing()">
+        ریسکِ هر معامله: <input id="trRisk" class="cfgin" style="width:52px;padding:2px 6px" value="${risk}" onchange="setTrendSizing()">٪</div>
+      ${actRows.length ? table(actRows) : `<div class="sub" style="margin-top:6px"><b>امروز سیگنالِ ورود یا پیوستن نیست.</b> ارزهای «در کمین» پایین‌تر آمده‌اند.</div>`}
+      ${table(watchRows)}
+      ${lateRows.length ? `<details style="margin-top:6px"><summary class="sub" style="cursor:pointer">${lateRows.length} روندِ قدیمی‌تر (برای ورود دیر؛ حدضررِ امروز برای کسی که از قبل دارد)</summary>${table(lateRows)}</details>` : ""}
+      <div class="sub" style="margin-top:8px">شواهد روی ۲۰۱۸–۲۰۲۴ (پیش از پنجره‌های منجمد؛ R = مبلغی که روی هر معامله ریسک می‌کنید):
+        ورود در شکست ${fmt(evd.joins ? evd.joins.breakout_spot_mean : ev.mean,2)}R در هر معامله با کارمزدِ اسپات ·
+        پیوستن ۵ و ۱۰ روز بعد ${fmt(j5.mean_spot,2)} و ${fmt(j10.mean_spot,2)}R ·
+        حسابِ فرضی با ریسکِ ۰٫۵٪: ${fmt(acct.cagr_pct,1)}٪ سالانه، افتِ بیشینه ${fmt(acct.max_drawdown_pct,1)}٪ ·
+        فقط ${fmt(ev.win_rate,0)}٪ معامله‌ها سود می‌دهند — بیشترِ معامله‌ها با ضررِ کوچک بسته می‌شوند و سود از چند روندِ بزرگ می‌آید ·
+        پس از تصحیح برای ${(evd.joins||{}).rw_family_size||"—"} فرضیهٔ آزموده‌شده روی همین داده، معنادار نیست (p=${fmt(ev.p_adj,2)}) و لبه کوچک‌تر شده است.</div>
+      <div class="sub">کارنامهٔ رو-به-جلو از ${day(d.tracking_start_ms)}: ${fw.n||0} معاملهٔ بسته${fw.n?` · میانگین ${fmt(fw.mean,2)}R · جمع ${fmt(fw.sum_r,2)}R`:""}</div>
       ${(d.missing_data||[]).length ? `<div class="sub" style="color:var(--brass)">بی‌داده: ${d.missing_data.map(coin).join("، ")}</div>` : ""}
       ${trendTestnetHtml(x)}
     </div>`;

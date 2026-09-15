@@ -109,13 +109,46 @@ class ForwardTrackingTests(unittest.TestCase):
             if r["in_position"]:
                 self.assertIn("counted", r)
                 self.assertLess(r["stop"], r["last"] * 1.5)
-            else:
+            elif r["category"] == "watch":
                 # سطحِ ماشه همان سقفِ ۲۰ کندلِ بسته‌شده است
                 k = {"BTCUSDT": up, "ETHUSDT": flat}[r["sym"]]
                 self.assertAlmostEqual(r["trigger"], float(np.max(k["h"][-20:])))
-        # پوزیشن‌ها اول، بعد نزدیک‌ترین به ماشه
-        flags = [r["in_position"] for r in rows]
-        self.assertEqual(flags, sorted(flags, reverse=True))
+        order = [trend.CATEGORY_ORDER[r["category"]] for r in rows]
+        self.assertEqual(order, sorted(order))              # تازه، پیوستن، دیر، در کمین
+
+    def test_a_coin_already_in_position_never_also_gets_a_new_entry_signal(self):
+        """روندِ پیوسته هر روز سقفِ تازه می‌زند؛ این برای قاعده‌ای که از قبل خریده «ورودِ تازه» نیست."""
+        n = 200
+        c = 100 * (1 + 0.004 * np.arange(n))                  # هر بسته سقفِ ۲۰روزهٔ تازه است
+        o = np.concatenate([[c[0]], c[:-1]])
+        k = {"t": T0 + np.arange(n, dtype=np.int64) * DAY, "o": o, "h": np.maximum(o, c) * 1.002,
+             "l": np.minimum(o, c) * 0.998, "c": c, "v": np.full(n, 1e8)}
+        state = trend.evaluate({"BTCUSDT": k}, start_ms=0)
+        for key, rows in state.items():
+            held = {p["sym"] for p in rows["open"]}
+            self.assertFalse(held & {s["sym"] for s in rows["signals"]}, key)
+        row, = trend.state_now({"BTCUSDT": k}, trend.PRIMARY)
+        self.assertTrue(row["in_position"])
+        self.assertNotEqual(row["category"], "new")
+
+    def test_joining_is_offered_only_inside_the_tested_window(self):
+        """پیوستن تا ۱۰ روز پس از شکست آزموده و مثبت بود؛ دیرتر نه."""
+        for days_after in (3, 10, 25):
+            n = 200
+            b = n - days_after                                # کندلِ ورودِ قاعده (سیگنال روی b−1)
+            c = np.empty(n)
+            c[:b - 1] = 100 * (1 - 0.001 * np.arange(b - 1))  # پیش از شکست: نزولِ آرام، بی‌هیچ شکستی
+            c[b - 1] = c[b - 2] * 1.06                        # شکستِ واضحِ سقفِ ۲۰روزه
+            c[b:] = c[b - 1] * (1 + 0.004 * np.arange(1, n - b + 1))   # بعد روندِ پیوسته
+            o = np.concatenate([[c[0]], c[:-1]])
+            k = {"t": T0 + np.arange(n, dtype=np.int64) * DAY, "o": o,
+                 "h": np.maximum(o, c) * 1.002, "l": np.minimum(o, c) * 0.998, "c": c,
+                 "v": np.full(n, 1e8)}
+            row, = trend.state_now({"BTCUSDT": k}, trend.PRIMARY)
+            self.assertTrue(row["in_position"], days_after)
+            self.assertEqual(row["days_in"], days_after)
+            self.assertEqual(row["category"], "join" if days_after <= trend.JOIN_MAX_DAYS else "late")
+            self.assertAlmostEqual(row["stop_distance_pct"], (row["last"] - row["stop"]) / row["last"] * 100)
 
     def test_snapshot_reports_missing_and_off_grid_data_and_never_authorizes(self):
         good = _as_lists(_series())

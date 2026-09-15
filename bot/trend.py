@@ -69,12 +69,20 @@ def load_daily(fetch=None, symbols=SYMBOLS):
     return out, missing
 
 
-def state_now(daily, key):
-    """نمای امروزِ قاعده روی هر ارز — فقط برای نمایش، **نه** برای دفتر.
+# پیوستن به روندِ در جریان: روی دادهٔ اکتشاف، ۵ و ۱۰ روز پس از شکست همان‌قدر خوب بود که خودِ
+# شکست (+۰٫۴۱ و +۰٫۴۴R)، ولی ۲۰ روز دیر دیگر نه (+۰٫۱۷R، کرانِ پایینِ منفی) — explore.join_report
+JOIN_MAX_DAYS = 10
+CATEGORY_ORDER = {"new": 0, "join": 1, "late": 2, "watch": 3}
 
-    پوزیشنی که پیش از شروعِ ردیابی باز شده هم نشان داده می‌شود (``counted=False``)،
-    چون «قاعده الان چه می‌گوید» برای کاربر همان‌قدر مهم است که کارنامهٔ رو-به-جلو.
-    برای ارزِ بی‌پوزیشن: سطحی که بستهٔ امروز باید از آن بگذرد تا سیگنال بدهد.
+
+def state_now(daily, key):
+    """نمای امروزِ قاعده روی هر ارز — برای تصمیمِ امروز، **نه** برای دفتر.
+
+    دسته‌ها: ``new`` شکست روی آخرین بستهٔ روزانه (ورود در openِ کندلِ جاری)؛ ``join`` روندی
+    که حداکثر ``JOIN_MAX_DAYS`` روز پیش شروع شده — ورود در قیمتِ فعلی با حدضررِ فعلیِ
+    قاعده؛ ``late`` روندِ قدیمی‌تر (فقط حدضررِ امروز برای کسی که از قبل دارد)؛ ``watch``
+    بی‌پوزیشن، با سطحی که بستهٔ روزانه باید از آن بگذرد. پوزیشنی که پیش از شروعِ ردیابی
+    باز شده ``counted=False`` است — در کارنامهٔ رو-به-جلو شمرده نمی‌شود.
     """
     spec = RULES[key]
     rows = []
@@ -83,21 +91,27 @@ def state_now(daily, key):
         if n < 30:
             continue
         last = float(k["c"][-1])
-        row = {"sym": sym, "last": last, "in_position": False}
+        row = {"sym": sym, "last": last, "in_position": False, "category": "watch"}
         for i, e, entry, R, res in explore.trend_paths(sym, k, spec, _FIXED_UNIVERSE):
             if res is not None and res["outcome"] == "end_of_data":
-                row.update(in_position=True, entry_ts=int(k["t"][e]), entry_px=entry,
-                           stop=float(res["stop"]), open_r=spec["side"] * (last - entry) / R,
+                stop = float(res["stop"])
+                days = n - e                   # پیوستن الان = openِ کندلِ جاری، n−e روز پس از ورودِ قاعده
+                joinable = 1 <= days <= JOIN_MAX_DAYS and last > stop and not res.get("exit_pending")
+                row.update(in_position=True, entry_ts=int(k["t"][e]), entry_px=entry, stop=stop,
+                           open_r=spec["side"] * (last - entry) / R, days_in=days,
+                           stop_distance_pct=(last - stop) / last * 100,
                            counted=int(k["t"][i]) >= TRACKING_START_MS,
-                           exiting_next_open=bool(res.get("exit_pending")))
+                           exiting_next_open=bool(res.get("exit_pending")),
+                           category="join" if joinable else "late")
             elif res is None:
-                row.update(signal_today=True)
-        if not row["in_position"] and spec["rule"] == "donchian":
-            # سیگنالِ فردا: بستهٔ کندلِ جاری بالای سقفِ همین ۲۰ کندلِ بسته‌شده
-            trigger = float(np.max(k["h"][n - spec["n"]:n]))
+                # شکست روی آخرین بسته: ورود در openِ کندلِ جاری (~بستهٔ دیروز)، حدضرر R پایین‌تر
+                row.update(signal_today=True, category="new", stop=last - R,
+                           stop_distance_pct=R / last * 100)
+        if row["category"] == "watch" and spec["rule"] == "donchian":
+            trigger = float(np.max(k["h"][n - spec["n"]:n]))   # سقفِ همین ۲۰ کندلِ بسته‌شده
             row.update(trigger=trigger, distance_pct=(trigger / last - 1) * 100)
         rows.append(row)
-    rows.sort(key=lambda r: (not r["in_position"], not r.get("signal_today", False),
+    rows.sort(key=lambda r: (CATEGORY_ORDER[r["category"]], r.get("days_in", 0),
                              r.get("distance_pct", 0.0)))
     return rows
 
@@ -201,6 +215,7 @@ def dev_evidence():
         mean, sd = s.get("mean"), s.get("sd")
         rules[key] = {
             "n": s.get("n"), "n_eff": s.get("n_eff"), "mean": mean, "lcb": s.get("lcb"),
+            "win_rate": s.get("win_rate"),
             "profit_factor": s.get("profit_factor"), "p_adj": (v.get("romano_wolf") or {}).get("p_adj"),
             "verdict": v.get("verdict"), "stressed_mean": (rb.get("top20") or {}).get("mean_stressed"),
             "btc_eth_mean": (rb.get("btc_eth") or {}).get("mean"), "periods": rb.get("periods"),
@@ -208,8 +223,25 @@ def dev_evidence():
             # چند معاملهٔ **مستقل** تا اثرِ دیده‌شده با توانِ ۸۰٪ تأیید شود
             "n_eff_to_confirm": stats.power_sample_size(mean, sd=sd) if mean and sd and mean > 0 else None,
         }
+    joins = None
+    jfiles = sorted(glob.glob(os.path.join(explore.OUT_DIR, "join_*.json")))
+    if jfiles:
+        with open(jfiles[-1], "r", encoding="utf-8") as f:
+            jr = json.load(f)
+        joins = {"report": os.path.basename(jfiles[-1]),
+                 "breakout_spot_mean": (jr.get("breakout") or {}).get("mean_spot"),
+                 "spot_round_trip_pct": jr.get("spot_round_trip_pct"),
+                 "n_trials_project": jr.get("n_trials_project"),
+                 # p_adj روی همین تعداد فرضیه که روی دادهٔ اکتشاف آزموده شد (بی ۸ فرضیهٔ آزمونِ منجمد)
+                 "rw_family_size": (jr["n_trials_project"] - explore.PRIOR_HYPOTHESES
+                                    if jr.get("n_trials_project") else None),
+                 "offsets": {k: {"n": s.get("n"), "mean": s.get("mean"), "lcb": s.get("lcb"),
+                                 "mean_spot": s.get("mean_spot"),
+                                 "p_adj": (s.get("romano_wolf") or {}).get("p_adj")}
+                             for k, s in (jr.get("joins") or {}).items()}}
     return {"report": os.path.basename(files[-1]), "cutoff_ms": rep.get("cutoff_ms"),
-            "btc_buy_and_hold": (rep.get("robustness") or {}).get("btc_buy_and_hold"), "rules": rules}
+            "btc_buy_and_hold": (rep.get("robustness") or {}).get("btc_buy_and_hold"), "rules": rules,
+            "joins": joins, "join_max_days": JOIN_MAX_DAYS}
 
 
 def snapshot(force=False, fetch=None):
