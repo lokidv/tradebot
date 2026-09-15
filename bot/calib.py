@@ -19,6 +19,7 @@ import log
 import engine
 import features
 import market
+import research
 import stats
 import universe
 
@@ -30,8 +31,11 @@ except Exception:  # noqa: BLE001
 
 CALIB_PATH = os.path.join(os.path.dirname(__file__), "data", "calib.json")
 COST_PCT = 0.15
-REBUILD_SEC = 86400
-CALIB_VERSION = 21       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+# هفتگی، نه روزانه: بازسازیِ روزانه همان پنجرهٔ آزمون را ۳۶۵ بار در سال دوباره قضاوت می‌کرد
+REBUILD_SEC = 7 * 86400
+TRUST_STREAK = 2         # اعتماد فقط پس از دو ساختِ متوالیِ موفق روشن می‌شود
+CALIB_VERSION = 22       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+# ۲۲: پنجرهٔ آزمونِ منجمد از آموزش کنار گذاشته می‌شود؛ اعتماد با هیسترزیسِ دو ساخت
 # ۲۱: جهانِ نقطه‌-در-زمان — رویداد فقط اگر ارز در همان ماه جزوِ ۱۰۰ برتر بوده
 # ۲۰: هزینهٔ هر رویداد = ردهٔ نقدشوندگیِ لحظه‌ای + فاندینگِ واقعیِ مدتِ نگه‌داری
 # ۱۸: براکتِ واحد (bracket.py) — برچسب‌ها حالا گپِ پشتِ حدضرر را روی قیمتِ مشاهده‌شده می‌بندند
@@ -932,7 +936,10 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
     pz_cal, ez_cal = (prob_cal - p_mu) / p_sd, (edge_cal - e_mu) / e_sd
     min_selected = max(40, int(len(cal_rows) * 0.07))
     candidates = []
-    for edge_weight in (0.0, 0.25, 0.50, 0.75, 1.0):
+    # اگر شیبِ کالیبراسیونِ edge صفر شده، جزءِ edge اطلاعاتی ندارد؛ وزن‌دادن به آن
+    # یعنی تصمیم بر اساسِ اختلافِ هزینه تقسیم بر ۱e-۶. فقط وزنِ صفر مجاز است.
+    edge_weights = (0.0,) if (edge_slope <= 0.0 or e_sd < MIN_LIVE_SD) else (0.0, 0.25, 0.50, 0.75, 1.0)
+    for edge_weight in edge_weights:
         score = edge_weight * ez_cal + (1.0 - edge_weight) * pz_cal
         for quantile in (0.65, 0.75, 0.85, 0.90):
             threshold = float(np.quantile(score, quantile))
@@ -1036,8 +1043,23 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
     return meta
 
 
+MIN_LIVE_SD = 1e-3       # زیرِ این، نرمال‌سازیِ زنده امتیازِ ±۱۰⁵ می‌سازد
+
+
+def _policy_is_degenerate(m):
+    """سیاستی که جزءِ edgeاش ثابت است ولی وزن دارد، روی ردهٔ هزینهٔ نماد تصمیم می‌گیرد، نه ویژگی‌ها."""
+    norm = (m or {}).get("live_norm") or {}
+    w = float((m or {}).get("edge_weight") or 0.0)
+    slope = float(((m or {}).get("edge_calibration") or [1.0, 0.0])[0])
+    if w > 0 and (slope <= 0.0 or float(norm.get("edge_sd") or 0.0) < MIN_LIVE_SD):
+        return True
+    return w < 1.0 and float(norm.get("p_sd") or 0.0) < MIN_LIVE_SD
+
+
 def _policy_model_trusted(m):
     if not m:
+        return False
+    if _policy_is_degenerate(m):
         return False
     st = m.get("test") or {}
     halves = [v for v in (m.get("test_halves_avg_r") or []) if v is not None]
@@ -1541,7 +1563,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
             gold_m=(gold_map or {}).get(ts, 0.0),
             breadth_m=(breadth_map or {}).get(ts, 0.0), dom_m=(dom_map or {}).get(ts, 0.0),
             ethbtc_m=(ethbtc_map or {}).get(ts, 0.0))
-        events.append({"ts": ts, "dir": sig, "setup": setup, "feats": feats,
+        events.append({"ts": ts, "sym": sym, "dir": sig, "setup": setup, "feats": feats,
                        "r": round(float(out_r), 3),
                        "risk_pct": round(float(res["risk_pct"]), 4),
                        "bars_held": int(res["bars_held"]),
@@ -1680,6 +1702,7 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             fraw = dict(pool.map(_fr_one, symbols))
         table = {"built_at": time.time(), "cost_pct": COST_PCT, "version": CALIB_VERSION, "tfs": {}}
         universe_report, excluded_events = {}, {}
+        final_events = {}                                 # tf -> رویدادهای پنجرهٔ منجمد
         zmaps = {}                                        # tf -> sym -> {ts: z}
         pending = {}                                      # tf -> ورودی‌های آموزش (آموزشِ همه در پایان، موازی)
         for tf in tfs:                                    # از بالا به پایین تا HTF آماده باشد
@@ -1811,8 +1834,31 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
         with _lock:
             _state["progress"] = f"آموزش موازی {len(pending)} تایم‌فریم روی هسته‌ها"
 
+        # پیش‌ثبت اگر نیست، همین‌جا — پس از استخراج و **پیش از** هر برازش و داوری
+        try:
+            prereg, fresh = research.ensure_registered({
+                tf: (int(min(e["ts"] for e in pending[tf][1])),
+                     int(max(e["ts"] for e in pending[tf][1])))
+                for tf in pending if pending[tf][1]})
+            if fresh:
+                with _lock:
+                    _state["progress"] = "پیش‌ثبتِ فرضیه‌ها انجام شد — پنجرهٔ آزمون منجمد شد"
+        except Exception:  # noqa: BLE001 — بدونِ پیش‌ثبت، هیچ ترکیبی مجاز نمی‌شود (fail-closed)
+            log.exc("preregistration")
+            prereg = None
+
         def _train_tf(tf):
             cells, all_events, dx, dy, dr = pending[tf]
+            # ── پنجرهٔ آزمونِ منجمد: از **همهٔ** آموزش‌ها کنار گذاشته می‌شود ──
+            # فقط داورِ یک‌بارمصرف (research.judge) این رویدادها را می‌بیند.
+            if prereg:
+                held = [e for e in all_events if research.in_final_window(tf, e["ts"], prereg)]
+                all_events = [e for e in all_events
+                              if not research.in_final_window(tf, e["ts"], prereg)]
+                keep = [k for k, yy in enumerate(dy)
+                        if not research.in_final_window(tf, yy[0], prereg)]
+                dx, dy, dr = [dx[k] for k in keep], [dy[k] for k in keep], [dr[k] for k in keep]
+                final_events[tf] = held
             # ── سلامتِ ویژگی‌ها پیش از آموزش ──
             # ویژگیِ با واریانسِ صفر چیزی برای یادگرفتن ندارد و فقط بُعد اضافه می‌کند؛
             # dxy_dir دقیقاً همین بود و کسی متوجه نشد. حالا در جدول ثبت می‌شود.
@@ -1827,6 +1873,7 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             dir_model = _train_dir_model(dx, dy, dr, tf)
             action_model = _fit_action_policy(dx, dy, dr, tf, COST_PCT)
             return tf, {"cells": cells, "events": len(all_events),
+                        "held_out_final_events": len(final_events.get(tf) or []),
                         "feature_health": feat_health,
                         "model": model, "edge_model": edge_model,
                         "policy_model": policy_model, "dir_model": dir_model,
@@ -1834,6 +1881,19 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
         with ThreadPoolExecutor(max_workers=len(pending) or 1) as pool:
             for tf, blob in pool.map(_train_tf, list(pending)):
                 table["tfs"][tf] = blob
+        table["trust_history"] = _update_trust_history(load() or {}, table)
+        table["spans"] = {tf: [int(min(e["ts"] for e in pending[tf][1])),
+                               int(max(e["ts"] for e in pending[tf][1]))]
+                          for tf in pending if pending[tf][1]}
+        if prereg and final_events:
+            try:
+                judged = research.last_judgement() or {}
+                if not judged.get("judged"):
+                    table["judgement"] = research.judge(final_events)
+            except research.AlreadyJudged as e:
+                table["judgement_skipped"] = str(e)       # یک‌بارمصرف است — درست است که رد شود
+            except research.PreregistrationError as e:
+                table["judgement_error"] = str(e)
         table["universe"] = {"per_tf": universe_report,
                              "excluded_events_outside_universe": excluded_events,
                              "top_n": CALIB_UNIVERSE_N}
@@ -1943,6 +2003,43 @@ def status():
     return st
 
 
+TRUST_KEYS = {
+    "model": lambda m: _model_trusted(m, MIN_SETUP_LIFT),
+    "dir_model": lambda m: _model_trusted(m, MIN_DIR_LIFT),
+    "edge_model": lambda m: _edge_model_trusted(m),
+    "policy_model": lambda m: _policy_model_trusted(m),
+    "action_model": lambda m: _action_policy_trusted(m),
+}
+
+
+def _update_trust_history(old_table, new_table):
+    """تاریخچهٔ اعتمادِ هر مدل در ساخت‌های پیاپی (حداکثر ۱۰ تا).
+
+    پرچمِ اعتماد قبلاً از **یک** پنجرهٔ ۲۰٪ آخر در همان ساخت محاسبه می‌شد؛ پس هر
+    بازسازی یک پرتابِ سکهٔ تازه بود (lift روی 4h بینِ دو ساخت از +۱۴٫۷ به −۰٫۶ رفت).
+    """
+    hist = dict((old_table or {}).get("trust_history") or {})
+    if (old_table or {}).get("version") != new_table.get("version"):
+        hist = {}                                  # نسخهٔ تازه = تاریخچهٔ تازه
+    for tf, blob in (new_table.get("tfs") or {}).items():
+        row = dict(hist.get(tf) or {})
+        for key, fn in TRUST_KEYS.items():
+            try:
+                ok = bool(blob.get(key) and fn(blob.get(key)))
+            except Exception:  # noqa: BLE001
+                ok = False
+            row[key] = (list(row.get(key) or []) + [ok])[-10:]
+        hist[tf] = row
+    return hist
+
+
+def trusted_with_hysteresis(tf, key, table=None):
+    """اعتماد فقط اگر **دو ساختِ پیاپیِ آخر** هر دو موفق بوده باشند؛ یک شکست کافی است تا خاموش شود."""
+    t = table if table is not None else load()
+    runs = (((t or {}).get("trust_history") or {}).get(tf) or {}).get(key) or []
+    return len(runs) >= TRUST_STREAK and all(runs[-TRUST_STREAK:])
+
+
 def is_stale():
     t = load()
     if t is None or time.time() - t.get("built_at", 0) > REBUILD_SEC:
@@ -2011,6 +2108,8 @@ def predict_dir(tf, feats):
     dm = t["tfs"][tf].get("dir_model")
     if not _model_trusted(dm, MIN_DIR_LIFT) or _model_nfeat(dm) != len(feats):
         return None
+    if not trusted_with_hysteresis(tf, "dir_model", t):
+        return None
     pd = _score_model_details(dm, feats)
     p = pd["p"]
     return {"p_up": round(p * 100, 1),
@@ -2031,6 +2130,8 @@ def predict_action(tf, long_feats, short_feats, risk_pct, cost=None, regime=None
         return None
     m = t["tfs"][tf].get("action_model")
     if not _action_policy_trusted(m) or _model_nfeat(m) != len(long_feats) or len(short_feats) != len(long_feats):
+        return None
+    if not trusted_with_hysteresis(tf, "action_model", t):
         return None
     actual_cost = cost if cost is not None else t.get("cost_pct", COST_PCT)
     return _score_action_policy(m, long_feats, short_feats, risk_pct, actual_cost)
@@ -2084,7 +2185,7 @@ def predict(tf, feats, risk_pct, legacy=None, cost=None, regime=None):
     policy_diag = None
     if pm and _model_nfeat(pm) == len(feats):
         ps = _score_policy(pm, feats, risk_pct, actual_cost, regime)
-        if _policy_model_trusted(pm):
+        if _policy_model_trusted(pm) and trusted_with_hysteresis(tf, "policy_model", t):
             tst = pm.get("test") or {}
             edge_r = float(ps["edge_r"])
             ev_pct = edge_r * float(risk_pct)

@@ -46,8 +46,8 @@ class _GatesFileMixin:
         gates._cache.update(mtime=None, data=None)
         self.tmp.cleanup()
 
-    def set_combos(self, combos):
-        _write_gates(self.path, allowed_combos=list(combos))
+    def set_combos(self, combos, symbols=("BTCUSDT",)):
+        _write_gates(self.path, allowed_combos=list(combos), allowed_symbols=list(symbols))
         gates.load_gates(force=True)
 
 
@@ -158,9 +158,11 @@ class _AnalyzeHarness(_GatesFileMixin):
                                   return_value={"n": 0, "win_rate": None, "avg_r": None,
                                                 "timeouts": 0, "profit_factor": None}), \
                 mock.patch.object(meta_gate, "evaluate", return_value=approve):
+            ex = {"symbol": "BTCUSDT"}
+            ex.update(extras or {})
             return engine.analyze(self._klines(), self.TF,
                                   predict_fn=predict_fn or self._trusted_policy,
-                                  extras=extras or {})
+                                  extras=ex)
 
 
 class GateBlocksTradingTests(_AnalyzeHarness, unittest.TestCase):
@@ -182,6 +184,18 @@ class GateBlocksTradingTests(_AnalyzeHarness, unittest.TestCase):
         tr = self.run_analyze()["trade"]
         self.assertFalse(tr["gate_allowed"])
         self.assertFalse(tr["tradeable"])
+
+    def test_combo_judged_on_majors_does_not_open_on_an_alt(self):
+        """ترکیبی که روی BTC/ETH قبول شده، به‌طور خودکار روی آلتِ کم‌عمق مجاز نیست."""
+        self.set_combos(["1h|zx|long"], symbols=("BTCUSDT", "ETHUSDT"))
+        tr = self.run_analyze(extras={"symbol": "PEPEUSDT"})["trade"]
+        self.assertFalse(tr["gate_allowed"])
+        self.assertFalse(tr["tradeable"])
+
+    def test_missing_symbol_fails_closed(self):
+        self.set_combos(["1h|zx|long"])
+        tr = self.run_analyze(extras={"symbol": None})["trade"]
+        self.assertFalse(tr["gate_allowed"])
 
 
 class PocketIsNoLongerAnAuthorityTests(_AnalyzeHarness, unittest.TestCase):

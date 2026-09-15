@@ -28,6 +28,9 @@ DEFAULTS = {
     "daily_loss_halt_pct": 1.0,
     "weekly_loss_halt_pct": 2.5,
     "allowed_combos": [],
+    # ترکیبی که روی ارزهای بزرگ پذیرفته شده، به‌طور خودکار روی آلت‌های کم‌عمق مجاز نیست.
+    # خالی = هیچ نمادی (نه همه). داور همراهِ ترکیب‌ها می‌نویسدش.
+    "allowed_symbols": [],
     "gate_results": {},
     "history": [],
 }
@@ -57,6 +60,8 @@ def _validate(d):
         if not (0 < v <= 5):
             raise GateError(f"{k} خارج از محدودهٔ امن (0, 5]: {v}")
         out[k] = v
+    if not isinstance(out["allowed_symbols"], list):
+        raise GateError("allowed_symbols باید فهرست باشد")
     out["max_open"] = int(out["max_open"])
     out["max_side_open"] = int(out["max_side_open"])
     out["live_allowed"] = bool(out["live_allowed"])
@@ -100,10 +105,20 @@ def _save(data, reason):
     return data
 
 
-def is_combo_allowed(tf, setup, side):
+def is_combo_allowed(tf, setup, side, symbol=None):
+    """ترکیبِ پیش‌ثبت‌شده **و** نمادِ داخلِ دامنه‌ای که روی آن قضاوت شده است.
+
+    اگر ``symbol`` داده نشود فقط ترکیب سنجیده می‌شود (سازگاری با فراخوان‌های قدیمی)،
+    ولی موتور همیشه نماد را می‌فرستد.
+    """
     if not (tf and setup and side):
         return False
-    return combo_key(tf, setup, side) in set(load_gates().get("allowed_combos") or [])
+    g = load_gates()
+    if combo_key(tf, setup, side) not in set(g.get("allowed_combos") or []):
+        return False
+    if symbol is None:
+        return True
+    return symbol in set(g.get("allowed_symbols") or [])
 
 
 def allowed_combos():
@@ -122,13 +137,28 @@ def risk_caps():
                               "heat_cap_pct", "daily_loss_halt_pct", "weekly_loss_halt_pct")}
 
 
-def set_allowed_combos(combos, reason, judge_token=None):
-    """فقط تابع داورِ آزمون منجمد (فاز ۲) حق نوشتن دارد؛ ``judge_token`` باید با نسخهٔ گیت بخواند.
-    در فاز ۰ عمداً هیچ مسیر خودکاری این را صدا نمی‌زند."""
+def set_allowed_combos(combos, reason, judge_token=None, symbols=None):
+    """فقط ``research.judge`` حق نوشتن دارد؛ ``judge_token`` باید با نسخهٔ گیت بخواند."""
     g = dict(load_gates())
     if judge_token != f"judge:{g['version']}":
         raise GateError("نوشتن allowed_combos فقط از مسیر داور آزمون منجمد مجاز است")
     g["allowed_combos"] = sorted(set(combos))
+    if symbols is not None:
+        g["allowed_symbols"] = sorted(set(symbols))
+    return _save(g, reason)
+
+
+def bind_preregistration(prereg_hash, reason):
+    """هشِ پیش‌ثبت را قفل می‌کند. پیش‌ثبتِ تازه یعنی فهرستِ مجاز از صفر.
+
+    بدونِ پاک‌کردن، ترکیب‌هایی که زیرِ پیش‌ثبتِ قبلی قبول شده بودند زیرِ
+    فرضیه‌های تازه هم مجاز می‌ماندند.
+    """
+    g = dict(load_gates())
+    g["preregistration_hash"] = prereg_hash
+    g["preregistered_at"] = time.time()
+    g["allowed_combos"] = []
+    g["allowed_symbols"] = []
     return _save(g, reason)
 
 
@@ -139,6 +169,7 @@ def status():
         "live_allowed": g["live_allowed"],
         "live_effective": live_allowed(),
         "allowed_combos": list(g["allowed_combos"]),
+        "allowed_symbols": list(g["allowed_symbols"]),
         "preregistration_hash": g["preregistration_hash"],
         "caps": risk_caps(),
         "path": GATES_PATH,

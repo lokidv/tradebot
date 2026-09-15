@@ -10,6 +10,7 @@
  "daily_loss_halt_pct": 1.0,
  "weekly_loss_halt_pct": 2.5,
  "allowed_combos": [],
+ "allowed_symbols": [],
  "gate_results": {},
  "history": []
 }

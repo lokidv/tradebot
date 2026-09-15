@@ -378,6 +378,7 @@ def get_analysis(symbol: str, tf: str, max_age=None):
         extras.update(_macro(tf))
         extras.update(_market_state(tf))
         extras["cost"] = _symbol_cost(symbol)
+        extras["symbol"] = symbol                    # گیت نماد را هم می‌سنجد
         extras["suspended"] = _suspended_setups()
         extras["tf_suspended"] = _suspended_tfs().get(tf)
         pockets, susp_combos = _live_edge_book()
@@ -466,6 +467,29 @@ def calib_status():
 def gates_status():
     """قفلِ ایمنیِ سرمایه: ترکیب‌های مجاز، وضعیتِ لایو و سقف‌های ریسک (فقط‌خواندنی)."""
     return gates.status()
+
+
+@app.get("/api/research")
+def research_status():
+    """پیش‌ثبت و حکمِ آزمونِ منجمد — تنها منبعِ فهرستِ مجاز.
+
+    برای هر فرضیه می‌گوید «لبه اثبات شد»، «لبه نیست» یا «شواهد کافی نیست»، و
+    چند مشاهدهٔ مستقل برای اثباتِ اثرِ دیده‌شده لازم بود.
+    """
+    import research
+    doc = research.load_prereg()
+    try:
+        integrity = "ok" if doc and research.verify_prereg(doc) else "missing"
+    except research.PreregistrationError as e:
+        integrity = f"broken: {e}"
+    return {
+        "preregistration": ({k: doc[k] for k in ("hash", "registered_at", "family", "symbols",
+                                                "gates", "final_windows", "n_trials")}
+                            if doc else None),
+        "integrity": integrity,
+        "judgement": research.last_judgement(),
+        "allowed_combos": gates.allowed_combos(),
+    }
 
 
 HEALTH_MAX_CANDIDATE_AGE_SEC = 3 * max(ANALYSIS_TTL.values())

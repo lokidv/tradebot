@@ -792,7 +792,9 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
                 elif neutral:
                     tr["direction_warning"] = f"جهت‌یاب کمکی خنثی است ({dp:.0f}٪)"
         # ── قفلِ ایمنیِ سرمایه: تنها فهرستِ پیش‌ثبت‌شدهٔ gates.json اجازهٔ اجرا می‌دهد ──
-        gate_ok = gates.is_combo_allowed(tf, setup_used, tr["side"])
+        # نماد هم باید در دامنهٔ قضاوت‌شده باشد؛ نبودِ نماد = بسته (fail-closed)
+        gate_ok = gates.is_combo_allowed(tf, setup_used, tr["side"],
+                                         symbol=ex.get("symbol") or "")
         tr["gate_allowed"] = gate_ok
         if tr["viable"] and not gate_ok:
             tr["viable"] = False
