@@ -1,0 +1,1241 @@
+{
+ "generated_at": 1789470628.1845503,
+ "cutoff_ms": 1727481600000,
+ "universe": {
+  "months": 76,
+  "first": 1527811200000,
+  "last": 1725148800000,
+  "symbols_ever": 101,
+  "size_last": 20,
+  "avg_monthly_churn": 6.5
+ },
+ "n_variants": 15,
+ "n_trials_project": 23,
+ "notes": [
+  "exploration only — no gate is changed; survivors need a pre-registered test on unseen data",
+  "funding history covers ~33 days; the default 0.01%/settlement is charged to both sides",
+  "delisted coins (e.g. LUNA, FTT) are missing from the public API — residual survivorship bias"
+ ],
+ "variants": {
+  "T_don20_long": {
+   "spec": {
+    "key": "T_don20_long",
+    "family": "trend",
+    "tf": "1d",
+    "rule": "donchian",
+    "n": 20,
+    "side": 1
+   },
+   "stats": {
+    "n": 634,
+    "n_eff": 101.677,
+    "n_blocks": 69,
+    "mean": 0.358,
+    "sd": 2.0443,
+    "lcb": 0.1252,
+    "t_stat": 1.766,
+    "win_rate": 39.91,
+    "profit_factor": 1.8983,
+    "uplift": 0.358,
+    "alpha": 0.05,
+    "first_half_mean": 0.6086,
+    "second_half_mean": 0.1073,
+    "max_drawdown": 39.269,
+    "by_year": {
+     "2018": {
+      "n": 20,
+      "mean": -0.656
+     },
+     "2019": {
+      "n": 86,
+      "mean": 0.3094
+     },
+     "2020": {
+      "n": 118,
+      "mean": 0.7552
+     },
+     "2021": {
+      "n": 114,
+      "mean": 0.8452
+     },
+     "2022": {
+      "n": 78,
+      "mean": -0.3185
+     },
+     "2023": {
+      "n": 114,
+      "mean": 0.5762
+     },
+     "2024": {
+      "n": 104,
+      "mean": -0.1234
+     }
+    },
+    "positive_years": "4/7",
+    "mean_typical_funding": 0.358,
+    "unit": "net_r",
+    "avg_bars": 21.4,
+    "outcomes": {
+     "stop": 616,
+     "end_of_data": 17,
+     "gap_stop": 1
+    },
+    "btc_eth": {
+     "n": 73,
+     "mean": 0.5665
+    }
+   },
+   "romano_wolf": {
+    "t_stat": 4.409,
+    "p_adj": 0.107,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.5782,
+   "verdict": "weak"
+  },
+  "T_don20_short": {
+   "spec": {
+    "key": "T_don20_short",
+    "family": "trend",
+    "tf": "1d",
+    "rule": "donchian",
+    "n": 20,
+    "side": -1
+   },
+   "stats": {
+    "n": 569,
+    "n_eff": 101.61,
+    "n_blocks": 70,
+    "mean": -0.0355,
+    "sd": 0.8186,
+    "lcb": -0.182,
+    "t_stat": -0.437,
+    "win_rate": 42.53,
+    "profit_factor": 0.8981,
+    "uplift": -0.0355,
+    "alpha": 0.05,
+    "first_half_mean": -0.0144,
+    "second_half_mean": -0.0565,
+    "max_drawdown": 50.501,
+    "by_year": {
+     "2018": {
+      "n": 33,
+      "mean": 0.5346
+     },
+     "2019": {
+      "n": 92,
+      "mean": -0.0461
+     },
+     "2020": {
+      "n": 78,
+      "mean": -0.1253
+     },
+     "2021": {
+      "n": 77,
+      "mean": -0.1051
+     },
+     "2022": {
+      "n": 110,
+      "mean": 0.1723
+     },
+     "2023": {
+      "n": 90,
+      "mean": -0.1452
+     },
+     "2024": {
+      "n": 89,
+      "mean": -0.243
+     }
+    },
+    "positive_years": "2/7",
+    "mean_typical_funding": 0.0366,
+    "unit": "net_r",
+    "avg_bars": 36.4,
+    "outcomes": {
+     "stop": 562,
+     "timeout": 3,
+     "end_of_data": 3,
+     "gap_stop": 1
+    },
+    "btc_eth": {
+     "n": 55,
+     "mean": -0.0383
+    }
+   },
+   "romano_wolf": {
+    "t_stat": -1.035,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.2316,
+   "verdict": "no_edge"
+  },
+  "T_don55_long": {
+   "spec": {
+    "key": "T_don55_long",
+    "family": "trend",
+    "tf": "1d",
+    "rule": "donchian",
+    "n": 55,
+    "side": 1
+   },
+   "stats": {
+    "n": 373,
+    "n_eff": 84.68,
+    "n_blocks": 62,
+    "mean": 0.3758,
+    "sd": 2.1748,
+    "lcb": 0.1335,
+    "t_stat": 1.59,
+    "win_rate": 40.21,
+    "profit_factor": 1.8996,
+    "uplift": 0.3758,
+    "alpha": 0.05,
+    "first_half_mean": 0.6428,
+    "second_half_mean": 0.1102,
+    "max_drawdown": 27.112,
+    "by_year": {
+     "2018": {
+      "n": 1,
+      "mean": -0.8932
+     },
+     "2019": {
+      "n": 47,
+      "mean": 0.3117
+     },
+     "2020": {
+      "n": 82,
+      "mean": 0.6319
+     },
+     "2021": {
+      "n": 95,
+      "mean": 0.5688
+     },
+     "2022": {
+      "n": 28,
+      "mean": -0.4806
+     },
+     "2023": {
+      "n": 72,
+      "mean": 0.5083
+     },
+     "2024": {
+      "n": 48,
+      "mean": -0.0534
+     }
+    },
+    "positive_years": "4/7",
+    "mean_typical_funding": 0.3758,
+    "unit": "net_r",
+    "avg_bars": 17.8,
+    "outcomes": {
+     "stop": 363,
+     "end_of_data": 10
+    },
+    "btc_eth": {
+     "n": 50,
+     "mean": 0.4227
+    }
+   },
+   "romano_wolf": {
+    "t_stat": 3.337,
+    "p_adj": 0.294,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.674,
+   "verdict": "weak"
+  },
+  "T_don55_short": {
+   "spec": {
+    "key": "T_don55_short",
+    "family": "trend",
+    "tf": "1d",
+    "rule": "donchian",
+    "n": 55,
+    "side": -1
+   },
+   "stats": {
+    "n": 290,
+    "n_eff": 67.804,
+    "n_blocks": 48,
+    "mean": -0.0595,
+    "sd": 0.8352,
+    "lcb": -0.2555,
+    "t_stat": -0.587,
+    "win_rate": 35.52,
+    "profit_factor": 0.8356,
+    "uplift": -0.0595,
+    "alpha": 0.05,
+    "first_half_mean": -0.0109,
+    "second_half_mean": -0.1081,
+    "max_drawdown": 41.268,
+    "by_year": {
+     "2018": {
+      "n": 17,
+      "mean": 1.0448
+     },
+     "2019": {
+      "n": 51,
+      "mean": -0.0708
+     },
+     "2020": {
+      "n": 36,
+      "mean": -0.3831
+     },
+     "2021": {
+      "n": 35,
+      "mean": -0.0715
+     },
+     "2022": {
+      "n": 74,
+      "mean": 0.1637
+     },
+     "2023": {
+      "n": 42,
+      "mean": -0.274
+     },
+     "2024": {
+      "n": 35,
+      "mean": -0.4492
+     }
+    },
+    "positive_years": "2/7",
+    "mean_typical_funding": 0.0085,
+    "unit": "net_r",
+    "avg_bars": 34.6,
+    "outcomes": {
+     "stop": 290
+    },
+    "btc_eth": {
+     "n": 26,
+     "mean": 0.1436
+    }
+   },
+   "romano_wolf": {
+    "t_stat": -1.214,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.2893,
+   "verdict": "no_edge"
+  },
+  "T_sma100_long": {
+   "spec": {
+    "key": "T_sma100_long",
+    "family": "trend",
+    "tf": "1d",
+    "rule": "sma_cross",
+    "n": 100,
+    "side": 1
+   },
+   "stats": {
+    "n": 791,
+    "n_eff": 105.61,
+    "n_blocks": 70,
+    "mean": 0.4464,
+    "sd": 4.2706,
+    "lcb": 0.1182,
+    "t_stat": 1.074,
+    "win_rate": 15.8,
+    "profit_factor": 2.7952,
+    "uplift": 0.4464,
+    "alpha": 0.05,
+    "first_half_mean": 0.8458,
+    "second_half_mean": 0.0481,
+    "max_drawdown": 74.586,
+    "by_year": {
+     "2018": {
+      "n": 8,
+      "mean": -0.2215
+     },
+     "2019": {
+      "n": 92,
+      "mean": 0.531
+     },
+     "2020": {
+      "n": 174,
+      "mean": 1.5297
+     },
+     "2021": {
+      "n": 102,
+      "mean": 0.2345
+     },
+     "2022": {
+      "n": 157,
+      "mean": -0.3333
+     },
+     "2023": {
+      "n": 167,
+      "mean": 0.3976
+     },
+     "2024": {
+      "n": 91,
+      "mean": 0.0209
+     }
+    },
+    "positive_years": "5/7",
+    "mean_typical_funding": 0.4464,
+    "unit": "net_r",
+    "avg_bars": 19.9,
+    "outcomes": {
+     "signal": 744,
+     "stop": 32,
+     "end_of_data": 15
+    },
+    "btc_eth": {
+     "n": 79,
+     "mean": 1.2007
+    }
+   },
+   "romano_wolf": {
+    "t_stat": 2.94,
+    "p_adj": 0.41,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 1.1851,
+   "verdict": "weak"
+  },
+  "T_sma100_short": {
+   "spec": {
+    "key": "T_sma100_short",
+    "family": "trend",
+    "tf": "1d",
+    "rule": "sma_cross",
+    "n": 100,
+    "side": -1
+   },
+   "stats": {
+    "n": 826,
+    "n_eff": 108.093,
+    "n_blocks": 72,
+    "mean": -0.0696,
+    "sd": 0.5736,
+    "lcb": -0.1246,
+    "t_stat": -1.262,
+    "win_rate": 17.92,
+    "profit_factor": 0.6919,
+    "uplift": -0.0696,
+    "alpha": 0.05,
+    "first_half_mean": -0.1114,
+    "second_half_mean": -0.0278,
+    "max_drawdown": 72.348,
+    "by_year": {
+     "2018": {
+      "n": 10,
+      "mean": 0.5026
+     },
+     "2019": {
+      "n": 92,
+      "mean": 0.0453
+     },
+     "2020": {
+      "n": 170,
+      "mean": -0.2625
+     },
+     "2021": {
+      "n": 124,
+      "mean": -0.0732
+     },
+     "2022": {
+      "n": 172,
+      "mean": 0.0728
+     },
+     "2023": {
+      "n": 161,
+      "mean": -0.1469
+     },
+     "2024": {
+      "n": 97,
+      "mean": -0.0192
+     }
+    },
+    "positive_years": "3/7",
+    "mean_typical_funding": -0.0112,
+    "unit": "net_r",
+    "avg_bars": 25.3,
+    "outcomes": {
+     "signal": 798,
+     "stop": 24,
+     "end_of_data": 4
+    },
+    "btc_eth": {
+     "n": 78,
+     "mean": -0.0839
+    }
+   },
+   "romano_wolf": {
+    "t_stat": -3.488,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.1573,
+   "verdict": "no_edge"
+  },
+  "S_zx_long_up": {
+   "spec": {
+    "key": "S_zx_long_up",
+    "family": "setup_trend",
+    "tf": "4h",
+    "setup": "zx",
+    "side": 1
+   },
+   "stats": {
+    "n": 206,
+    "n_eff": 85.284,
+    "n_blocks": 69,
+    "mean": -0.0457,
+    "sd": 1.3452,
+    "lcb": -0.2406,
+    "t_stat": -0.313,
+    "win_rate": 35.92,
+    "profit_factor": 0.9321,
+    "uplift": -0.0457,
+    "alpha": 0.05,
+    "first_half_mean": -0.075,
+    "second_half_mean": -0.0164,
+    "max_drawdown": 26.008,
+    "by_year": {
+     "2022": {
+      "n": 11,
+      "mean": -0.5344
+     },
+     "2023": {
+      "n": 121,
+      "mean": -0.0122
+     },
+     "2024": {
+      "n": 74,
+      "mean": -0.0278
+     }
+    },
+    "positive_years": "0/3",
+    "mean_typical_funding": -0.0457,
+    "unit": "net_r",
+    "avg_bars": 6.1,
+    "outcomes": {
+     "stop": 132,
+     "target": 74
+    },
+    "btc_eth": {
+     "n": 29,
+     "mean": 0.0995
+    }
+   },
+   "romano_wolf": {
+    "t_stat": -0.487,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.4154,
+   "verdict": "no_edge"
+  },
+  "S_zx_short_down": {
+   "spec": {
+    "key": "S_zx_short_down",
+    "family": "setup_trend",
+    "tf": "4h",
+    "setup": "zx",
+    "side": -1
+   },
+   "stats": {
+    "n": 194,
+    "n_eff": 66.47,
+    "n_blocks": 53,
+    "mean": 0.0344,
+    "sd": 1.3615,
+    "lcb": -0.1835,
+    "t_stat": 0.206,
+    "win_rate": 40.21,
+    "profit_factor": 1.0538,
+    "uplift": 0.0344,
+    "alpha": 0.05,
+    "first_half_mean": 0.1148,
+    "second_half_mean": -0.046,
+    "max_drawdown": 32.182,
+    "by_year": {
+     "2022": {
+      "n": 44,
+      "mean": 0.3609
+     },
+     "2023": {
+      "n": 85,
+      "mean": -0.2974
+     },
+     "2024": {
+      "n": 65,
+      "mean": 0.2472
+     }
+    },
+    "positive_years": "2/3",
+    "mean_typical_funding": 0.0617,
+    "unit": "net_r",
+    "avg_bars": 8.1,
+    "outcomes": {
+     "target": 75,
+     "stop": 115,
+     "timeout": 4
+    },
+    "btc_eth": {
+     "n": 25,
+     "mean": -0.3989
+    }
+   },
+   "romano_wolf": {
+    "t_stat": 0.352,
+    "p_adj": 0.999,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.4762,
+   "verdict": "inconclusive"
+  },
+  "S_sq_long_up": {
+   "spec": {
+    "key": "S_sq_long_up",
+    "family": "setup_trend",
+    "tf": "4h",
+    "setup": "sq",
+    "side": 1
+   },
+   "stats": {
+    "n": 265,
+    "n_eff": 99.246,
+    "n_blocks": 78,
+    "mean": -0.1269,
+    "sd": 1.3265,
+    "lcb": -0.3143,
+    "t_stat": -0.953,
+    "win_rate": 33.96,
+    "profit_factor": 0.8213,
+    "uplift": -0.1269,
+    "alpha": 0.05,
+    "first_half_mean": -0.247,
+    "second_half_mean": -0.0077,
+    "max_drawdown": 53.029,
+    "by_year": {
+     "2022": {
+      "n": 10,
+      "mean": 0.3102
+     },
+     "2023": {
+      "n": 137,
+      "mean": -0.2942
+     },
+     "2024": {
+      "n": 118,
+      "mean": 0.0303
+     }
+    },
+    "positive_years": "2/3",
+    "mean_typical_funding": -0.1269,
+    "unit": "net_r",
+    "avg_bars": 6.3,
+    "outcomes": {
+     "target": 90,
+     "stop": 175
+    },
+    "btc_eth": {
+     "n": 42,
+     "mean": 0.1341
+    }
+   },
+   "romano_wolf": {
+    "t_stat": -1.557,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.3797,
+   "verdict": "no_edge"
+  },
+  "S_sq_short_down": {
+   "spec": {
+    "key": "S_sq_short_down",
+    "family": "setup_trend",
+    "tf": "4h",
+    "setup": "sq",
+    "side": -1
+   },
+   "stats": {
+    "n": 339,
+    "n_eff": 98.19,
+    "n_blocks": 72,
+    "mean": -0.0932,
+    "sd": 1.3361,
+    "lcb": -0.288,
+    "t_stat": -0.691,
+    "win_rate": 36.28,
+    "profit_factor": 0.8667,
+    "uplift": -0.0932,
+    "alpha": 0.05,
+    "first_half_mean": -0.0703,
+    "second_half_mean": -0.1159,
+    "max_drawdown": 63.783,
+    "by_year": {
+     "2022": {
+      "n": 86,
+      "mean": 0.2167
+     },
+     "2023": {
+      "n": 149,
+      "mean": -0.3252
+     },
+     "2024": {
+      "n": 104,
+      "mean": -0.017
+     }
+    },
+    "positive_years": "1/3",
+    "mean_typical_funding": -0.0629,
+    "unit": "net_r",
+    "avg_bars": 8.1,
+    "outcomes": {
+     "stop": 214,
+     "target": 122,
+     "timeout": 3
+    },
+    "btc_eth": {
+     "n": 37,
+     "mean": -0.1767
+    }
+   },
+   "romano_wolf": {
+    "t_stat": -1.284,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.3845,
+   "verdict": "no_edge"
+  },
+  "X_mom14": {
+   "spec": {
+    "key": "X_mom14",
+    "family": "xsec",
+    "tf": "1d",
+    "lookback": 14,
+    "sign": 1
+   },
+   "stats": {
+    "n": 320,
+    "n_eff": 320.0,
+    "n_blocks": 80,
+    "mean": 0.2779,
+    "sd": 9.5518,
+    "lcb": -0.4958,
+    "t_stat": 0.52,
+    "win_rate": 48.75,
+    "profit_factor": 1.0846,
+    "uplift": 0.2779,
+    "alpha": 0.05,
+    "first_half_mean": 0.4215,
+    "second_half_mean": 0.1343,
+    "max_drawdown": 146.524,
+    "by_year": {
+     "2018": {
+      "n": 22,
+      "mean": -1.6345
+     },
+     "2019": {
+      "n": 52,
+      "mean": 0.5098
+     },
+     "2020": {
+      "n": 52,
+      "mean": 2.927
+     },
+     "2021": {
+      "n": 52,
+      "mean": -0.7417
+     },
+     "2022": {
+      "n": 52,
+      "mean": 1.381
+     },
+     "2023": {
+      "n": 52,
+      "mean": -0.2151
+     },
+     "2024": {
+      "n": 38,
+      "mean": -1.997
+     }
+    },
+    "positive_years": "3/7",
+    "mean_typical_funding": 0.6979,
+    "unit": "pct_per_week",
+    "sharpe_annual": 0.21
+   },
+   "romano_wolf": {
+    "t_stat": 0.52,
+    "p_adj": 0.995,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 1.5227,
+   "verdict": "inconclusive"
+  },
+  "X_mom28": {
+   "spec": {
+    "key": "X_mom28",
+    "family": "xsec",
+    "tf": "1d",
+    "lookback": 28,
+    "sign": 1
+   },
+   "stats": {
+    "n": 320,
+    "n_eff": 320.0,
+    "n_blocks": 80,
+    "mean": -0.0596,
+    "sd": 9.6223,
+    "lcb": -0.7272,
+    "t_stat": -0.111,
+    "win_rate": 49.69,
+    "profit_factor": 0.9833,
+    "uplift": -0.0596,
+    "alpha": 0.05,
+    "first_half_mean": -0.0669,
+    "second_half_mean": -0.0523,
+    "max_drawdown": 104.533,
+    "by_year": {
+     "2018": {
+      "n": 22,
+      "mean": -2.0705
+     },
+     "2019": {
+      "n": 52,
+      "mean": -0.1315
+     },
+     "2020": {
+      "n": 52,
+      "mean": 2.1868
+     },
+     "2021": {
+      "n": 52,
+      "mean": -1.2487
+     },
+     "2022": {
+      "n": 52,
+      "mean": 0.5146
+     },
+     "2023": {
+      "n": 52,
+      "mean": 0.5805
+     },
+     "2024": {
+      "n": 38,
+      "mean": -1.9055
+     }
+    },
+    "positive_years": "3/7",
+    "mean_typical_funding": 0.3604,
+    "unit": "pct_per_week",
+    "sharpe_annual": -0.045
+   },
+   "romano_wolf": {
+    "t_stat": -0.111,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 1.534,
+   "verdict": "no_edge"
+  },
+  "X_rev7": {
+   "spec": {
+    "key": "X_rev7",
+    "family": "xsec",
+    "tf": "1d",
+    "lookback": 7,
+    "sign": -1
+   },
+   "stats": {
+    "n": 320,
+    "n_eff": 320.0,
+    "n_blocks": 80,
+    "mean": -2.2707,
+    "sd": 9.1946,
+    "lcb": -3.0968,
+    "t_stat": -4.418,
+    "win_rate": 41.88,
+    "profit_factor": 0.5078,
+    "uplift": -2.2707,
+    "alpha": 0.05,
+    "first_half_mean": -3.0137,
+    "second_half_mean": -1.5277,
+    "max_drawdown": 793.775,
+    "by_year": {
+     "2018": {
+      "n": 22,
+      "mean": 0.8486
+     },
+     "2019": {
+      "n": 52,
+      "mean": -3.3622
+     },
+     "2020": {
+      "n": 52,
+      "mean": -5.4325
+     },
+     "2021": {
+      "n": 52,
+      "mean": -1.1192
+     },
+     "2022": {
+      "n": 52,
+      "mean": -2.1423
+     },
+     "2023": {
+      "n": 52,
+      "mean": -2.2643
+     },
+     "2024": {
+      "n": 38,
+      "mean": -0.0163
+     }
+    },
+    "positive_years": "1/7",
+    "mean_typical_funding": -1.8507,
+    "unit": "pct_per_week",
+    "sharpe_annual": -1.781
+   },
+   "romano_wolf": {
+    "t_stat": -4.418,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 1.4658,
+   "verdict": "no_edge"
+  },
+  "V_rev_long": {
+   "spec": {
+    "key": "V_rev_long",
+    "family": "reversal",
+    "tf": "1d",
+    "side": 1
+   },
+   "stats": {
+    "n": 753,
+    "n_eff": 96.307,
+    "n_blocks": 65,
+    "mean": -0.1142,
+    "sd": 0.6603,
+    "lcb": -0.2016,
+    "t_stat": -1.698,
+    "win_rate": 47.94,
+    "profit_factor": 0.6427,
+    "uplift": -0.1142,
+    "alpha": 0.05,
+    "first_half_mean": -0.0791,
+    "second_half_mean": -0.1493,
+    "max_drawdown": 93.173,
+    "by_year": {
+     "2018": {
+      "n": 64,
+      "mean": -0.5372
+     },
+     "2019": {
+      "n": 126,
+      "mean": -0.0522
+     },
+     "2020": {
+      "n": 124,
+      "mean": 0.0468
+     },
+     "2021": {
+      "n": 85,
+      "mean": 0.1368
+     },
+     "2022": {
+      "n": 175,
+      "mean": -0.2383
+     },
+     "2023": {
+      "n": 112,
+      "mean": -0.0879
+     },
+     "2024": {
+      "n": 67,
+      "mean": -0.1633
+     }
+    },
+    "positive_years": "2/7",
+    "mean_typical_funding": -0.1142,
+    "unit": "net_r",
+    "avg_bars": 2.7,
+    "outcomes": {
+     "timeout": 580,
+     "stop": 173
+    },
+    "btc_eth": {
+     "n": 88,
+     "mean": -0.1865
+    }
+   },
+   "romano_wolf": {
+    "t_stat": -4.748,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.1919,
+   "verdict": "no_edge"
+  },
+  "V_rev_short": {
+   "spec": {
+    "key": "V_rev_short",
+    "family": "reversal",
+    "tf": "1d",
+    "side": -1
+   },
+   "stats": {
+    "n": 1063,
+    "n_eff": 116.105,
+    "n_blocks": 75,
+    "mean": -0.1959,
+    "sd": 0.7966,
+    "lcb": -0.2596,
+    "t_stat": -2.65,
+    "win_rate": 41.67,
+    "profit_factor": 0.562,
+    "uplift": -0.1959,
+    "alpha": 0.05,
+    "first_half_mean": -0.2887,
+    "second_half_mean": -0.1032,
+    "max_drawdown": 217.244,
+    "by_year": {
+     "2018": {
+      "n": 44,
+      "mean": 0.0451
+     },
+     "2019": {
+      "n": 171,
+      "mean": -0.2891
+     },
+     "2020": {
+      "n": 185,
+      "mean": -0.3739
+     },
+     "2021": {
+      "n": 190,
+      "mean": -0.1622
+     },
+     "2022": {
+      "n": 141,
+      "mean": 0.053
+     },
+     "2023": {
+      "n": 210,
+      "mean": -0.2508
+     },
+     "2024": {
+      "n": 122,
+      "mean": -0.1278
+     }
+    },
+    "positive_years": "2/7",
+    "mean_typical_funding": -0.1872,
+    "unit": "net_r",
+    "avg_bars": 2.5,
+    "outcomes": {
+     "timeout": 665,
+     "stop": 397,
+     "end_of_data": 1
+    },
+    "btc_eth": {
+     "n": 114,
+     "mean": -0.2007
+    }
+   },
+   "romano_wolf": {
+    "t_stat": -8.017,
+    "p_adj": 1.0,
+    "reject_null": false
+   },
+   "deflated_mean_threshold": 0.2108,
+   "verdict": "no_edge"
+  }
+ },
+ "robustness": {
+  "T_don20_long": {
+   "top20": {
+    "n": 634,
+    "mean": 0.358,
+    "mean_stressed": 0.2771
+   },
+   "top10": {
+    "n": 327,
+    "mean": 0.3737,
+    "mean_stressed": 0.2842
+   },
+   "btc_eth": {
+    "n": 73,
+    "mean": 0.5665,
+    "mean_stressed": 0.4368
+   },
+   "periods": {
+    "2018-2020": {
+     "n": 224,
+     "mean": 0.458
+    },
+    "2021-2022": {
+     "n": 192,
+     "mean": 0.3724
+    },
+    "2023-2024": {
+     "n": 218,
+     "mean": 0.2424
+    }
+   },
+   "account_top20": {
+    "trades_taken": 262,
+    "final_equity": 17018.95,
+    "cagr_pct": 9.04,
+    "max_drawdown_pct": 8.5,
+    "pnl_by_year": {
+     "2018": -485.49,
+     "2019": 737.52,
+     "2020": 1690.47,
+     "2021": 4632.63,
+     "2022": -1139.88,
+     "2023": 990.64,
+     "2024": 593.06
+    }
+   },
+   "account_btc_eth": {
+    "trades_taken": 73,
+    "final_equity": 12230.0,
+    "cagr_pct": 3.37,
+    "max_drawdown_pct": 2.49,
+    "pnl_by_year": {
+     "2018": -76.6,
+     "2019": 531.78,
+     "2020": 797.06,
+     "2021": 710.46,
+     "2022": -292.12,
+     "2023": 564.83,
+     "2024": -5.41
+    }
+   }
+  },
+  "T_don55_long": {
+   "top20": {
+    "n": 373,
+    "mean": 0.3758,
+    "mean_stressed": 0.2981
+   },
+   "top10": {
+    "n": 194,
+    "mean": 0.4018,
+    "mean_stressed": 0.3126
+   },
+   "btc_eth": {
+    "n": 50,
+    "mean": 0.4227,
+    "mean_stressed": 0.2918
+   },
+   "periods": {
+    "2018-2020": {
+     "n": 130,
+     "mean": 0.5044
+    },
+    "2021-2022": {
+     "n": 123,
+     "mean": 0.3299
+    },
+    "2023-2024": {
+     "n": 120,
+     "mean": 0.2836
+    }
+   },
+   "account_top20": {
+    "trades_taken": 198,
+    "final_equity": 15731.41,
+    "cagr_pct": 7.82,
+    "max_drawdown_pct": 10.36,
+    "pnl_by_year": {
+     "2018": -44.66,
+     "2019": 747.19,
+     "2020": 1841.22,
+     "2021": 2369.06,
+     "2022": -627.65,
+     "2023": 223.97,
+     "2024": 1222.29
+    }
+   },
+   "account_btc_eth": {
+    "trades_taken": 50,
+    "final_equity": 11089.31,
+    "cagr_pct": 1.97,
+    "max_drawdown_pct": 1.54,
+    "pnl_by_year": {
+     "2019": 364.15,
+     "2020": 193.23,
+     "2021": 441.23,
+     "2022": -109.27,
+     "2023": 213.19,
+     "2024": -13.22
+    }
+   }
+  },
+  "T_sma100_long": {
+   "top20": {
+    "n": 791,
+    "mean": 0.4464,
+    "mean_stressed": 0.3626
+   },
+   "top10": {
+    "n": 427,
+    "mean": 0.5889,
+    "mean_stressed": 0.4931
+   },
+   "btc_eth": {
+    "n": 79,
+    "mean": 1.2007,
+    "mean_stressed": 1.02
+   },
+   "periods": {
+    "2018-2020": {
+     "n": 274,
+     "mean": 1.1432
+    },
+    "2021-2022": {
+     "n": 259,
+     "mean": -0.1097
+    },
+    "2023-2024": {
+     "n": 258,
+     "mean": 0.2647
+    }
+   },
+   "account_top20": {
+    "trades_taken": 409,
+    "final_equity": 24681.54,
+    "cagr_pct": 16.38,
+    "max_drawdown_pct": 16.1,
+    "pnl_by_year": {
+     "2018": -88.35,
+     "2019": 1562.56,
+     "2020": 213.44,
+     "2021": 11052.62,
+     "2022": -3059.38,
+     "2023": -570.47,
+     "2024": 5571.11
+    }
+   },
+   "account_btc_eth": {
+    "trades_taken": 79,
+    "final_equity": 15302.6,
+    "cagr_pct": 7.88,
+    "max_drawdown_pct": 3.09,
+    "pnl_by_year": {
+     "2019": 805.13,
+     "2020": 40.35,
+     "2021": 3447.94,
+     "2022": -390.8,
+     "2023": 173.97,
+     "2024": 1226.02
+    }
+   }
+  },
+  "btc_buy_and_hold": {
+   "cagr_pct": 44.98,
+   "max_drawdown_pct": 76.63
+  }
+ }
+}
