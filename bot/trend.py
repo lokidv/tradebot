@@ -69,6 +69,39 @@ def load_daily(fetch=None, symbols=SYMBOLS):
     return out, missing
 
 
+def state_now(daily, key):
+    """نمای امروزِ قاعده روی هر ارز — فقط برای نمایش، **نه** برای دفتر.
+
+    پوزیشنی که پیش از شروعِ ردیابی باز شده هم نشان داده می‌شود (``counted=False``)،
+    چون «قاعده الان چه می‌گوید» برای کاربر همان‌قدر مهم است که کارنامهٔ رو-به-جلو.
+    برای ارزِ بی‌پوزیشن: سطحی که بستهٔ امروز باید از آن بگذرد تا سیگنال بدهد.
+    """
+    spec = RULES[key]
+    rows = []
+    for sym, k in daily.items():
+        n = len(k["c"])
+        if n < 30:
+            continue
+        last = float(k["c"][-1])
+        row = {"sym": sym, "last": last, "in_position": False}
+        for i, e, entry, R, res in explore.trend_paths(sym, k, spec, _FIXED_UNIVERSE):
+            if res is not None and res["outcome"] == "end_of_data":
+                row.update(in_position=True, entry_ts=int(k["t"][e]), entry_px=entry,
+                           stop=float(res["stop"]), open_r=spec["side"] * (last - entry) / R,
+                           counted=int(k["t"][i]) >= TRACKING_START_MS,
+                           exiting_next_open=bool(res.get("exit_pending")))
+            elif res is None:
+                row.update(signal_today=True)
+        if not row["in_position"] and spec["rule"] == "donchian":
+            # سیگنالِ فردا: بستهٔ کندلِ جاری بالای سقفِ همین ۲۰ کندلِ بسته‌شده
+            trigger = float(np.max(k["h"][n - spec["n"]:n]))
+            row.update(trigger=trigger, distance_pct=(trigger / last - 1) * 100)
+        rows.append(row)
+    rows.sort(key=lambda r: (not r["in_position"], not r.get("signal_today", False),
+                             r.get("distance_pct", 0.0)))
+    return rows
+
+
 def evaluate(daily, start_ms=TRACKING_START_MS):
     """برای هر قاعده: پوزیشن‌های باز، سیگنال‌های امروز و معامله‌های بسته — فقط رو-به-جلو."""
     out = {}
@@ -203,6 +236,7 @@ def snapshot(force=False, fetch=None):
         "rules": {key: {"spec": RULES[key], "open": rows["open"], "signals": rows["signals"],
                         "closed_recent": sorted(rows["closed"], key=lambda r: -r["exit_ts"])[:10]}
                   for key, rows in state.items()},
+        "now": state_now(daily, PRIMARY),
         "forward": forward_stats(),
         "evidence": dev_evidence(),
         "ledger_rows_added": added,

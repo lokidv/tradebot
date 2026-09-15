@@ -574,15 +574,23 @@ async function loadTrendBanner(){
     const d = await (await fetch("/api/trend", {cache:"no-store"})).json();
     const el = $("#trendBanner"); if(!el || !d.rules) return;
     const P = d.primary, ev = ((d.evidence||{}).rules||{})[P] || {}, acct = ev.account || {};
-    const fw = (d.forward||{})[P] || {n:0}, r = d.rules[P] || {open:[], signals:[]};
+    const fw = (d.forward||{})[P] || {n:0};
     const day = ms => new Date(ms).toLocaleDateString("fa-IR");
     const coin = s => s.replace("USDT","");
+    // نمای امروزِ قاعده روی هر ۲۰ ارز: پوزیشن‌ها و سیگنال‌ها، سپس نزدیک‌ترین‌ها به ماشه
+    const now = d.now || [];
+    const active = now.filter(x => x.in_position || x.signal_today);
+    const near = now.filter(x => !x.in_position && !x.signal_today).slice(0, 6);
+    const rest = now.length - active.length - near.length;
     const rows = [
-      ...r.signals.map(s => `<tr><td><b>${coin(s.sym)}</b></td><td class="up">سیگنالِ امروز</td>
-        <td class="num">ورود در openِ فردا (~${px(s.close)})</td><td class="num">فاصلهٔ حدضرر ${fmt(s.risk_pct,1)}٪</td><td></td></tr>`),
-      ...r.open.map(p => `<tr><td><b>${coin(p.sym)}</b></td><td>${p.exiting_next_open?"خروج در openِ بعد":"در پوزیشن"} از ${day(p.entry_ts)}</td>
-        <td class="num">ورود ${px(p.entry_px)}</td><td class="num">حدضررِ دنباله‌دار ${px(p.stop)}</td>
-        <td class="num ${cls(p.open_r)}">${p.open_r>=0?"+":""}${fmt(p.open_r,2)}R</td></tr>`),
+      ...active.map(x => x.in_position
+        ? `<tr><td><b>${coin(x.sym)}</b></td><td>${x.exiting_next_open?"خروج در openِ بعد":"در پوزیشن"} از ${day(x.entry_ts)}${x.counted?"":` <small class="mid">(پیش از شروعِ ردیابی — شمرده نمی‌شود)</small>`}</td>
+            <td class="num">ورود ${px(x.entry_px)}</td><td class="num">حدضررِ دنباله‌دار ${px(x.stop)}</td>
+            <td class="num ${cls(x.open_r)}">${x.open_r>=0?"+":""}${fmt(x.open_r,2)}R</td></tr>`
+        : `<tr><td><b>${coin(x.sym)}</b></td><td class="up">سیگنالِ امروز</td>
+            <td class="num">ورود در openِ فردا (~${px(x.last)})</td><td></td><td></td></tr>`),
+      ...near.map(x => `<tr><td>${coin(x.sym)}</td><td class="mid">بی‌پوزیشن</td>
+          <td class="num">ماشه: بستهٔ بالای ${px(x.trigger)}</td><td class="num mid">${fmt(x.distance_pct,1)}٪ تا ماشه</td><td></td></tr>`),
     ];
     el.innerHTML = `<div class="calbanner trend">
       <div class="top"><span>📈 <b>روندِ روزانه</b> — نامزدِ پژوهشی · <b>اثبات‌نشده</b> · فقط کاغذی · مجوزِ ورود ندارد</span>
@@ -592,8 +600,10 @@ async function loadTrendBanner(){
         پس از تصحیحِ جست‌وجوی چندگانه معنادار نیست (p=${fmt(ev.p_adj,2)})</div>
       <div class="sub">ردیابیِ رو-به-جلو از ${day(d.tracking_start_ms)}: ${fw.n||0} معاملهٔ بسته${fw.n?` · میانگین ${fmt(fw.mean,2)}R · جمع ${fmt(fw.sum_r,2)}R`:""}
         · برای تأییدِ آماریِ همین اثر ~${ev.n_eff_to_confirm||"؟"} معاملهٔ مستقل لازم است</div>
-      ${rows.length ? `<div style="overflow-x:auto"><table class="mini"><tbody>${rows.join("")}</tbody></table></div>`
-        : `<div class="sub">هنوز هیچ پوزیشن یا سیگنالی از شروعِ ردیابی — قاعده منتظرِ بسته‌شدنِ یک ارزِ بزرگ بالای سقفِ ۲۰روزه است.</div>`}
+      ${rows.length ? `<div class="sub" style="margin-top:8px">قاعده الان چه می‌گوید (فقط نمایش؛ کارنامه فقط معامله‌های پس از شروعِ ردیابی را می‌شمارد):</div>
+          <div style="overflow-x:auto"><table class="mini"><tbody>${rows.join("")}</tbody></table></div>
+          ${rest>0?`<div class="sub">${rest} ارزِ دیگر دورتر از ماشه‌اند.</div>`:""}`
+        : `<div class="sub">دادهٔ روزانه هنوز نرسیده است.</div>`}
       ${(d.missing_data||[]).length ? `<div class="sub" style="color:var(--brass)">بی‌داده: ${d.missing_data.map(coin).join("، ")}</div>` : ""}
     </div>`;
   }catch(e){}

@@ -100,6 +100,23 @@ class ForwardTrackingTests(unittest.TestCase):
         fwd = trend.forward_stats(rows)
         self.assertEqual(sum(s["n"] for s in fwd.values()), len(exits))
 
+    def test_state_now_shows_every_coin_and_marks_pre_start_positions_as_uncounted(self):
+        up = _series(seed=8, drift=0.004)
+        flat = _series(seed=12, drift=0.0, vol=0.01)
+        rows = trend.state_now({"BTCUSDT": up, "ETHUSDT": flat}, trend.PRIMARY)
+        self.assertEqual({r["sym"] for r in rows}, {"BTCUSDT", "ETHUSDT"})
+        for r in rows:
+            if r["in_position"]:
+                self.assertIn("counted", r)
+                self.assertLess(r["stop"], r["last"] * 1.5)
+            else:
+                # سطحِ ماشه همان سقفِ ۲۰ کندلِ بسته‌شده است
+                k = {"BTCUSDT": up, "ETHUSDT": flat}[r["sym"]]
+                self.assertAlmostEqual(r["trigger"], float(np.max(k["h"][-20:])))
+        # پوزیشن‌ها اول، بعد نزدیک‌ترین به ماشه
+        flags = [r["in_position"] for r in rows]
+        self.assertEqual(flags, sorted(flags, reverse=True))
+
     def test_snapshot_reports_missing_and_off_grid_data_and_never_authorizes(self):
         good = _as_lists(_series())
         okx = _as_lists(_series(seed=9))
