@@ -6,6 +6,8 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
+import log
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 PATH = os.path.join(DATA_DIR, "positions.json")
 _lock = threading.RLock()
@@ -182,7 +184,7 @@ def refresh(prices, klines_fn=None, funding_fn=None):
                 try:
                     _accrue_funding(pos, funding_fn(pos["symbol"]), now_ms)
                 except Exception:  # noqa: BLE001 — نبودِ فاندینگ نباید پوزیشن را بشکند
-                    pass
+                    log.exc()
             if klines_fn is not None:
                 try:
                     hit = _barrier_exit(pos, klines_fn(pos["symbol"], pos["tf"]))

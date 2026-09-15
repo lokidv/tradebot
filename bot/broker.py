@@ -11,6 +11,8 @@ from urllib.parse import urlencode
 
 import httpx
 
+import log
+
 TESTNET_BASE = "https://testnet.binancefuture.com"   # ⚠️ فقط تست‌نت
 CFG_PATH = os.path.join(os.path.dirname(__file__), "data", "config.json")
 DEFAULT_CFG = {"broker": "local", "api_key": "", "api_secret": "", "leverage": 2}
@@ -175,7 +177,7 @@ class BinanceTestnet:
         try:
             self._signed("DELETE", "/fapi/v1/allOpenOrders", symbol=symbol)
         except TestnetError:
-            pass
+            log.exc()
         for p in self.positions():
             if p["symbol"] == symbol:
                 side = "SELL" if p["side"] == "long" else "BUY"

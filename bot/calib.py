@@ -14,6 +14,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import numpy as np
 
 import bracket
+import log
 import engine
 import features
 import market
@@ -498,7 +499,7 @@ def _fit_model(X, y, champion=None, ts=None, champion_ts=0.0, embargo_ms=0):
                 oos_pc[ev] = po_c
                 return meta, p_all, oos_pc
         except Exception:  # noqa: BLE001 — قهرمانِ ناسازگار/خراب: چالشگر جایگزین می‌شود
-            pass
+            log.exc()
 
     a, b = _platt(p_cal, y_cal)
     po_c = _sigmoid(a * _logit(p_oos) + b)

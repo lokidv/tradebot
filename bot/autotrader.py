@@ -13,6 +13,7 @@ import advisor
 import fill_quality
 import gates
 import journal
+import log
 import market
 import paper
 
@@ -85,6 +86,11 @@ def think(msg, kind="info"):
     with _lock:
         _thoughts.appendleft({"t": time.time(), "msg": msg, "kind": kind})
         _status["current"] = msg
+    # جریانِ افکار فقط ۱۵۰ ردیف در حافظه نگه می‌دارد؛ نسخهٔ ماندگارش در لاگ است
+    try:
+        (log.warn if kind in ("warn", "close") else log.info)(msg, stream="think", kind=kind)
+    except Exception:  # noqa: BLE001, silent-ok — لاگ‌کردنِ خطای خودِ لاگ بازگشتی می‌شود
+        pass
 
 
 def bot_stats():
@@ -155,7 +161,7 @@ def _set_cooldown(symbol, until):
     try:
         journal.append(journal.COOLDOWN_SET, symbol=symbol, until=_cooldown[symbol])
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
 
 
 def _set_storm(until):
@@ -164,7 +170,7 @@ def _set_storm(until):
     try:
         journal.append(journal.STORM, until=_storm_until)
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
 
 
 def _set_risk_off(day):
@@ -173,7 +179,7 @@ def _set_risk_off(day):
     try:
         journal.append(journal.RISK_OFF, day=day)
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
 
 
 def _clear_pending(why):
@@ -423,16 +429,16 @@ def _monitor():
         try:
             _retire_toxic_1d()
         except Exception:  # noqa: BLE001
-            pass
+            log.exc()
         return
     try:
         _retire_toxic_1d()
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     try:
         _process_pending()
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     db = paper.list_positions()
     bot_local = [p for p in db["open"] if p.get("opened_by") == "bot" and p.get("mode") != "testnet"]
     if not bot_local:
@@ -608,7 +614,7 @@ def _cycle():
     try:
         _retire_toxic_1d()
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     db = paper.list_positions()
     before_ids = {p["id"] for p in db["open"] if p.get("opened_by") == "bot"}
     prices = {}
@@ -825,7 +831,7 @@ def _monitor_loop():
         try:
             _monitor()
         except Exception:  # noqa: BLE001 — پایشگر هرگز نباید بمیرد
-            pass
+            log.exc()
 
 
 def start():

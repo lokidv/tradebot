@@ -13,7 +13,7 @@ for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 import numpy as np
 
+import log
 import market
 import candidates
 import engine
@@ -79,7 +80,7 @@ def _market_state(tf):
                 if em:
                     out["ethbtc"] = list(em.values())[-1]
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     _mstate_cache[tf] = (time.time(), out)
     return out
 
@@ -114,7 +115,7 @@ def _suspended_setups():
             if v.get("n", 0) >= 20 and v.get("avg_r") is not None and v["avg_r"] < -0.12:
                 m[k] = v.get("avg_r")
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     _susp_cache.update(ts=time.time(), map=m)
     return m
 
@@ -146,7 +147,7 @@ def _suspended_tfs():
             if st.get("n", 0) >= 30 and st.get("avg_r") is not None and st["avg_r"] <= 0.0:
                 m[tf] = st["avg_r"]
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     _tf_susp_cache.update(ts=time.time(), map=m)
     return m
 
@@ -178,7 +179,7 @@ def _rs_rank(tf):
         m = max(len(rets) - 1, 1)
         ranks = {s: i / m for i, (s, _) in enumerate(rets)}
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     _rs_cache[tf] = (now, ranks)
     return ranks
 
@@ -200,7 +201,7 @@ def _macro(tf):
         if gmap:
             out["gold"] = list(gmap.values())[-1]
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     _macro_cache[tf] = (now, out)
     return out
 
@@ -217,7 +218,7 @@ def _btc_macro():
         kl = market.get_klines_cached("BTCUSDT", "1d") or market.get_klines("BTCUSDT", "1d")
         data = meta_gate.btc_macro_regime(kl["c"], br)
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     _btc_macro_cache.update(ts=now, data=data)
     return data
 
@@ -240,7 +241,7 @@ def _fetch_funding(symbol):
             if rows:
                 blob["z"] = float(rows[-1][1])
         except Exception:  # noqa: BLE001
-            pass
+            log.exc()
     _fz_cache[symbol] = (time.time(), blob)
     _fz_pending.discard(symbol)
 
@@ -286,7 +287,7 @@ def _fetch_oi(symbol):
     try:
         blob = market.oi_crowd_stats(symbol, period="1h")
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     _oi_cache[symbol] = (time.time(), blob)
     _oi_pending.discard(symbol)
 
@@ -418,7 +419,7 @@ def _calib_builder():
         with _an_lock:
             _an_cache.clear()          # تحلیل‌ها با احتمال کالیبره از نو
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
 
 
 @app.on_event("startup")
@@ -434,7 +435,7 @@ def _startup():
                 if calib.is_stale() and not calib.status().get("building"):
                     _calib_builder()
             except Exception:  # noqa: BLE001
-                pass
+                log.exc()
     threading.Thread(target=_daily_retrain, daemon=True).start()
     autotrader.init(overview, DRIFT_CAP, get_analysis)     # 🤖 ربات معامله‌گر خودکار
     autotrader.start()
@@ -534,6 +535,14 @@ def health():
         out["trading"] = {"error": str(e)}
         problems.append("وضعیت پوزیشن‌ها خوانده نشد")
 
+    try:
+        out["logs"] = log.counts()
+        recent = log.tail(200, level="warning")
+        out["logs"]["recent_warnings"] = len(recent)
+        out["logs"]["sample"] = [r.get("msg") for r in recent[-5:]]
+    except Exception:  # noqa: BLE001
+        out["logs"] = {"error": "unavailable"}
+
     out["status"] = "red" if problems else ("amber" if warnings else "green")
     out["problems"] = problems
     out["warnings"] = warnings
@@ -570,11 +579,11 @@ def live_stats(tf: str | None = None):
     try:
         shadow.resolve(market.get_klines)
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     try:
         candidates.resolve(market.get_klines, limit=120)
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     st = shadow.stats(tf)
     drift = None
     # drift با بازده خالص تشخیص داده می‌شود، نه win-rate خام که نسبت سود/ضرر را نادیده می‌گیرد.
@@ -750,7 +759,7 @@ def overview(tf: str = "1h"):
         try:
             logged += bool(candidates.log_candidate(row, tf))
         except Exception:  # noqa: BLE001 — ثبت هرگز نباید پاسخِ API را بشکند
-            pass
+            log.exc()
     if logged:
         print(f"[candidates] {tf}: {logged} ردیف تازه ثبت شد", flush=True)
     coins.sort(key=lambda r: (
@@ -956,7 +965,7 @@ def _sync_testnet(bk):
                 realized = bk.realized_pnl_since(pos["symbol"], _opened_ms(pos))
                 paper.close_with(pos["id"], live["mark"], "حد زمانی · تست‌نت", realized)
             except broker.TestnetError:
-                pass
+                log.exc()
         else:
             pct = live["pnl_usdt"] / max(pos["size_usdt"], 1e-9) * 100
             paper.set_live(pos["id"], live["mark"], live["pnl_usdt"], pct)
@@ -975,7 +984,7 @@ def positions():
             try:
                 prices[pos["symbol"]] = market.last_price(pos["symbol"])
             except Exception:  # noqa: BLE001
-                pass
+                log.exc()
     # شبیه‌سازِ واقع‌گرا: ویکِ کندل‌ها + لغزشِ استاپ + فاندینگ (نه فقط قیمتِ نمونه‌برداری‌شده)
     db = paper.refresh(prices, klines_fn=market.get_klines_cached,
                        funding_fn=market.get_funding_history)
@@ -1005,7 +1014,7 @@ def positions():
             note = (f"⚖️ {shorts} پوزیشنِ فروش هم‌زمان داری در بازاری که {share}٪ آن بالای EMA50 است — "
                     f"تمرکزِ همبسته خلافِ جریان؛ کم‌کردنِ حجم را جدی بگیر.")
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
     return {"open": db["open"], "closed": db["closed"][:30],
             "total_open_pnl": total_open, "total_closed_pnl": total_closed,
             "portfolio_note": note,

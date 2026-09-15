@@ -8,6 +8,8 @@
 import math
 from datetime import datetime, timezone
 
+import log
+
 
 def _sig(z):
     return 1.0 / (1.0 + math.exp(-max(min(z, 30), -30)))
@@ -61,7 +63,7 @@ def advise(pos, a, btc_z=None):
         age_min = (datetime.now(timezone.utc) - opened).total_seconds() / 60
         age_frac = age_min / max(float(pos.get("time_stop_min") or 1), 1)
     except Exception:  # noqa: BLE001
-        pass
+        log.exc()
 
     btc_against = btc_z is not None and (btc_z * d < -0.5)
     if btc_against:
