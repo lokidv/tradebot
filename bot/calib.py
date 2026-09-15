@@ -14,6 +14,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import numpy as np
 
 import bracket
+import costs
 import log
 import engine
 import features
@@ -29,7 +30,8 @@ except Exception:  # noqa: BLE001
 CALIB_PATH = os.path.join(os.path.dirname(__file__), "data", "calib.json")
 COST_PCT = 0.15
 REBUILD_SEC = 86400
-CALIB_VERSION = 19       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+CALIB_VERSION = 20       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+# ۲۰: هزینهٔ هر رویداد = ردهٔ نقدشوندگیِ لحظه‌ای + فاندینگِ واقعیِ مدتِ نگه‌داری
 # ۱۸: براکتِ واحد (bracket.py) — برچسب‌ها حالا گپِ پشتِ حدضرر را روی قیمتِ مشاهده‌شده می‌بندند
 # ۱۹: حذفِ ویژگیِ مردهٔ dxy_dir (۲۴ → ۲۳ ویژگی) + یکسان‌سازیِ فرمولِ فاندینگِ آموزش/اجرا
 WF_FOLDS = 5             # تعداد فولدهای Walk-Forward
@@ -658,9 +660,11 @@ def _fit_edge_model(events, tf, cost_pct=COST_PCT):
     evs = sorted(events, key=lambda e: e["ts"])
     X = np.asarray([e["feats"] for e in evs], float)
     risk = np.asarray([max(float(e.get("risk_pct") or 0), 0.05) for e in evs])
-    # هزینهٔ رفت‌وبرگشت از خود outcome کم می‌شود؛ wins کوچک دیگر «برد» مصنوعی نیستند.
+    # هزینهٔ **هر رویداد** (ردهٔ نقدشوندگیِ لحظه‌ای + فاندینگِ واقعیِ مدتِ نگه‌داری)
+    # از outcome کم می‌شود؛ هزینهٔ ثابتِ ۰٫۱۵٪ آلتِ کم‌عمق و نگه‌داریِ ۴۰روزه را نمی‌دید.
+    ev_cost = np.asarray([float(e.get("cost_pct", cost_pct)) for e in evs])
     y = np.clip(
-        np.asarray([float(e["r"]) for e in evs]) - float(cost_pct) / risk,
+        np.asarray([float(e["r"]) for e in evs]) - ev_cost / risk,
         -1.5, 2.2,
     )
     ts = np.asarray([e["ts"] for e in evs], dtype=np.int64)
@@ -859,8 +863,9 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
     evs = sorted(events, key=lambda e: e["ts"])
     X = np.asarray([e["feats"] for e in evs], float)
     risk = np.asarray([max(float(e.get("risk_pct") or 0), 0.05) for e in evs])
+    ev_cost = np.asarray([float(e.get("cost_pct", cost_pct)) for e in evs])
     net_r = np.clip(
-        np.asarray([float(e["r"]) for e in evs]) - float(cost_pct) / risk,
+        np.asarray([float(e["r"]) for e in evs]) - ev_cost / risk,
         -1.5, 2.2,
     )
     y = (net_r > 0).astype(float)
@@ -1152,8 +1157,10 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     X_short = np.asarray([p[1][1] for p in pairs], float)
     timestamps = np.asarray([p[0][0] for p in pairs], dtype=np.int64)
     risks = np.asarray([max(float(p[2][2]), 0.05) for p in pairs], float)
-    net_long = np.clip(np.asarray([p[2][0] for p in pairs], float) - float(cost_pct) / risks, -1.5, 2.2)
-    net_short = np.clip(np.asarray([p[2][1] for p in pairs], float) - float(cost_pct) / risks, -1.5, 2.2)
+    sample_cost = np.asarray([float(p[2][3]) if len(p[2]) > 3 else float(cost_pct)
+                              for p in pairs], float)
+    net_long = np.clip(np.asarray([p[2][0] for p in pairs], float) - sample_cost / risks, -1.5, 2.2)
+    net_short = np.clip(np.asarray([p[2][1] for p in pairs], float) - sample_cost / risks, -1.5, 2.2)
     n, d = X_long.shape
     X = np.empty((2 * n, d), float)
     target = np.empty(2 * n, float)
@@ -1453,7 +1460,7 @@ def _htf_sign(zmap, ts, htf):
 
 # ───────────────────── استخراج رویدادها + نمونه‌های جهت‌یاب ─────────────────────
 def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=None,
-                   breadth_map=None, dom_map=None, ethbtc_map=None):
+                   breadth_map=None, dom_map=None, ethbtc_map=None, funding_rows=None):
     o = np.array(kl["o"], float); h = np.array(kl["h"], float)
     l = np.array(kl["l"], float); c = np.array(kl["c"], float)
     v = np.array(kl["v"], float); ts_arr = kl["t"]
@@ -1494,8 +1501,11 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
         dir_X.append((long_feats, short_feats))
         dir_y.append((ts, 1.0 if ret > 0 else 0.0))
         lv = bracket.levels(entry, cs["a14"][i], 1)
+        # هزینهٔ لحظه‌ای (از حجمِ ۲۴ ساعتهٔ همان کندل‌ها) + فاندینگِ برآوردیِ نیمهٔ افق
+        dense_cost = (costs.point_in_time_tier(c, v, i, tf)
+                      + costs.expected_funding_pct(tf, bracket.MAX_BARS / 2))
         dir_R.append((_barrier(i, 1), _barrier(i, -1),
-                      lv["risk_pct"]))                    # (نتیجه لانگ، نتیجه شورت، ریسک٪)
+                      lv["risk_pct"], round(dense_cost, 6)))  # (لانگ، شورت، ریسک٪، هزینه٪)
     for i in range(260, n - 42):
         if cooldown > 0:
             cooldown -= 1
@@ -1508,6 +1518,9 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
         if res is None:
             continue
         out_r = res["gross_r"]
+        entry_ts = ts_arr[i + 1]
+        exit_ts = ts_arr[min(res["exit_idx"], n - 1)]
+        ev_cost = costs.event_cost_pct(sig, c, v, i, tf, entry_ts, exit_ts, funding_rows)
         b, s = engine.votes_at(cs, i)
         votes = b if sig == 1 else s
         trending = cs["adx"][i] >= 22 and cs["chop"][i] < 55
@@ -1530,6 +1543,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
                        "risk_pct": round(float(res["risk_pct"]), 4),
                        "bars_held": int(res["bars_held"]),
                        "outcome": res["outcome"],
+                       "cost_pct": ev_cost,            # رده‌ای + فاندینگ — نه ۰٫۱۵٪ ثابت
                        "z": float(cs["z"][i]), "votes": int(votes),
                        "trend": bool(trending), "btc": bool(btc_align),
                        "regime": engine.regime_at(cs, c, i)[0]})
@@ -1652,8 +1666,15 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                 return s, market.funding_z_map(s)
             except Exception:  # noqa: BLE001
                 return s, []
+
+        def _fr_one(s):
+            try:
+                return s, market.get_funding_history(s)
+            except Exception:  # noqa: BLE001
+                return s, []
         with ThreadPoolExecutor(max_workers=8) as pool:      # دریافتِ موازیِ فاندینگ (I/O شبکه)
             fz = dict(pool.map(_fz_one, symbols))
+            fraw = dict(pool.map(_fr_one, symbols))
         table = {"built_at": time.time(), "cost_pct": COST_PCT, "version": CALIB_VERSION, "tfs": {}}
         zmaps = {}                                        # tf -> sym -> {ts: z}
         pending = {}                                      # tf -> ورودی‌های آموزش (آموزشِ همه در پایان، موازی)
@@ -1739,7 +1760,8 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                     evs, zmap, dx, dy, dr = extract_events(sym, hists[sym], tf, fz.get(sym, []),
                                                            rs_map, htf_zmap, btc_events_zmap_src,
                                                            gold_map,
-                                                           breadth_map, dom_map, ethbtc_map)
+                                                           breadth_map, dom_map, ethbtc_map,
+                                                           funding_rows=fraw.get(sym))
                 except Exception:  # noqa: BLE001
                     evs, zmap, dx, dy, dr = [], {}, [], [], []
                 zmaps[tf][sym] = zmap
