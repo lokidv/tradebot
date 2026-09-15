@@ -413,15 +413,37 @@ def get_analysis(symbol: str, tf: str, max_age=None):
     return res
 
 
+_rebuild_proc = {"p": None, "started": None}
+
+
 def _calib_builder():
-    """ساخت/تازه‌سازی جدول کالیبراسیون در پس‌زمینه (روزی یک‌بار)."""
+    """بازآموزی در **پروسهٔ جدا** (rebuild_models.py)، نه داخلِ پروسهٔ معامله.
+
+    قبلاً calib.build همین‌جا اجرا می‌شد: ProcessPool درونِ uvicorn روی ویندوز،
+    رقابتِ CPU با چرخهٔ معامله، و پاک‌شدنِ کشِ تحلیل وسطِ کار. حالا پروسهٔ جدا
+    جدول را روی دیسک می‌نویسد و این‌جا فقط بازخوانی می‌شود.
+    """
+    import subprocess
+    p = _rebuild_proc.get("p")
+    if p is not None and p.poll() is None:
+        return                                     # یکی در جریان است
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rebuild_models.py")
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "logs", "rebuild.log")
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
     try:
-        symbols, _ = market.get_top_symbols(CALIB_TOP)
-        calib.build(symbols)
+        with open(log_path, "a", encoding="utf-8") as out:
+            proc = subprocess.Popen([sys.executable, script, "--top", str(CALIB_TOP)],
+                                    stdout=out, stderr=subprocess.STDOUT,
+                                    cwd=os.path.dirname(script),
+                                    env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+        _rebuild_proc.update(p=proc, started=time.time())
+        proc.wait()
+        calib._table = None                        # جدولِ تازه از دیسک
         with _an_lock:
-            _an_cache.clear()          # تحلیل‌ها با احتمال کالیبره از نو
+            _an_cache.clear()                      # تحلیل‌ها با مدلِ تازه از نو
+        log.info("rebuild finished", returncode=proc.returncode)
     except Exception:  # noqa: BLE001
-        log.exc()
+        log.exc("rebuild subprocess")
 
 
 @app.on_event("startup")
@@ -630,7 +652,8 @@ def version_info():
 
 @app.post("/api/calib/rebuild")
 def calib_rebuild():
-    if calib.status().get("building"):
+    p = _rebuild_proc.get("p")
+    if calib.status().get("building") or (p is not None and p.poll() is None):
         return {"ok": False, "msg": "در حال ساخت است"}
     threading.Thread(target=_calib_builder, daemon=True).start()
     return {"ok": True}

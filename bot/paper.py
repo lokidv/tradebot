@@ -10,6 +10,14 @@ import log
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 PATH = os.path.join(DATA_DIR, "positions.json")
+# دفترِ کامل و فقط-افزودنیِ معامله‌های بسته. positions.json فقط ۲۰۰تای آخر را برای
+# رابط نگه می‌دارد؛ افتِ سرمایه و ضریبِ سود باید از کلِ تاریخچه حساب شوند.
+# مسیرش همیشه کنارِ PATH است تا جابه‌جاییِ PATH (مثلاً در تست) دفتر را هم جابه‌جا کند.
+LEDGER_NAME = "closed_trades.jsonl"
+
+
+def _ledger_path():
+    return os.path.join(os.path.dirname(PATH), LEDGER_NAME)
 _lock = threading.RLock()
 
 
@@ -99,6 +107,46 @@ def _pnl(pos, price):
     return pct, pos["size_usdt"] * pct / 100
 
 
+def _ledger_append(pos):
+    """افزودن به دفتر. بارِ اول، تاریخچهٔ فعلیِ positions.json را پیش از آن می‌نویسد؛
+    وگرنه با اولین بسته‌شدن، ۷۰ معاملهٔ قبلی از خلاصه ناپدید می‌شدند."""
+    path = _ledger_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        seed = []
+        if not os.path.exists(path):
+            seed = list(reversed(_load().get("closed") or []))   # قدیمی → جدید
+        with open(path, "a", encoding="utf-8") as f:
+            for old in seed:
+                f.write(json.dumps(dict(old, ledger_seeded=True), ensure_ascii=False) + "\n")
+            f.write(json.dumps(pos, ensure_ascii=False) + "\n")
+    except OSError:
+        log.exc("closed-trade ledger append")
+
+
+def ledger(since_reset=True):
+    """همهٔ معامله‌های بسته (قدیمی → جدید). اگر دفتر هنوز ساخته نشده از positions.json می‌خواند."""
+    rows = []
+    path = _ledger_path()
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue
+    if not rows:
+        rows = list(reversed(_load().get("closed") or []))
+    if since_reset:
+        reset_at = (_load().get("wallet") or {}).get("reset_at")
+        if reset_at:
+            rows = [r for r in rows if str(r.get("closed_at") or "") >= str(reset_at)]
+    return rows
+
+
 def _close(pos, price, reason):
     pct, usd = _pnl(pos, price)
     d = 1 if pos["side"] == "long" else -1
@@ -108,6 +156,7 @@ def _close(pos, price, reason):
                cost_usdt=round(pos["size_usdt"] * _total_cost_pct(pos) / 100, 3),
                funding_usdt=round(pos["size_usdt"] * float(pos.get("funding_pct", 0.0)) / 100, 3),
                pnl_usdt=round(usd, 3), close_reason=reason, last_price=price)
+    _ledger_append(pos)
     return pos
 
 
@@ -243,6 +292,7 @@ def close_with(pos_id, exit_price, reason, pnl_usdt=None):
                 if pnl_usdt is not None:
                     p["pnl_usdt"] = round(pnl_usdt, 3)
                     p["pnl_pct"] = round(pnl_usdt / max(p["size_usdt"], 1e-9) * 100, 3)
+                    _ledger_append(dict(p, ledger_correction=True))   # PnLِ صرافی جایگزین شد
                 db["closed"].insert(0, p)
                 _save(db)
                 return p
@@ -303,22 +353,31 @@ def set_live(pos_id, price=None, pnl_usdt=None, pnl_pct=None):
 
 
 # ─────────────────────── کیف‌پول دمو ───────────────────────
+def _dedupe_ledger(rows):
+    """اصلاحیهٔ PnLِ صرافی جایگزینِ ردیفِ اولیهٔ همان شناسه می‌شود."""
+    by_id = {}
+    for r in rows:
+        by_id[r.get("id")] = r
+    return sorted(by_id.values(), key=lambda r: str(r.get("closed_at") or ""))
+
+
 def wallet_summary():
     with _lock:
         db = _load()
         w = db["wallet"]
         start = float(w.get("start", DEFAULT_BALANCE))
-        realized = sum(p.get("pnl_usdt", 0.0) for p in db["closed"])
+        history = _dedupe_ledger(ledger(since_reset=True))
+        realized = sum(p.get("pnl_usdt", 0.0) for p in history)
         open_pnl = sum(p.get("pnl_usdt", 0.0) for p in db["open"])
-        wins = [p for p in db["closed"] if p.get("pnl_usdt", 0) > 0]
-        losses = [p for p in db["closed"] if p.get("pnl_usdt", 0) < 0]
-        breakeven = [p for p in db["closed"] if p.get("pnl_usdt", 0) == 0]
-        nclosed = len(db["closed"])
+        wins = [p for p in history if p.get("pnl_usdt", 0) > 0]
+        losses = [p for p in history if p.get("pnl_usdt", 0) < 0]
+        breakeven = [p for p in history if p.get("pnl_usdt", 0) == 0]
+        nclosed = len(history)
         gross_win = sum(p["pnl_usdt"] for p in wins)
         gross_loss = -sum(p["pnl_usdt"] for p in losses)
         # پیک اکوییتی برای افت سرمایه: از قدیمی به جدید
         eq, peak, mdd = start, start, 0.0
-        for p in reversed(db["closed"]):
+        for p in history:                          # قدیمی → جدید، کلِ تاریخچه
             eq += p.get("pnl_usdt", 0.0)
             peak = max(peak, eq)
             mdd = max(mdd, peak - eq)
@@ -348,10 +407,13 @@ def reset_wallet(start_balance=None, keep_history=False):
     with _lock:
         db = _load()
         start = float(start_balance) if start_balance else float(db["wallet"].get("start", DEFAULT_BALANCE))
+        # با keep_history، مرزِ قبلی می‌ماند؛ وگرنه خلاصه (که از دفتر و بعد از reset_at
+        # می‌خواند) همان تاریخچه‌ای را حذف می‌کرد که کاربر خواسته بود نگه دارد.
+        reset_at = (db["wallet"].get("reset_at") or _now()) if keep_history else _now()
         new_db = {
             "open": [],
             "closed": db["closed"] if keep_history else [],
-            "wallet": {"start": start, "reset_at": _now()},
+            "wallet": {"start": start, "reset_at": reset_at},
         }
         _save(new_db)
         return wallet_summary()
