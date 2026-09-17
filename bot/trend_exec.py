@@ -141,8 +141,9 @@ def _enter(bk, tid, sig, live, now):
         step, _tick, min_qty, min_notional = bk.symbol_rules(sym)
     except brokermod.TestnetError:
         return _append("missed", id=tid, sym=sym, reason="not_on_testnet")
-    ref_ts, ref_open = market.current_bar_open(sym, "1d")
-    if int(ref_ts) != bar_open_ms:
+    bar = market.current_bar(sym, "1d")
+    ref_ts, ref_open = int(bar["t"]), float(bar["o"])
+    if ref_ts != bar_open_ms:
         raise RuntimeError(f"کندلِ جاریِ {sym} ({ref_ts}) کندلِ ورود ({bar_open_ms}) نیست")   # دورِ بعد
     spot, mark = market.spot_price(sym), bk.mark_price(sym)
     gap = abs(mark / spot - 1) * 100
@@ -151,6 +152,9 @@ def _enter(bk, tid, sig, live, now):
     stop = ref_open - float(sig["stop_distance"])                   # همان حدضررِ دفترِ کاغذی
     if mark <= stop:
         return _append("missed", id=tid, sym=sym, reason="below_stop")
+    if float(bar["l"]) <= stop:
+        # کفِ همین امروز حدضرر را زده: قاعدهٔ کاغذی همین حالا بیرون است — ورود یعنی معامله‌ای که آزموده نشده
+        return _append("missed", id=tid, sym=sym, reason="stop_breached_today")
     _avail, equity = bk.balance_usdt()
     risk_usdt = float(equity) * gates.risk_caps()["max_risk_pct_per_trade"] / 100.0
     qty = brokermod.BinanceTestnet._round_step(risk_usdt / (mark - stop), step)

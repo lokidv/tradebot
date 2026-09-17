@@ -1,0 +1,234 @@
+{
+ "generated_at": 1789646075.7851965,
+ "cutoff_ms": 1727481600000,
+ "rule": "T_don20_long",
+ "top_n": 50,
+ "decision_rule": "adopt iff kept mean > all mean, kept LCB95 > 0, both halves > 0, bootstrap LCB of (kept - excluded) at 1-0.05/3 > 0, keeps >= 40%",
+ "baseline_entries": {
+  "n": 1415,
+  "n_eff": 115.158,
+  "mean": 0.3579,
+  "lcb": 0.1369,
+  "mean_spot": 0.3762,
+  "win_rate": 40.28,
+  "profit_factor": 1.9001,
+  "first_half_mean": 0.6329,
+  "second_half_mean": 0.0833,
+  "positive_years": "4/7"
+ },
+ "baseline_joins_1_10": {
+  "n": 12330,
+  "n_eff": 123.317,
+  "mean": 0.3934,
+  "lcb": 0.1323,
+  "mean_spot": 0.4122,
+  "win_rate": 36.92,
+  "profit_factor": 1.8383,
+  "first_half_mean": 0.7556,
+  "second_half_mean": 0.0311,
+  "positive_years": "4/7"
+ },
+ "filters": {
+  "F1_join_above_breakout_level": {
+   "name": "join only above the broken high",
+   "all_mean": 0.3934,
+   "kept": {
+    "n": 8089,
+    "n_eff": 122.329,
+    "mean": 0.3769,
+    "lcb": 0.1244,
+    "mean_spot": 0.3959,
+    "win_rate": 40.5,
+    "profit_factor": 1.8631,
+    "first_half_mean": 0.669,
+    "second_half_mean": 0.0849,
+    "positive_years": "4/7"
+   },
+   "excluded": {
+    "n": 4241,
+    "n_eff": 121.458,
+    "mean": 0.4248,
+    "lcb": 0.0905,
+    "mean_spot": 0.4432,
+    "win_rate": 30.09,
+    "profit_factor": 1.7994,
+    "first_half_mean": 0.8695,
+    "second_half_mean": -0.0197,
+    "positive_years": "4/7"
+   },
+   "keep_fraction": 0.656,
+   "diff_lcb": -0.374,
+   "alpha": 0.0167,
+   "adopt": false
+  },
+  "F2_join_cushion_1_5_atr": {
+   "name": "join only with >= 1.5 ATR to the stop",
+   "all_mean": 0.3934,
+   "kept": {
+    "n": 10255,
+    "n_eff": 122.785,
+    "mean": 0.4078,
+    "lcb": 0.1519,
+    "mean_spot": 0.4274,
+    "win_rate": 39.6,
+    "profit_factor": 1.9502,
+    "first_half_mean": 0.7388,
+    "second_half_mean": 0.0769,
+    "positive_years": "4/7"
+   },
+   "excluded": {
+    "n": 2075,
+    "n_eff": 115.523,
+    "mean": 0.3218,
+    "lcb": -0.0303,
+    "mean_spot": 0.3372,
+    "win_rate": 23.66,
+    "profit_factor": 1.4825,
+    "first_half_mean": 0.6759,
+    "second_half_mean": -0.0319,
+    "positive_years": "4/7"
+   },
+   "keep_fraction": 0.832,
+   "diff_lcb": -0.2742,
+   "alpha": 0.0167,
+   "adopt": false
+  },
+  "F3_btc_above_sma100": {
+   "name": "enter only when BTC > SMA100",
+   "all_mean": 0.3897,
+   "kept": {
+    "n": 9971,
+    "n_eff": 89.347,
+    "mean": 0.47,
+    "lcb": 0.1603,
+    "mean_spot": 0.4882,
+    "win_rate": 39.34,
+    "profit_factor": 2.0574,
+    "first_half_mean": 0.8495,
+    "second_half_mean": 0.0905,
+    "positive_years": "4/6"
+   },
+   "excluded": {
+    "n": 3774,
+    "n_eff": 72.953,
+    "mean": 0.1777,
+    "lcb": -0.1755,
+    "mean_spot": 0.1979,
+    "win_rate": 31.77,
+    "profit_factor": 1.3499,
+    "first_half_mean": 0.2663,
+    "second_half_mean": 0.0892,
+    "positive_years": "4/7"
+   },
+   "keep_fraction": 0.725,
+   "diff_lcb": -0.2132,
+   "alpha": 0.0167,
+   "adopt": false
+  }
+ },
+ "profile_entries": {
+  "n": 1415,
+  "win_rate": 40.3,
+  "avg_win_r": 1.876,
+  "avg_loss_r": -0.666,
+  "median_r": -0.319,
+  "max_consecutive_losses": 29,
+  "top_decile_share_of_gains": 0.669,
+  "mean_without_top_decile": -0.1641
+ },
+ "profile_joins": {
+  "n": 12330,
+  "win_rate": 36.9,
+  "avg_win_r": 2.337,
+  "avg_loss_r": -0.744,
+  "median_r": -0.468,
+  "max_consecutive_losses": 259,
+  "top_decile_share_of_gains": 0.731,
+  "mean_without_top_decile": -0.2632
+ },
+ "profit_targets_same_entries": {
+  "target_1R": {
+   "n": 1415,
+   "n_eff": 115.158,
+   "mean": 0.1339,
+   "lcb": 0.0132,
+   "mean_spot": 0.1392,
+   "win_rate": 51.87,
+   "profit_factor": 1.3689,
+   "first_half_mean": 0.2893,
+   "second_half_mean": -0.0212,
+   "positive_years": "4/7"
+  },
+  "target_2R": {
+   "n": 1415,
+   "n_eff": 115.158,
+   "mean": 0.2404,
+   "lcb": 0.0713,
+   "mean_spot": 0.2514,
+   "win_rate": 41.06,
+   "profit_factor": 1.6074,
+   "first_half_mean": 0.4337,
+   "second_half_mean": 0.0473,
+   "positive_years": "4/7"
+  },
+  "target_3R": {
+   "n": 1415,
+   "n_eff": 115.158,
+   "mean": 0.2908,
+   "lcb": 0.0969,
+   "mean_spot": 0.3048,
+   "win_rate": 40.42,
+   "profit_factor": 1.7327,
+   "first_half_mean": 0.5227,
+   "second_half_mean": 0.0593,
+   "positive_years": "4/7"
+  }
+ },
+ "account_top50": {
+  "max_open_5": {
+   "trades_taken": 333,
+   "final_equity": 13459.22,
+   "cagr_pct": 4.96,
+   "max_drawdown_pct": 15.41,
+   "pnl_by_year": {
+    "2018": -516.87,
+    "2019": 314.48,
+    "2020": 1731.72,
+    "2021": 2365.69,
+    "2022": -1715.69,
+    "2023": 697.93,
+    "2024": 581.94
+   }
+  },
+  "max_open_8": {
+   "trades_taken": 493,
+   "final_equity": 14561.11,
+   "cagr_pct": 6.31,
+   "max_drawdown_pct": 22.0,
+   "pnl_by_year": {
+    "2018": -595.99,
+    "2019": 70.08,
+    "2020": 2678.46,
+    "2021": 3959.04,
+    "2022": -2838.86,
+    "2023": 735.27,
+    "2024": 553.11
+   }
+  },
+  "max_open_12": {
+   "trades_taken": 654,
+   "final_equity": 21495.37,
+   "cagr_pct": 13.27,
+   "max_drawdown_pct": 23.6,
+   "pnl_by_year": {
+    "2018": -595.99,
+    "2019": 213.54,
+    "2020": 4466.92,
+    "2021": 7464.37,
+    "2022": -4256.55,
+    "2023": 3407.04,
+    "2024": 796.04
+   }
+  }
+ }
+}

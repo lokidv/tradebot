@@ -73,8 +73,9 @@ def list_positions():
 
 
 def open_position(symbol, tf, side, entry, sl, tp, size_usdt, time_stop_min, grade="", mode="local", qty=None,
-                  opened_by="user", cost_pct=DEFAULT_COST_PCT, strategy=None, market="perp"):
-    """``tp=None``: بی‌هدف (قاعدهٔ روند — فقط حدضررِ دنباله‌دار). ``market="spot"``: بی‌فاندینگ."""
+                  opened_by="user", cost_pct=DEFAULT_COST_PCT, strategy=None, market="perp", ref=None):
+    """``tp=None``: بی‌هدف (قاعدهٔ روند — فقط حدضررِ دنباله‌دار). ``market="spot"``: بی‌فاندینگ.
+    ``ref``: ارجاعِ اختیاری به معاملهٔ قاعده‌ای که این پوزیشن دنبالش می‌کند (برای خروجِ هم‌پای قاعده)."""
     entry, sl, size_usdt = map(float, (entry, sl, size_usdt))
     tp = None if tp is None else float(tp)
     if side not in ("long", "short") or min(entry, sl, size_usdt) <= 0 or (tp is not None and tp <= 0):
@@ -93,7 +94,7 @@ def open_position(symbol, tf, side, entry, sl, tp, size_usdt, time_stop_min, gra
         "mode": mode, "qty": qty, "opened_by": opened_by,
         "cost_pct": max(float(cost_pct), 0.0),
         "r0": abs(entry - sl),                 # ریسکِ اولیه (برای محاسبهٔ R حتی بعد از جابه‌جاییِ حدضرر)
-        "strategy": strategy, "market": market,
+        "strategy": strategy, "market": market, "ref": ref,
     }
     with _lock:
         db = _load()

@@ -546,9 +546,7 @@ def report_now(write: bool = False):
 def trend_status(force: bool = False):
     """روندِ روزانه — نامزدِ پژوهشی و اثبات‌نشده: وضعیتِ قاعده‌ها روی ۲۰ ارزِ بزرگ،
     سیگنال‌های امروز، دفترِ رو-به-جلو و شواهدِ اکتشاف. هیچ مجوزی نمی‌دهد."""
-    out = dict(trend.snapshot(force=force))
-    out["demo_open"] = trend.demo_open_symbols()          # کش نمی‌شود: همین لحظه
-    return out
+    return trend.view(force=force)        # عکسِ روزانه (کش) + قیمتِ زندهٔ سیگنال‌های قابل‌اقدام
 
 
 class TrendDemoReq(BaseModel):
@@ -1304,5 +1302,6 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    print("🤖 ربات پایش بازار روی http://127.0.0.1:8787 بالا آمد — Ctrl+C برای توقف")
-    uvicorn.run(app, host="127.0.0.1", port=8787, log_level="warning")
+    port = int(os.environ.get("TRADERBOT_PORT") or os.environ.get("PORT") or 8787)
+    print(f"🤖 ربات پایش بازار روی http://127.0.0.1:{port} بالا آمد — Ctrl+C برای توقف")
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")

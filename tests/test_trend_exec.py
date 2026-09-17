@@ -109,7 +109,9 @@ class _Base(unittest.TestCase):
             json.dump(dict(gates.DEFAULTS), f)
         gates.load_gates(force=True)
         self.market = mock.patch.multiple(trend_exec.market,
-                                          current_bar_open=mock.Mock(return_value=(BAR_OPEN, 80_000.0)),
+                                          current_bar=mock.Mock(return_value={
+                                              "t": BAR_OPEN, "o": 80_000.0, "h": 80_500.0,
+                                              "l": 79_500.0, "c": 80_100.0}),
                                           spot_price=mock.Mock(return_value=80_100.0))
         self.market.start()
 
@@ -194,6 +196,16 @@ class EntryTests(_Base):
         self.assertEqual(bk.calls, [])
         self.assertIn("testnet_price_gap", trend_exec.summary()["execution"]["missed_by_reason"])
 
+    def test_a_stop_already_touched_today_kills_the_entry(self):
+        """کفِ امروز حدضرر را زده و قیمت برگشته: قاعدهٔ کاغذی بیرون است؛ ورود یعنی معاملهٔ نیازموده."""
+        bk = FakeTestnet({"BTCUSDT": 80_100.0})
+        self.permit()
+        bar = {"t": BAR_OPEN, "o": 80_000.0, "h": 80_500.0, "l": 73_900.0, "c": 80_100.0}
+        with mock.patch.object(trend_exec.market, "current_bar", return_value=bar):
+            self.step(bk, _snap(signals=[_signal()]))
+        self.assertEqual(bk.calls, [])
+        self.assertEqual(trend_exec.summary()["execution"]["missed_by_reason"], {"stop_breached_today": 1})
+
     def test_symbol_missing_on_testnet_is_recorded_as_missed(self):
         bk = FakeTestnet({"SOLUSDT": 100.0}, listed=())
         self.permit()
@@ -211,7 +223,7 @@ class EntryTests(_Base):
     def test_transient_errors_are_retried_on_the_next_round(self):
         bk = FakeTestnet({"BTCUSDT": 80_100.0})
         self.permit()
-        with mock.patch.object(trend_exec.market, "current_bar_open", side_effect=RuntimeError("net")):
+        with mock.patch.object(trend_exec.market, "current_bar", side_effect=RuntimeError("net")):
             self.step(bk, _snap(signals=[_signal()]))
         self.assertEqual(bk.calls, [])
         self.step(bk, _snap(signals=[_signal()]), hours=1.2)

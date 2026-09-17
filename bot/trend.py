@@ -107,14 +107,17 @@ def state_now(daily, key):
         if n < 30:
             continue
         last = float(k["c"][-1])
+        atr = float(explore.engine.atr(k["h"], k["l"], k["c"], 20)[-1])
         row = {"sym": sym, "last": last, "in_position": False, "category": "watch",
-               "universe": universe_of(sym)}
+               "universe": universe_of(sym), "atr": atr}
+        exits = []
         for i, e, entry, R, res in explore.trend_paths(sym, k, spec, _FIXED_UNIVERSE):
             if res is not None and res["outcome"] == "end_of_data":
                 stop = float(res["stop"])
                 days = n - e                   # پیوستن الان = openِ کندلِ جاری، n−e روز پس از ورودِ قاعده
                 joinable = 1 <= days <= JOIN_MAX_DAYS and last > stop and not res.get("exit_pending")
-                row.update(in_position=True, entry_ts=int(k["t"][e]), entry_px=entry, stop=stop,
+                row.update(in_position=True, entry_ts=int(k["t"][e]), rule_entry_ts=int(k["t"][e]),
+                           entry_px=entry, stop=stop,
                            open_r=spec["side"] * (last - entry) / R, days_in=days,
                            stop_distance_pct=(last - stop) / last * 100,
                            counted=int(k["t"][i]) >= TRACKING_START_MS,
@@ -123,7 +126,12 @@ def state_now(daily, key):
             elif res is None:
                 # شکست روی آخرین بسته: ورود در openِ کندلِ جاری (~بستهٔ دیروز)، حدضرر R پایین‌تر
                 row.update(signal_today=True, category="new", stop=last - R,
+                           rule_entry_ts=int(k["t"][-1]) + explore.DAY_MS,
                            stop_distance_pct=R / last * 100)
+            else:
+                exits.append({"entry_ts": int(k["t"][e]), "exit_ts": int(k["t"][res["exit_idx"]]),
+                              "exit_px": float(res["exit_px"]), "outcome": res["outcome"]})
+        row["recent_exits"] = exits[-3:]       # برای خروجِ هم‌پای قاعده در پوزیشن‌های دمو
         if row["category"] == "watch" and spec["rule"] == "donchian":
             trigger = float(np.max(k["h"][n - spec["n"]:n]))   # سقفِ همین ۲۰ کندلِ بسته‌شده
             row.update(trigger=trigger, distance_pct=(trigger / last - 1) * 100)
@@ -274,9 +282,29 @@ def dev_evidence():
                "p_adj_top50": ((ur.get("romano_wolf") or {}).get("U_top50") or {}).get("p_adj"),
                "rw_family_size": ur.get("rw_family_size"),
                "extend_to_top50": ur.get("extend_to_top50")}
+    behaviour = None
+    ffiles = sorted(glob.glob(os.path.join(explore.OUT_DIR, "filters_*.json")))
+    if ffiles:
+        with open(ffiles[-1], "r", encoding="utf-8") as f:
+            fr = json.load(f)
+        tg = fr.get("profit_targets_same_entries") or {}
+        f2 = (fr.get("filters") or {}).get("F2_join_cushion_1_5_atr") or {}
+        behaviour = {
+            "report": os.path.basename(ffiles[-1]),
+            "profile": fr.get("profile_entries"),
+            "hold_mean": (fr.get("baseline_entries") or {}).get("mean"),
+            "target_means": {k: (v or {}).get("mean") for k, v in tg.items()},
+            "target_1r_second_half": (tg.get("target_1R") or {}).get("second_half_mean"),
+            "filters_adopted": [k for k, v in (fr.get("filters") or {}).items() if v.get("adopt")],
+            "filters_tested": list((fr.get("filters") or {}).keys()),
+            "tight_win_rate": (f2.get("excluded") or {}).get("win_rate"),
+            "normal_win_rate": (f2.get("kept") or {}).get("win_rate"),
+            "account_top50": {k: {x: v.get(x) for x in ("cagr_pct", "max_drawdown_pct", "trades_taken")}
+                              for k, v in (fr.get("account_top50") or {}).items()},
+        }
     return {"report": os.path.basename(files[-1]), "cutoff_ms": rep.get("cutoff_ms"),
             "btc_buy_and_hold": (rep.get("robustness") or {}).get("btc_buy_and_hold"), "rules": rules,
-            "joins": joins, "join_max_days": JOIN_MAX_DAYS, "universe": uni}
+            "joins": joins, "join_max_days": JOIN_MAX_DAYS, "universe": uni, "behaviour": behaviour}
 
 
 # ───────────────────────── پوزیشنِ دمو برای سیگنالِ امروز ─────────────────────────
@@ -285,14 +313,104 @@ DEMO_MAX_HOLD_MIN = 120 * 1440                 # همان حدِ زمانیِ ۱
 DEMO_RISK_RANGE = (0.1, 2.0)                   # درصدِ موجودی در هر معامله
 
 
-def demo_open_symbols():
+DEMO_MAX_HEAT_PCT = 4.0                        # سقفِ مجموعِ ریسکِ بازِ پوزیشن‌های روند (٪ موجودی)
+LIVE_TTL_SEC = 60
+# پیوستن با فاصلهٔ کمتر از ۱٫۵ ATR تا حدضرر: روی دادهٔ اکتشاف فقط ~۲۴٪ برد (در برابرِ ~۴۰٪) و کرانِ
+# پایینِ منفی — فیلترِ حذف از آزمونِ ازپیش‌گفته رد شد (explore.filter_study)، پس حذف نمی‌شود؛ فقط هشدار.
+TIGHT_CUSHION_ATR = explore.MIN_CUSHION_ATR
+_live_cache = {}
+
+
+def live_bar(sym, bar_fn=None):
+    """کندلِ روزانهٔ جاری (قیمتِ همین لحظه + کفِ امروز) با کشِ ۶۰ ثانیه‌ای."""
+    now = time.time()
+    hit = _live_cache.get(sym)
+    if bar_fn is None and hit and now - hit[0] < LIVE_TTL_SEC:
+        return hit[1]
+    bar = (bar_fn or (lambda s: market.current_bar(s, "1d")))(sym)
+    _live_cache[sym] = (now, bar)
+    return bar
+
+
+def with_live(row, bar):
+    """سیگنالِ روزانه + واقعیتِ همین لحظه.
+
+    کارت قبلاً «ورود ~بستهٔ دیروز» را نشان می‌داد؛ کاربری که ۱۷ ساعت بعد خرید، ۹٪ پایین‌تر و با نصفِ
+    فاصله تا حدضرر وارد شد و هیچ‌جا این را ندید. و اگر کفِ همین امروز حدضررِ قاعده را زده باشد،
+    قاعده عملاً بیرون است — سیگنال مرده، هرچند تا بسته‌شدنِ کندل در دادهٔ روزانه دیده نمی‌شود.
+    """
+    out = dict(row)
+    stop, live = float(row["stop"]), float(bar["c"])
+    day_open, day_low = float(bar["o"]), float(bar["l"])
+    breached = day_low <= stop or live <= stop
+    cushion = (live - stop) / row["atr"] if row.get("atr") else None
+    out.update(live=live, day_open=day_open, day_low=day_low, live_bar_ts=int(bar["t"]),
+               moved_from_open_pct=(live / day_open - 1) * 100 if day_open > 0 else None,
+               live_stop_distance_pct=(live - stop) / live * 100 if live > 0 else None,
+               live_cushion_atr=cushion, valid=not breached,
+               invalid_reason="stop_breached_today" if breached else None,
+               tight=bool(not breached and cushion is not None and cushion < TIGHT_CUSHION_ATR))
+    return out
+
+
+def actionable_live(rows, bar_fn=None):
+    """ردیف‌های «ورودِ تازه» و «پیوستن» با قیمتِ زنده؛ بی‌قیمتِ زنده = نامعتبر (نه «فرض کن خوب است»)."""
+    out = []
+    for r in rows or []:
+        if r.get("category") not in ("new", "join"):
+            out.append(r)
+            continue
+        try:
+            out.append(with_live(r, live_bar(r["sym"], bar_fn)))
+        except Exception:  # noqa: BLE001, silent-ok — در خودِ ردیف گزارش می‌شود
+            out.append(dict(r, valid=False, invalid_reason="no_live_price"))
+    return out
+
+
+def view(force=False, bar_fn=None):
+    """آنچه ‎/api/trend‎ برمی‌گرداند: عکسِ روزانه (کش) + قیمتِ زندهٔ سیگنال‌های قابل‌اقدام (همین لحظه)."""
+    snap = snapshot(force=force)
+    rows = actionable_live(snap.get("now"), bar_fn)
+    expected = (snap.get("last_closed_bar_ms") or 0) + explore.DAY_MS
+    if not force and any(r.get("live_bar_ts") and r["live_bar_ts"] > expected for r in rows):
+        snap = snapshot(force=True)              # کندلِ روزانهٔ تازه بسته شده؛ عکسِ کش‌شده کهنه است
+        rows = actionable_live(snap.get("now"), bar_fn)
+    out = dict(snap)
+    out["now"] = rows
+    out["demo_open"] = demo_open_symbols()
+    out["demo_heat_pct"] = round(_demo_heat_pct(), 3)
+    out["demo_max_heat_pct"] = DEMO_MAX_HEAT_PCT
+    return out
+
+
+def _trend_positions():
     import paper
-    return sorted({p["symbol"] for p in paper.list_positions()["open"] if p.get("strategy") == DEMO_STRATEGY})
+    return [p for p in paper.list_positions()["open"] if p.get("strategy") == DEMO_STRATEGY]
 
 
-def open_demo(symbol, risk_pct=0.5, price=None, now_rows=None):
-    """پوزیشنِ دمو برای سیگنالِ قابل‌اقدامِ امروز: خرید در قیمتِ فعلی با حدضررِ قاعده، بی‌هدف،
-    هزینهٔ اسپات (بی‌فاندینگ)، حجم = موجودیِ دمو × ریسک٪ ÷ فاصلهٔ حدضرر — و بی‌اهرم."""
+def demo_open_symbols():
+    return sorted({p["symbol"] for p in _trend_positions()})
+
+
+def _demo_equity():
+    import paper
+    w = paper.wallet_summary()
+    return float(w.get("equity") or w.get("balance") or 0.0)
+
+
+def _demo_heat_pct():
+    """مجموعِ ریسکِ بازِ پوزیشن‌های روند برحسبِ ٪ موجودی (ضررِ هم‌زمانِ همه تا حدضرر)."""
+    equity = _demo_equity()
+    if equity <= 0:
+        return 0.0
+    risk = sum(float(p["size_usdt"]) * max(float(p["entry"]) - float(p["sl"]), 0.0) / float(p["entry"])
+               for p in _trend_positions())
+    return risk / equity * 100.0
+
+
+def open_demo(symbol, risk_pct=0.5, now_rows=None, bar=None):
+    """پوزیشنِ دمو برای سیگنالِ قابل‌اقدامِ امروز: خرید در قیمتِ **زنده** با حدضررِ قاعده، بی‌هدف،
+    هزینهٔ اسپات (بی‌فاندینگ)، حجم = موجودیِ دمو × ریسک٪ ÷ فاصلهٔ زنده تا حدضرر — و بی‌اهرم."""
     import paper
     rows = now_rows if now_rows is not None else (snapshot().get("now") or [])
     row = next((r for r in rows if r["sym"] == symbol), None)
@@ -300,39 +418,61 @@ def open_demo(symbol, risk_pct=0.5, price=None, now_rows=None):
         raise ValueError(f"{symbol} الان سیگنالِ ورود یا پیوستن ندارد")
     if symbol in demo_open_symbols():
         raise ValueError(f"پوزیشنِ دموی روند روی {symbol} از قبل باز است")
-    price = float(price if price is not None else market.last_price(symbol))
-    stop = float(row["stop"])
-    if price <= stop:
-        raise ValueError("قیمت زیرِ حدضررِ قاعده است — ورود بی‌معناست")
+    try:
+        lv = with_live(row, bar if bar is not None else live_bar(symbol))
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"قیمتِ زنده در دسترس نیست — بدونِ آن وارد نمی‌شوم ({e})")
+    if not lv["valid"]:
+        raise ValueError(f"سیگنالِ {symbol} باطل شده: قیمتِ امروز تا {lv['day_low']:g} پایین آمده و به حدضررِ "
+                         f"قاعده ({lv['stop']:g}) رسیده است — قاعده عملاً از این روند بیرون است")
+    price, stop = lv["live"], float(row["stop"])
     risk_pct = min(max(float(risk_pct), DEMO_RISK_RANGE[0]), DEMO_RISK_RANGE[1])
-    w = paper.wallet_summary()
-    equity = float(w.get("equity") or w.get("balance") or 0.0)
+    equity = _demo_equity()
     if equity <= 0:
         raise ValueError("موجودیِ دمو صفر است")
+    heat = _demo_heat_pct()
+    if heat + risk_pct > DEMO_MAX_HEAT_PCT + 1e-9:
+        raise ValueError(f"ریسکِ بازِ پوزیشن‌های روند {heat:.1f}٪ است؛ با این معامله از سقفِ {DEMO_MAX_HEAT_PCT:g}٪ "
+                         "می‌گذرد — ارزها با هم حرکت می‌کنند و همه می‌توانند هم‌زمان حدضرر بخورند")
     size = min(equity * risk_pct / 100.0 / ((price - stop) / price), equity)
     label = "ورودِ تازه" if row["category"] == "new" else f"پیوستن — روزِ {row.get('days_in')}"
     return paper.open_position(symbol, "1d", "long", price, stop, None, round(size, 2), DEMO_MAX_HOLD_MIN,
                                grade=f"روند: {label}", opened_by="user",
-                               cost_pct=explore.SPOT_ROUND_TRIP_PCT, strategy=DEMO_STRATEGY, market="spot")
+                               cost_pct=explore.SPOT_ROUND_TRIP_PCT, strategy=DEMO_STRATEGY, market="spot",
+                               ref={"rule": PRIMARY, "rule_entry_ts": row.get("rule_entry_ts")})
 
 
 def sync_demo(now_rows=None, price_fn=None):
-    """حدضررِ پوزیشن‌های دموی روند را هم‌پای قاعده فقط بالا می‌برد؛ اگر قاعده بیرون آمده، می‌بندد."""
+    """پوزیشن‌های دموی روند هم‌پای **همان معاملهٔ قاعده**: حدضرر فقط بالا می‌رود، و وقتی آن معامله
+    بسته شد، دمو با **قیمتِ خروجِ خودِ قاعده** بسته می‌شود.
+
+    نسخهٔ قبلی «قاعده بیرون است ⇒ با قیمتِ همین لحظه ببند» بود. FIL در ۲۰۲۶-۰۹-۱۶ ساعتِ ۱۲ UTC حدضررِ
+    ۰٫۷۷۳ را زد، برنامه آن لحظه باز نبود، و دمو فردایش در ۰٫۷۹۶۷ بسته شد: ضررِ ۳۶ دلاری به‌جای ~۵۰
+    دلاری که سفارشِ حدضررِ واقعی می‌ساخت. دمویی که خوش‌بینانه حساب کند، کاربر را گمراه می‌کند.
+    """
     import paper
     rows = {r["sym"]: r for r in (now_rows if now_rows is not None else (snapshot().get("now") or []))}
     price_fn = price_fn or market.last_price
     moved = closed = 0
-    for p in paper.list_positions()["open"]:
-        if p.get("strategy") != DEMO_STRATEGY:
-            continue
+    for p in _trend_positions():
         r = rows.get(p["symbol"])
         if r is None:
             continue                                 # بی‌داده: دست نزن
-        if r.get("in_position") or r.get("category") == "new":
+        ref_ts = (p.get("ref") or {}).get("rule_entry_ts")
+        active_ts = r.get("rule_entry_ts") if (r.get("in_position") or r.get("category") == "new") else None
+        if active_ts is not None and (ref_ts is None or int(active_ts) == int(ref_ts)):
             if float(r["stop"]) > float(p["sl"]) * (1 + 1e-9) and paper.move_sl(p["id"], float(r["stop"])):
                 moved += 1
-        elif paper.close_with(p["id"], float(price_fn(p["symbol"])), "خروجِ قاعدهٔ روند"):
-            closed += 1                              # قاعده دیگر در پوزیشن نیست
+            continue
+        exits = r.get("recent_exits") or []
+        ex = next((x for x in reversed(exits) if ref_ts is None or int(x["entry_ts"]) == int(ref_ts)), None)
+        if ex is not None:
+            stopped = ex["outcome"] in ("stop", "gap_stop")
+            px = paper._apply_slippage(ex["exit_px"], p["side"], p.get("cost_pct")) if stopped else float(ex["exit_px"])
+            done = paper.close_with(p["id"], px, "حدضررِ قاعدهٔ روند" if stopped else "خروجِ قاعدهٔ روند")
+        else:                                        # معاملهٔ مرجع در پنجرهٔ داده پیدا نشد
+            done = paper.close_with(p["id"], float(price_fn(p["symbol"])), "خروجِ قاعدهٔ روند")
+        closed += 1 if done else 0
     return {"moved": moved, "closed": closed}
 
 

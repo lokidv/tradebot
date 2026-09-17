@@ -605,7 +605,7 @@ function trendTestnetHtml(x){
 
 function notifyTrendSignals(d){
   // هر سیگنالِ روند (بستهٔ روزانه بالای سقفِ ۲۰روزه) فقط یک‌بار — حتی پس از بازکردنِ دوبارهٔ صفحه
-  const fresh = (d.now||[]).filter(x => x.signal_today).map(x => `${x.sym}:${d.last_closed_bar_ms}`);
+  const fresh = (d.now||[]).filter(x => x.signal_today && x.valid !== false).map(x => `${x.sym}:${d.last_closed_bar_ms}`);
   let seen = [];
   try{ seen = JSON.parse(localStorage.trendSeen || "[]"); }catch(e){}
   const news = fresh.filter(id => !seen.includes(id));
@@ -635,9 +635,35 @@ async function openTrendDemo(sym){
 }
 
 function trendDemoBtn(x){
+  if(x.valid === false) return "";                       // سیگنالِ باطل یا بی‌قیمتِ زنده: دکمه‌ای نیست
   const open = ((window.TREND||{}).demo_open||[]).includes(x.sym);
   return open ? `<span class="mid">✓ در دمو باز است</span>`
               : `<button class="gear" style="padding:3px 10px;font-size:12px" onclick="openTrendDemo('${x.sym}')">▶ خرید در دمو</button>`;
+}
+
+// قیمتِ **همین لحظه** و فاصلهٔ واقعی تا حدضرر — نه بستهٔ دیروز. (FIL در ۲۰۲۶-۰۹-۱۵: کارت ۰٫۹۳۵۶ نشان می‌داد،
+// خرید در ۰٫۸۵۲ انجام شد؛ فاصله تا حدضرر نصف شده بود و هیچ‌جا دیده نمی‌شد.)
+function trendLive(x){
+  return {price: x.live != null ? x.live : x.last,
+          dist: x.live_stop_distance_pct != null ? x.live_stop_distance_pct : x.stop_distance_pct};
+}
+function trendPriceHtml(x){
+  const L = trendLive(x), mv = x.moved_from_open_pct;
+  const moved = (mv != null && Math.abs(mv) >= 1)
+    ? ` <small class="${mv<0?"dn":"up"}">(${mv>0?"+":""}${fmt(mv,1)}٪ از بازِ امروز)</small>` : "";
+  return `${x.live != null ? "قیمتِ فعلی" : "ورود ~"} <b class="num">${px(L.price)}</b>${moved}`;
+}
+function trendWarnHtml(x){
+  if(x.valid === false)
+    return x.invalid_reason === "stop_breached_today"
+      ? `<span class="dn">⛔ باطل شد — قیمتِ امروز تا ${px(x.day_low)} پایین آمد و به حدضررِ قاعده رسید؛ قاعده از این روند بیرون است</span>`
+      : `<span class="mid">⏳ قیمتِ زنده در دسترس نیست — تا نیاید، قابل‌اقدام نیست</span>`;
+  if(x.tight){
+    const b = (((window.TREND||{}).evidence||{}).behaviour)||{};
+    return `<span style="color:var(--brass)">⚠ حدضرر نزدیک است (${fmt(x.live_cushion_atr,1)} ATR) — در تاریخچه فقط ~${fmt(b.tight_win_rate,0)}٪ این ورودها
+      به سود رسیده‌اند (ورودِ عادی ~${fmt(b.normal_win_rate,0)}٪)؛ حجم بزرگ‌تر و احتمالِ خوردنِ حدضرر بیشتر است</span>`;
+  }
+  return "";
 }
 
 function setTrendSizing(){
@@ -653,9 +679,11 @@ async function loadTrendBanner(){
     ]);
     const el = $("#trendBanner"); if(!el) return;
     if(!d.rules){ setTimeout(loadTrendBanner, 15000); return; }   // سرور تازه بالا آمده — زود دوباره
+    const ae = document.activeElement;                            // وسطِ تایپِ سرمایه/ریسک، پنل را از نو نساز
+    if(ae && (ae.id === "trCap" || ae.id === "trRisk")){ window.TREND = d; return; }
     const P = d.primary, evd = d.evidence || {}, ev = (evd.rules||{})[P] || {}, acct = ev.account || {};
     const jn = (evd.joins||{}).offsets || {}, fw = (d.forward||{})[P] || {n:0};
-    const fw50 = (d.forward||{})[P + "@top50"] || {n:0}, uv = evd.universe || {};
+    const fw50 = (d.forward||{})[P + "@top50"] || {n:0}, uv = evd.universe || {}, bh = evd.behaviour || {};
     const day = ms => new Date(ms).toLocaleDateString("fa-IR");
     const coin = s => s.replace("USDT","");
     // اندازهٔ معامله: ارزشِ پوزیشن = سرمایه × ریسک٪ ÷ فاصلهٔ حدضرر٪
@@ -667,9 +695,13 @@ async function loadTrendBanner(){
     const act = [...by("new"), ...by("join")], late = by("late"), watch = by("watch");
     window.TREND = d;                                    // دکمهٔ دمو وضعیتِ «باز است» را از همین می‌خواند
     const tag = x => x.universe === "top50" ? ` <small class="mid">۵۰برتر</small>` : "";
-    const buy = (x, label) => `<tr><td><b>${coin(x.sym)}</b>${tag(x)}</td><td class="up">${label}</td>
-        <td class="num">ورود ~${px(x.last)}</td><td class="num">حدضرر ${px(x.stop)} <small class="mid">(−${fmt(x.stop_distance_pct,1)}٪)</small></td>
-        <td class="num">${size(x.stop_distance_pct)}</td><td>${trendDemoBtn(x)}</td></tr>`;
+    const buy = (x, label) => {
+      const L = trendLive(x), warn = trendWarnHtml(x), dead = x.valid === false;
+      return `<tr style="${dead?"opacity:.55":""}"><td><b>${coin(x.sym)}</b>${tag(x)}</td><td class="${dead?"mid":"up"}">${label}</td>
+        <td class="num">${trendPriceHtml(x)}</td><td class="num">حدضرر ${px(x.stop)} <small class="mid">(−${fmt(L.dist,1)}٪)</small></td>
+        <td class="num">${dead ? "" : size(L.dist)}</td><td>${trendDemoBtn(x)}</td></tr>
+        ${warn ? `<tr><td></td><td colspan="5" style="white-space:normal;border-top:0;padding-top:0">${warn}</td></tr>` : ""}`;
+    };
     const actRows = act.map(x => x.category === "new"
         ? buy(x, "🟢 ورودِ تازه — شکستِ سقفِ ۲۰روزه")
         : buy(x, `🟡 پیوستن مجاز — روزِ ${x.days_in} روند`));
@@ -683,9 +715,11 @@ async function loadTrendBanner(){
       <div class="top"><span>📈 <b>سیگنال‌های روندِ روزانه</b> — فقط خرید، روی هر صرافیِ اسپات · بی‌اهرم · <b>اثبات‌نشده</b></span>
         <span class="mid">${(d.symbols||[]).length} ارزِ بزرگ · به‌روزرسانی هر روز ساعتِ ۳:۳۰ بامدادِ تهران (۰۰:۰۰ UTC)</span></div>
       <div class="sub">روش: در قیمتِ فعلی بخرید و حدضررِ نوشته‌شده را در صرافی بگذارید. هدفِ ثابت ندارد — هر روز حدضررِ تازه را
-        از همین‌جا بخوانید و فقط رو به بالا جابه‌جا کنید، تا وقتی بخورد.
+        از همین‌جا بخوانید و فقط رو به بالا جابه‌جا کنید، تا وقتی بخورد. بهترین زمانِ ورود نزدیکِ بازشدنِ کندلِ روزانه است (۳:۳۰ بامدادِ تهران)؛
+        قیمت‌ها زنده‌اند و اگر کفِ امروز به حدضرر برسد سیگنال باطل می‌شود.
         سرمایه: <input id="trCap" class="cfgin" style="width:90px;padding:2px 6px" value="${cap||""}" placeholder="USDT" onchange="setTrendSizing()">
-        ریسکِ هر معامله: <input id="trRisk" class="cfgin" style="width:52px;padding:2px 6px" value="${risk}" onchange="setTrendSizing()">٪</div>
+        ریسکِ هر معامله: <input id="trRisk" class="cfgin" style="width:52px;padding:2px 6px" value="${risk}" onchange="setTrendSizing()">٪
+        ${d.demo_heat_pct != null ? `· ریسکِ بازِ دمو: <b class="num">${fmt(d.demo_heat_pct,1)}٪</b> از سقفِ ${fmt(d.demo_max_heat_pct,0)}٪` : ""}</div>
       ${actRows.length ? table(actRows) : `<div class="sub" style="margin-top:6px"><b>امروز سیگنالِ ورود یا پیوستن نیست.</b> ارزهای «در کمین» پایین‌تر آمده‌اند.</div>`}
       ${table(watchRows)}
       ${lateRows.length ? `<details style="margin-top:6px"><summary class="sub" style="cursor:pointer">${lateRows.length} روندِ قدیمی‌تر (برای ورود دیر؛ حدضررِ امروز برای کسی که از قبل دارد)</summary>${table(lateRows)}</details>` : ""}
@@ -697,6 +731,14 @@ async function loadTrendBanner(){
         فقط ${fmt(ev.win_rate,0)}٪ معامله‌ها سود می‌دهند — بیشترِ معامله‌ها با ضررِ کوچک بسته می‌شوند و سود از چند روندِ بزرگ می‌آید.
         پس از تصحیح برای ${uv.rw_family_size||20} فرضیه: ۵۰ ارز <b>p=${fmt(uv.p_adj_top50,3)}</b> (معنادار)، ۲۰ ارز p=${fmt(ev.p_adj,2)} (نه) —
         ولی ارزهای حذف‌شده از صرافی در داده نیستند، پس احتمالاً کمی خوش‌بینانه است؛ و لبه در سال‌های گاوی بوده (۲۰۲۲ منفی، ۲۰۲۴ نزدیکِ صفر).</div>
+      ${bh.profile ? `<div class="sub"><b>باختِ تکی عادی است؛ سود از نگه‌داشتنِ برنده‌ها می‌آید:</b>
+        ${fmt(100-bh.profile.win_rate,0)}٪ معامله‌ها می‌بازند (میانگینِ باخت ${fmt(bh.profile.avg_loss_r,2)}R، میانگینِ برد +${fmt(bh.profile.avg_win_r,2)}R) ·
+        ۱۰٪ بهترین معامله‌ها ${fmt(bh.profile.top_decile_share_of_gains*100,0)}٪ کلِ سود را می‌سازند و بدونِ آن‌ها میانگین ${fmt(bh.profile.mean_without_top_decile,2)}R است ·
+        تا ${bh.profile.max_consecutive_losses} باختِ پیاپی در تاریخچه دیده شده ·
+        <b>بستنِ زودهنگامِ سود</b> روی همان ورودها: بی‌هدف ${fmt(bh.hold_mean,2)}R ← هدفِ ۳R ${fmt((bh.target_means||{}).target_3R,2)} ← ۲R ${fmt((bh.target_means||{}).target_2R,2)} ← ۱R ${fmt((bh.target_means||{}).target_1R,2)}R
+        (و در نیمهٔ دومِ دوره ${fmt(bh.target_1r_second_half,2)}R) ·
+        حسابِ فرضیِ ۵۰ ارز با ریسکِ ۰٫۵٪: ${Object.entries(bh.account_top50||{}).map(([k,v])=>`سقفِ ${k.replace("max_open_","")} پوزیشن ${fmt(v.cagr_pct,0)}٪ سالانه/افتِ ${fmt(v.max_drawdown_pct,0)}٪`).join("، ")} ·
+        ${(bh.filters_tested||[]).length} فیلترِ ورود (بالای سقفِ شکسته‌شده، فاصلهٔ حدضرر، روندِ BTC) آزموده شد و ${(bh.filters_adopted||[]).length ? "پذیرفته شد: "+bh.filters_adopted.join("، ") : "هیچ‌کدام معیارِ ازپیش‌گفته را نگذراند — چیزی به قاعده اضافه نشد"}.</div>` : ""}
       <div class="sub">کارنامهٔ رو-به-جلو از ${day(d.tracking_start_ms)} — ۲۰ ارزِ اصلی: ${fw.n||0} معاملهٔ بسته${fw.n?` · میانگین ${fmt(fw.mean,2)}R`:""}
         · ۳۰ ارزِ افزوده: ${fw50.n||0}${fw50.n?` · میانگین ${fmt(fw50.mean,2)}R`:""}</div>
       ${(d.missing_data||[]).length ? `<div class="sub" style="color:var(--brass)">بی‌داده: ${d.missing_data.map(coin).join("، ")}</div>` : ""}
@@ -975,17 +1017,21 @@ function trendSignalRows(){
       .map(x => `${coin(x.sym)} (بستهٔ بالای ${px(x.trigger)} — ${fmt(x.distance_pct,1)}٪ فاصله)`).join("، ");
     return head + `<tr><td colspan="13" class="loading">امروز سیگنالِ ورود یا پیوستن نیست. نزدیک‌ترین‌ها: ${near || "—"}</td></tr>`;
   }
-  return head + act.map(x => `<tr><td colspan="13" style="padding:11px 12px;line-height:1.9">
+  return head + act.map(x => {
+    const L = trendLive(x), dead = x.valid === false, warn = trendWarnHtml(x);
+    const label = x.category === "new" ? "🟢 ورودِ تازه — شکستِ سقفِ ۲۰روزه" : `🟡 پیوستن مجاز — روزِ ${x.days_in} روند`;
+    return `<tr><td colspan="13" style="padding:11px 12px;line-height:1.9;${dead?"opacity:.6":""}">
       <b style="font-size:15px">${coin(x.sym)}</b>${x.universe === "top50" ? ` <small class="mid">۵۰برتر</small>` : ""} &nbsp;
-      ${x.category === "new" ? `<span class="up">🟢 ورودِ تازه — شکستِ سقفِ ۲۰روزه</span>`
-                             : `<span class="up">🟡 پیوستن مجاز — روزِ ${x.days_in} روند</span>`}
-      · ورود ~<b class="num">${px(x.last)}</b>
-      · حدضرر <b class="num">${px(x.stop)}</b> <small class="mid">(−${fmt(x.stop_distance_pct,1)}٪)</small>
-      · ${cap > 0 ? `خرید به ارزشِ <b class="num">${fmt(cap*risk/x.stop_distance_pct,0)} USDT</b> <small class="mid">(ریسکِ ${risk}٪ از ${fmt(cap,0)})</small>`
+      <span class="${dead?"mid":"up"}">${label}</span>
+      · ${trendPriceHtml(x)}
+      · حدضرر <b class="num">${px(x.stop)}</b> <small class="mid">(−${fmt(L.dist,1)}٪)</small>
+      ${dead ? "" : `· ${cap > 0 ? `خرید به ارزشِ <b class="num">${fmt(cap*risk/L.dist,0)} USDT</b> <small class="mid">(ریسکِ ${risk}٪ از ${fmt(cap,0)})</small>`
                   : `<span class="mid">حجم: سرمایه را در پنلِ روند وارد کنید</span>`}
-      · <span class="mid">خروج: حدضررِ دنباله‌دار — هر روز ۳:۳۰ بامدادِ تهران از پنلِ روند بخوانید و فقط بالا ببرید</span>
+      · <span class="mid">خروج: حدضررِ دنباله‌دار — هر روز ۳:۳۰ بامدادِ تهران از پنلِ روند بخوانید و فقط بالا ببرید</span>`}
       &nbsp; ${trendDemoBtn(x)}
-    </td></tr>`).join("");
+      ${warn ? `<br>${warn}` : ""}
+    </td></tr>`;
+  }).join("");
 }
 
 function renderTable(){
@@ -1286,7 +1332,7 @@ function posCard(p, open){
     <div class="row"><span>سود/زیان</span><b class="num ${cls(p.pnl_pct)}">${pct(p.pnl_pct)} (${fmt(p.pnl_usdt,2)}$)</b></div>
     ${adv}
     ${open ? `<div class="row"><span>حجم / حداکثر ضرر</span><b class="num">${fmt(p.size_usdt,0)}$ / <span class="dn">−${fmt(p.size_usdt*rp/100,1)}$</span></b></div>
-              <button class="btn close" onclick="closePos('${p.id}')">بستن دستی</button>`
+              <button class="btn close" onclick="${p.strategy==="trend20" ? `closeTrendPos('${p.id}','${p.symbol}')` : `closePos('${p.id}')`}">بستن دستی</button>`
            : `<div class="row"><span>دلیل خروج</span><b>${p.close_reason}</b></div>`}
   </div>`;
 }
@@ -1376,6 +1422,20 @@ async function moveBE(id){
   const r = await fetch(`/api/positions/${id}/breakeven`, {method:"POST"});
   if(r.ok){ toast("🛡️ حدضرر به سربه‌سر منتقل شد — این معامله دیگر ضرر نمی‌شود"); loadPositions(); }
   else { const d = await r.json().catch(()=>({})); toast("❌ " + (d.detail||"خطا"), false); }
+}
+// بستنِ دستیِ پوزیشنِ روند وقتی قاعده هنوز در روند است = کوتاه‌کردنِ برنده‌ها؛ همان چیزی که لبهٔ این روش را از بین می‌برد.
+// جلوگیری نمی‌کنیم (تصمیم با کاربر است)، ولی عددِ واقعی را پیش از تأیید نشان می‌دهیم.
+function closeTrendPos(id, sym){
+  const t = window.TREND || {}, row = (t.now||[]).find(x => x.sym === sym);
+  const b = ((t.evidence||{}).behaviour) || {}, tm = b.target_means || {};
+  if(row && row.in_position && b.hold_mean != null){
+    const msg = `قاعدهٔ روند هنوز در ${sym.replace("USDT","")} است (حدضررِ امروز ${px(row.stop)}).\n\n` +
+      `در تاریخچه، نگه‌داشتن تا خوردنِ حدضررِ دنباله‌دار به‌طورِ میانگین ${fmt(b.hold_mean,2)}R در هر معامله داده؛ ` +
+      `بستنِ سود در +۱R همان ورودها را به ${fmt(tm.target_1R,2)}R رسانده، چون ۱۰٪ بهترین معامله‌ها بیشترِ سود را می‌سازند.\n\n` +
+      `با این حال همین حالا بسته شود؟`;
+    if(!confirm(msg)) return;
+  }
+  closePos(id);
 }
 async function closePos(id){
   const r = await fetch(`/api/positions/${id}/close`, {method:"POST"});
@@ -1559,7 +1619,7 @@ document.addEventListener("keydown", e=>{
 
 loadVersion(); loadGateBanner(); loadTrendBanner(); loadOverview(); loadPositions(); loadConfig(false); loadEngineCred(); loadCalibBanner(); loadEdgeHealth(); loadBot();
 setInterval(loadGateBanner, 60000);
-setInterval(loadTrendBanner, 600000);
+setInterval(loadTrendBanner, 60000);     // قیمتِ زندهٔ سیگنال‌ها (سرور ۶۰ ثانیه کش می‌کند؛ عکسِ روزانه ۳۰ دقیقه)
 setInterval(loadBot, 6000);
 setInterval(loadOverview, 60000);
 setInterval(loadPositions, 30000);

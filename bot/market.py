@@ -153,11 +153,19 @@ def cache_stats(now=None):
             "universe_size": len(_top_cache["symbols"])}
 
 
-def current_bar_open(symbol, tf):
-    """قیمتِ بازِ کندلِ **جاری** روی اسپاتِ بایننس — مرجعِ ورودِ قاعده‌های روزانه.
-    ``get_klines`` کندلِ باز را عمداً حذف می‌کند؛ این فقط همان یک عدد را می‌خواهد."""
+def current_bar(symbol, tf):
+    """کندلِ **جاریِ** (هنوز باز) اسپاتِ بایننس: ``{t, o, h, l, c}`` — ``c`` آخرین قیمت است.
+    ``get_klines`` کندلِ باز را عمداً حذف می‌کند؛ سیگنال‌های روزانه برای «قیمتِ همین لحظه» و
+    «کفِ امروز تا این لحظه» به همین نیاز دارند."""
     raw = _binance_json("/api/v3/klines", {"symbol": symbol, "interval": TF_BINANCE[tf], "limit": 1})
-    return int(raw[-1][0]), float(raw[-1][1])
+    r = raw[-1]
+    return {"t": int(r[0]), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4])}
+
+
+def current_bar_open(symbol, tf):
+    """قیمتِ بازِ کندلِ **جاری** — مرجعِ ورودِ قاعده‌های روزانه."""
+    b = current_bar(symbol, tf)
+    return b["t"], b["o"]
 
 
 def spot_price(symbol):

@@ -161,16 +161,20 @@ def sma(x, n):
 
 
 # ───────────────────────── مسیرِ معامله ─────────────────────────
-def walk(o, h, l, c, a, e, side, entry, R, trail_atr=None, max_hold=120, exit_fn=None, stops=None):
+def walk(o, h, l, c, a, e, side, entry, R, trail_atr=None, max_hold=120, exit_fn=None, stops=None,
+         target_r=None):
     """یک معامله از کندلِ ورودِ ``e`` (ورود در openِ همان کندل) تا خروج.
 
     ترتیب در هر کندل: گپ پشتِ حدضرر (خروج با open) ← حدضررِ درون‌کندلی ← سیگنالِ
     خروج روی بسته (خروج در openِ کندلِ بعد) ← به‌روزرسانیِ حدضررِ دنباله‌دار با
     اطلاعاتِ همین بسته (از کندلِ بعد اعمال می‌شود). هیچ کندلی از آینده دیده نمی‌شود.
     ``stops``: اگر فهرست باشد، حدضررِ معتبر در هر کندل (از ``e`` به بعد) به آن افزوده می‌شود.
+    ``target_r``: هدفِ سودِ ثابت برحسبِ R (فقط برای سنجشِ «بستنِ زودهنگامِ سود»). اگر حدضرر و
+    هدف در یک کندل هر دو لمس شوند، محافظه‌کارانه حدضرر حساب می‌شود.
     """
     n = len(c)
     stop = entry - side * R
+    target = None if target_r is None else entry + side * float(target_r) * R
     best = entry
     last = min(e + max_hold - 1, n - 1)
     for j in range(e, last + 1):
@@ -180,6 +184,8 @@ def walk(o, h, l, c, a, e, side, entry, R, trail_atr=None, max_hold=120, exit_fn
             return {"exit_idx": j, "exit_px": float(o[j]), "outcome": "gap_stop", "stop": stop}
         if (side == 1 and l[j] <= stop) or (side == -1 and h[j] >= stop):
             return {"exit_idx": j, "exit_px": float(stop), "outcome": "stop", "stop": stop}
+        if target is not None and ((side == 1 and h[j] >= target) or (side == -1 and l[j] <= target)):
+            return {"exit_idx": j, "exit_px": float(target), "outcome": "target", "stop": stop}
         if exit_fn is not None and exit_fn(j):
             if j + 1 < n:
                 return {"exit_idx": j + 1, "exit_px": float(o[j + 1]), "outcome": "signal", "stop": stop}
@@ -798,6 +804,184 @@ def universe_report(cutoff_ms=None, hist_dir=None, key="T_don20_long", top_small
     out["rw_family_size"] = len(full["variants"]) + len(fam)
     out["n_trials_project"] = full["n_trials_project"]
     return out
+
+
+# ───────────────────────── فیلترهای ورود (پس از دو معاملهٔ دموی ۲۰۲۶-۰۹-۱۵) ─────────────────────────
+# سه مشاهدهٔ زنده (FIL، REZ، RAY: هر سه «پیوستن» پس از برگشتِ قیمت به زیرِ سقفِ شکسته‌شده) سه
+# فرضیه ساختند. این‌جا روی دادهٔ اکتشاف (پیش از ۲۰۲۴-۰۹-۲۸، مستقل از آن مشاهده‌ها) آزموده می‌شوند.
+# معیارِ پذیرش پیش از اجرا ثابت شد و به کاربر گفته شد (``filter_passes``).
+FILTER_OFFSETS = tuple(range(0, 11))      # ۰ = ورودِ خودِ قاعده؛ ۱..۱۰ = پیوستن در همان روزهایی که پنل اجازه می‌دهد
+MIN_CUSHION_ATR = 1.5
+BTC_REGIME_SMA = 100
+FILTER_ALPHA = 0.05 / 3                   # بونفرونی برای سه فیلتر
+MIN_KEEP_FRACTION = 0.40
+
+
+def opportunities(panel, snaps, spec, offsets=FILTER_OFFSETS, btc=None):
+    """هر فرصتِ ورودی که پنل می‌تواند نشان دهد: ورودِ قاعده (offset=0) و پیوستن در روزهای بعد.
+
+    ویژگی‌ها فقط از اطلاعاتِ **پیش از** openِ روزِ ورود ساخته می‌شوند، جز ``above_level`` که خودِ
+    قیمتِ ورود (open) را با سقفِ شکسته‌شده می‌سنجد — همان چیزی که کاربر لحظهٔ خرید می‌بیند.
+    """
+    side, n_look = spec["side"], spec["n"]
+    btc_state = {}
+    if btc is not None:
+        m = sma(btc["c"], BTC_REGIME_SMA)
+        btc_state = {int(ts): bool(np.isfinite(m[j]) and btc["c"][j] > m[j]) for j, ts in enumerate(btc["t"])}
+    out = []
+    for sym, k in panel.items():
+        o, h, l, c, v, t = (k[x] for x in ("o", "h", "l", "c", "v", "t"))
+        a = engine.atr(h, l, c, 20)
+        for i, e, entry, R, res in trend_paths(sym, k, spec, snaps):
+            if res is None:
+                continue
+            level = float(np.max(h[i - n_look:i])) if side == 1 else float(np.min(l[i - n_look:i]))
+            stops = []
+            walk(o, h, l, c, a, e, side, entry, R, trail_atr=TREND_TRAIL_ATR, max_hold=120, stops=stops)
+            for off in offsets:
+                d = e + off
+                if d > res["exit_idx"] or off >= len(stops):
+                    break
+                stop, px_in = float(stops[off]), float(o[d])
+                if (px_in - stop) * side <= 0:
+                    continue
+                rj = abs(px_in - stop)
+                risk_pct = rj / px_in * 100
+                gross_r = side * (res["exit_px"] - px_in) / rj
+                entry_ts, exit_ts = int(t[d]), int(t[res["exit_idx"]])
+                cost = costs.point_in_time_tier(c, v, d - 1, "1d") + costs.funding_cost_pct(side, entry_ts, exit_ts, None)
+                out.append({"sym": sym, "offset": off, "entry_ts": entry_ts, "exit_ts": exit_ts, "side": side,
+                            "gross_r": gross_r, "risk_pct": risk_pct, "cost_pct": cost,
+                            "net_r": bracket.net_r(gross_r, risk_pct, cost),
+                            "net_r_spot": bracket.net_r(gross_r, risk_pct, SPOT_ROUND_TRIP_PCT),
+                            "above_level": bool(side * (px_in - level) > 0),
+                            "cushion_atr": rj / max(float(a[d - 1]), 1e-12),
+                            "btc_up": btc_state.get(int(t[d]) - DAY_MS)})
+    return out
+
+
+def diff_lcb(values, mask, ts, block_ms, alpha, n_boot=B, seed=stats.SEED):
+    """کرانِ پایینِ یک‌طرفهٔ ``mean(kept) − mean(excluded)`` با بوت‌استرپِ بلوکیِ **مشترک** —
+    هر دو گروه از همان بلوک‌های زمانیِ بازنمونه‌شده می‌آیند، پس وابستگیِ زمانی حفظ می‌شود."""
+    values, mask, ts = np.asarray(values, float), np.asarray(mask, bool), np.asarray(ts, np.int64)
+    if mask.sum() < 2 or (~mask).sum() < 2:
+        return None
+    blk = np.floor((ts - ts.min()) / float(block_ms)).astype(np.int64)
+    groups = [np.where(blk == b)[0] for b in np.unique(blk)]
+    if len(groups) < stats.MIN_BLOCKS:
+        return None
+    rng = np.random.default_rng(seed)
+    diffs = []
+    for _ in range(n_boot):
+        idx = np.concatenate([groups[j] for j in rng.integers(0, len(groups), size=len(groups))])
+        mk = mask[idx]
+        if mk.sum() and (~mk).sum():
+            diffs.append(values[idx][mk].mean() - values[idx][~mk].mean())
+    return round(float(np.quantile(diffs, alpha)), 4) if diffs else None
+
+
+def filter_passes(f):
+    """معیارِ ازپیش‌گفته: میانگینِ بالاتر از کل، کرانِ پایینِ مثبت، هر دو نیمه مثبت، جداسازیِ معنادار
+    (اختلاف با بونفرونیِ سه فیلتر > ۰) و نگه‌داشتنِ دستِ‌کم ۴۰٪ فرصت‌ها."""
+    k = f["kept"]
+    return bool(k.get("n") and k["mean"] > f["all_mean"] and (k.get("lcb") or 0) > 0
+                and (k.get("first_half_mean") or 0) > 0 and (k.get("second_half_mean") or 0) > 0
+                and (f.get("diff_lcb") or 0) > 0 and f["keep_fraction"] >= MIN_KEEP_FRACTION)
+
+
+def _mini(rows, key="net_r"):
+    vals = [r[key] for r in rows]
+    s = describe(vals, [r["entry_ts"] for r in rows], TREND_BLOCK_MS)
+    s["mean_spot"] = round(float(np.mean([r["net_r_spot"] for r in rows])), 4) if rows else None
+    return {k: s.get(k) for k in ("n", "n_eff", "mean", "lcb", "mean_spot", "win_rate", "profit_factor",
+                                  "first_half_mean", "second_half_mean", "positive_years")}
+
+
+def trade_profile(rows, key="net_r"):
+    """شکلِ توزیع: چرا باختِ تکی عادی است و سود از کجا می‌آید."""
+    v = np.asarray([r[key] for r in sorted(rows, key=lambda r: r["entry_ts"])], float)
+    if not len(v):
+        return {}
+    wins, losses = v[v > 0], v[v <= 0]
+    streak = best = 0
+    for x in v:
+        streak = streak + 1 if x <= 0 else 0
+        best = max(best, streak)
+    top = np.sort(v)[::-1][:max(len(v) // 10, 1)]
+    return {"n": int(len(v)), "win_rate": round(float((v > 0).mean()) * 100, 1),
+            "avg_win_r": round(float(wins.mean()), 3) if len(wins) else None,
+            "avg_loss_r": round(float(losses.mean()), 3) if len(losses) else None,
+            "median_r": round(float(np.median(v)), 3),
+            "max_consecutive_losses": int(best),
+            "top_decile_share_of_gains": round(float(top.sum() / max(wins.sum(), 1e-12)), 3),
+            "mean_without_top_decile": round(float(np.sort(v)[:len(v) - len(top)].mean()), 4)}
+
+
+def filter_study(cutoff_ms=None, hist_dir=None, key="T_don20_long", top_n=50):
+    cutoff_ms = int(cutoff_ms if cutoff_ms is not None else dev_cutoff_ms())
+    daily = load_panel("1d", cutoff_ms, hist_dir=hist_dir)
+    hist = {s: {"t": k["t"].tolist(), "c": k["c"].tolist(), "v": k["v"].tolist()} for s, k in daily.items()}
+    snaps = universe.snapshots_from_histories(hist, top_n=top_n)
+    ever = set().union(*[u for _t, u in snaps]) if snaps else set()
+    panel = {s: k for s, k in daily.items() if s in ever}
+    spec = {v["key"]: v for v in VARIANTS}[key]
+    opps = opportunities(panel, snaps, spec, btc=daily.get("BTCUSDT"))
+    base = [r for r in opps if r["offset"] == 0]
+    joins = [r for r in opps if r["offset"] > 0]
+
+    def study(rows, mask_fn, name):
+        rows = [r for r in rows if mask_fn(r) is not None]
+        mask = np.asarray([bool(mask_fn(r)) for r in rows])
+        vals = np.asarray([r["net_r"] for r in rows], float)
+        ts = np.asarray([r["entry_ts"] for r in rows], np.int64)
+        f = {"name": name, "all_mean": round(float(vals.mean()), 4) if len(vals) else None,
+             "kept": _mini([r for r, m in zip(rows, mask) if m]),
+             "excluded": _mini([r for r, m in zip(rows, mask) if not m]),
+             "keep_fraction": round(float(mask.mean()), 3) if len(mask) else 0.0,
+             "diff_lcb": diff_lcb(vals, mask, ts, TREND_BLOCK_MS, FILTER_ALPHA), "alpha": round(FILTER_ALPHA, 4)}
+        f["adopt"] = filter_passes(f)
+        return f
+
+    out = {"generated_at": time.time(), "cutoff_ms": cutoff_ms, "rule": key, "top_n": top_n,
+           "decision_rule": "adopt iff kept mean > all mean, kept LCB95 > 0, both halves > 0, "
+                            "bootstrap LCB of (kept - excluded) at 1-0.05/3 > 0, keeps >= 40%",
+           "baseline_entries": _mini(base), "baseline_joins_1_10": _mini(joins),
+           "filters": {
+               "F1_join_above_breakout_level": study(joins, lambda r: r["above_level"], "join only above the broken high"),
+               "F2_join_cushion_1_5_atr": study(joins, lambda r: r["cushion_atr"] >= MIN_CUSHION_ATR,
+                                                f"join only with >= {MIN_CUSHION_ATR} ATR to the stop"),
+               "F3_btc_above_sma100": study(opps, lambda r: r["btc_up"], "enter only when BTC > SMA100"),
+           },
+           "profile_entries": trade_profile(base), "profile_joins": trade_profile(joins)}
+    # توصیفی: بستنِ زودهنگامِ سود روی **همان ورودها** (مقایسهٔ جفتی؛ فقط خروج عوض می‌شود)
+    targets = {}
+    for tr_ in (1.0, 2.0, 3.0):
+        rows = []
+        for sym, k in panel.items():
+            o, h, l, c, v, t = (k[x] for x in ("o", "h", "l", "c", "v", "t"))
+            a = engine.atr(h, l, c, 20)
+            for i, e, entry, R, res in trend_paths(sym, k, spec, snaps):
+                if res is None:
+                    continue
+                res_t = walk(o, h, l, c, a, e, spec["side"], entry, R, trail_atr=TREND_TRAIL_ATR,
+                             max_hold=120, target_r=tr_)
+                rows.append(_trade(sym, "1d", spec["side"], i, e, res_t, entry, R, k))
+        for r in rows:
+            r["net_r_spot"] = bracket.net_r(r["gross_r"], r["risk_pct"], SPOT_ROUND_TRIP_PCT)
+        targets[f"target_{tr_:g}R"] = _mini(rows)
+    out["profit_targets_same_entries"] = targets
+    trades50 = trend_trades(panel, snaps, spec)
+    out["account_top50"] = {f"max_open_{m}": portfolio(trades50, risk_equity_pct=0.5, max_open=m) for m in (5, 8, 12)}
+    return out
+
+
+def write_named(rep, prefix, out_dir=None):
+    out_dir = out_dir or OUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, time.strftime(f"{prefix}_%Y%m%d_%H%M.json", time.gmtime(rep["generated_at"])))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rep, f, ensure_ascii=False, indent=1, default=float)
+    return path
 
 
 def write_join_report(rep, out_dir=None):

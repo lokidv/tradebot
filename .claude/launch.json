@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["bot/main.py"],
       "port": 8787
+    },
+    {
+      "name": "ctp-bot-isolated",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["tools/run_isolated.py"],
+      "port": 8788
     }
   ]
 }

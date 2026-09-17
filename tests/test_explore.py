@@ -185,6 +185,80 @@ class JoinTests(unittest.TestCase):
                                    jt["gross_r"] - explore.SPOT_ROUND_TRIP_PCT / max(jt["risk_pct"], 0.05))
 
 
+class FilterStudyTests(unittest.TestCase):
+    """ابزارِ آزمونِ فیلترها: معیارِ پذیرش ازپیش‌گفته است و باید همان‌طور که گفته شد اجرا شود."""
+
+    SPEC = {"rule": "donchian", "n": 20, "side": 1}
+
+    def _panel(self):
+        return {"AAAUSDT": _arrays(_daily(500, drift=0.003, vol=0.03, seed=51))}, [(T0 - DAY, frozenset({"AAAUSDT"}))]
+
+    def test_offset_zero_is_exactly_the_rules_own_trade(self):
+        panel, snaps = self._panel()
+        rule = explore.trend_trades(panel, snaps, self.SPEC)
+        base = [r for r in explore.opportunities(panel, snaps, self.SPEC) if r["offset"] == 0]
+        self.assertEqual(len(base), len(rule))
+        for a, b in zip(base, rule):
+            self.assertEqual((a["entry_ts"], a["exit_ts"]), (b["entry_ts"], b["exit_ts"]))
+            self.assertAlmostEqual(a["net_r"], b["net_r"], places=9)
+            self.assertAlmostEqual(a["cushion_atr"], explore.TREND_STOP_ATR, places=6)    # حدضررِ اولیه = 3×ATR
+
+    def test_join_features_use_the_entry_open_and_yesterdays_btc(self):
+        """هیچ ویژگی‌ای از آینده نمی‌آید: BTC = بستهٔ **دیروز**؛ سقف = ۲۰ کندلِ پیش از سیگنال؛ قیمت = openِ ورود."""
+        panel, snaps = self._panel()
+        k = panel["AAAUSDT"]
+        n = len(k["t"])
+        btc_c = np.concatenate([np.linspace(300, 100, n // 2), np.linspace(100, 400, n - n // 2)])   # نزولی، بعد صعودی
+        btc = {"t": k["t"], "c": btc_c}
+        m = explore.sma(btc_c, explore.BTC_REGIME_SMA)
+        rows = [r for r in explore.opportunities(panel, snaps, self.SPEC, btc=btc) if r["offset"] > 0]
+        self.assertGreater(len(rows), 10)
+        seen = set()
+        for r in rows:
+            d = int(np.searchsorted(k["t"], r["entry_ts"]))
+            expected = bool(np.isfinite(m[d - 1]) and btc_c[d - 1] > m[d - 1])
+            self.assertEqual(r["btc_up"], expected)
+            seen.add(expected)
+            i = d - r["offset"] - 1                                           # کندلِ سیگنالِ همان معاملهٔ قاعده
+            level = float(np.max(k["h"][i - 20:i]))
+            self.assertEqual(r["above_level"], bool(k["o"][d] > level))
+        self.assertEqual(seen, {True, False})                                 # هر دو رژیم واقعاً آزموده شدند
+
+    def test_profit_target_exits_at_the_target_and_loses_a_same_bar_tie(self):
+        o = np.array([100, 100, 101.0]); h = np.array([100, 104, 103.0])
+        l = np.array([100, 99.5, 100.0]); c = np.array([100, 103, 102.0]); a = np.ones(3)
+        res = explore.walk(o, h, l, c, a, 1, 1, 100.0, R=3.0, target_r=1.0)
+        self.assertEqual((res["outcome"], res["exit_px"]), ("target", 103.0))
+        l[1] = 96.0                                                         # همان کندل حدضرر را هم زده
+        self.assertEqual(explore.walk(o, h, l, c, a, 1, 1, 100.0, R=3.0, target_r=1.0)["outcome"], "stop")
+
+    def test_diff_lcb_sees_a_real_separation_and_refuses_tiny_groups(self):
+        rng = np.random.default_rng(3)
+        ts = T0 + np.arange(600, dtype=np.int64) * DAY
+        mask = np.arange(600) % 2 == 0
+        vals = np.where(mask, 1.0, -1.0) + rng.normal(0, 0.5, 600)
+        self.assertGreater(explore.diff_lcb(vals, mask, ts, 30 * DAY, 0.0167, n_boot=300), 1.5)
+        noise = rng.normal(0, 1.0, 600)
+        self.assertLess(explore.diff_lcb(noise, mask, ts, 30 * DAY, 0.0167, n_boot=300), 0.0)
+        self.assertIsNone(explore.diff_lcb(vals[:3], mask[:3], ts[:3], 30 * DAY, 0.0167))
+
+    def test_adoption_needs_every_prestated_condition(self):
+        ok = {"all_mean": 0.39, "keep_fraction": 0.7, "diff_lcb": 0.05,
+              "kept": {"n": 900, "mean": 0.47, "lcb": 0.16, "first_half_mean": 0.8, "second_half_mean": 0.09}}
+        self.assertTrue(explore.filter_passes(ok))
+        self.assertFalse(explore.filter_passes(dict(ok, diff_lcb=-0.21)))            # نتیجهٔ واقعیِ فیلترِ BTC
+        self.assertFalse(explore.filter_passes(dict(ok, keep_fraction=0.3)))
+        self.assertFalse(explore.filter_passes(dict(ok, kept=dict(ok["kept"], second_half_mean=-0.01))))
+        self.assertFalse(explore.filter_passes(dict(ok, kept=dict(ok["kept"], mean=0.30))))
+
+    def test_trade_profile_shows_where_the_profit_comes_from(self):
+        rows = [{"entry_ts": i, "net_r": r} for i, r in enumerate([-1, -1, -1, 5, -1, -1, 0.5, -1, -1, 9])]
+        p = explore.trade_profile(rows)
+        self.assertEqual((p["win_rate"], p["max_consecutive_losses"]), (30.0, 3))
+        self.assertAlmostEqual(p["top_decile_share_of_gains"], 9 / 14.5, places=3)
+        self.assertLess(p["mean_without_top_decile"], 0)
+
+
 class SetupParityTests(unittest.TestCase):
     """ستاپ‌های اکتشاف باید دقیقاً همان رویدادهای آموزش باشند؛ وگرنه دو آزمون دو چیزِ متفاوت را می‌سنجند."""
 
