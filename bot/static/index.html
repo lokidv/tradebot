@@ -303,6 +303,7 @@
 
 <main>
   <div id="gateBanner"></div>
+  <div id="momBanner"></div>
   <div id="trendBanner"></div>
   <div id="calibBanner"></div>
   <div id="edgeBanner"></div>
@@ -664,6 +665,59 @@ function trendWarnHtml(x){
       به سود رسیده‌اند (ورودِ عادی ~${fmt(b.normal_win_rate,0)}٪)؛ حجم بزرگ‌تر و احتمالِ خوردنِ حدضرر بیشتر است</span>`;
   }
   return "";
+}
+
+/* ═══════════ مومنتومِ ۲۸روزهٔ BTC/ETH — در بازار یا نقد، تصمیمِ دوشنبه ═══════════ */
+async function openMomDemo(sym){
+  let alloc = 20;
+  try{ alloc = parseFloat(localStorage.momAlloc||"20")||20; }catch(e){}
+  try{
+    const r = await fetch("/api/momentum/demo", {method:"POST", headers:{"Content-Type":"application/json"},
+                                                body: JSON.stringify({symbol: sym, alloc_pct: alloc})});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.detail || "باز نشد");
+    toast(`✅ ${sym.replace("USDT","")} در دمو خریده شد — ${fmt(j.size_usdt,0)}$ (${alloc}٪ موجودیِ دمو)؛ خروج با تصمیمِ دوشنبه`);
+    loadPositions(); loadMomentum();
+  }catch(e){ toast("❌ " + e.message, false); }
+}
+function setMomAlloc(){ try{ localStorage.momAlloc = $("#momAlloc").value.trim(); }catch(e){} }
+async function loadMomentum(){
+  try{
+    const d = await (await fetch("/api/momentum", {cache:"no-store"})).json();
+    const el = $("#momBanner"); if(!el || !d.assets) return;
+    let alloc = 20; try{ alloc = parseFloat(localStorage.momAlloc||"20")||20; }catch(e){}
+    const day = ms => new Date(ms).toLocaleDateString("fa-IR", {timeZone:"UTC"});
+    const ev = d.evidence || {};
+    const card = sym => {
+      const a = d.assets[sym]; if(!a) return `<div class="sub">${sym}: بی‌داده</div>`;
+      const cur = a.current || {}, pv = a.provisional_next || {}, e = (ev[sym]||{}).confirmation || {};
+      const inm = cur.in_market, open = (d.demo_open||[]).includes(sym);
+      const btn = !inm ? "" : open ? `<span class="mid">✓ در دمو باز است</span>`
+        : `<button class="gear" style="padding:3px 10px;font-size:12px" onclick="openMomDemo('${sym}')">▶ خرید در دمو</button>`;
+      return `<tr><td><b style="font-size:15px">${sym.replace("USDT","")}</b></td>
+        <td class="${inm?"up":"mid"}"><b>${inm ? "🟢 این هفته: در بازار (خرید)" : "⚪ این هفته: نقد (بیرون)"}</b>
+          ${a.in_market_since_ms ? `<br><small class="mid">از دوشنبه ${day(a.in_market_since_ms)}</small>` : ""}</td>
+        <td class="num"><small>بستهٔ یکشنبه ${px(cur.sunday_close)} در برابرِ ۲۸ روز قبل ${px(cur.ref_close)} (${cur.change_pct>0?"+":""}${fmt(cur.change_pct,1)}٪)</small></td>
+        <td class="num"><small>اگر هفته الان بسته شود: <b class="${pv.in_market?"up":"mid"}">${pv.in_market?"خرید":"نقد"}</b>
+          <br>مرز: ${px(pv.threshold)}</small></td>
+        <td class="num"><small>تأیید (۲۰۲۳–۲۰۲۶): ${fmt((e.strategy||{}).cagr_pct,0)}٪/سال، افت ${fmt((e.strategy||{}).max_drawdown_pct,0)}٪
+          <br>نگه‌داری: ${fmt((e.buy_and_hold||{}).cagr_pct,0)}٪/سال، افت ${fmt((e.buy_and_hold||{}).max_drawdown_pct,0)}٪</small></td>
+        <td>${btn}</td></tr>`;
+    };
+    const nd = (d.assets.BTCUSDT||{}).next_decision_ms;
+    el.innerHTML = `<div class="calbanner trend">
+      <div class="top"><span>🧭 <b>مومنتومِ BTC و ETH</b> — در بازار یا نقد · فقط دوشنبه‌ها · بی‌اهرم · <b>سازگار در پژوهش، اثبات‌نشده</b></span>
+        <span class="mid">تصمیمِ بعدی: دوشنبه ${nd ? day(nd) : "—"} ساعتِ ۳:۳۰ بامدادِ تهران</span></div>
+      <div class="sub">قاعده: اگر بستهٔ یکشنبه بالاتر از بستهٔ ۲۸ روز قبلش باشد، برای یک هفته BTC/ETH نگه دار؛ وگرنه نقد.
+        هدف و حدضرر ندارد؛ فقط دوشنبه‌ها بررسی می‌شود (حدودِ ${(d.assets.BTCUSDT||{}).switches_last_year||"—"} جابه‌جایی در سالِ گذشته).
+        سهمِ هر ارز در دمو: <input id="momAlloc" class="cfgin" style="width:52px;padding:2px 6px" value="${alloc}" onchange="setMomAlloc()">٪ موجودی</div>
+      <div style="overflow-x:auto"><table class="mini"><tbody>${card("BTCUSDT")}${card("ETHUSDT")}</tbody></table></div>
+      <div class="sub">چرا «اثبات‌نشده»: در هر دو نیمهٔ داده (۲۰۲۱–۲۰۲۳ و ۲۰۲۳–۲۰۲۶) و روی هر دو ارز مثبت بود، ولی آستانهٔ معناداریِ
+        ازپیش‌ثبت‌شده را نگذراند (BTC p=${fmt((ev.BTCUSDT||{}).p_adj,2)}). مزیتش بیشتر <b>دوری از بازارِ نزولی</b> است (کلِ ۲۰۲۲ بیرون بود) تا سودِ بیشتر در
+        بازارِ صعودی؛ در بازارِ بی‌جهت چند ورود و خروجِ بی‌حاصل دارد و BTC از اوایلِ ۲۰۲۵ تقریباً صاف بوده. در بازارِ نزولی سود نمی‌دهد — فقط نقد می‌ماند.
+        کارنامهٔ رو-به-جلو از ${day(d.tracking_start_ms)}: BTC ${fmt(((d.forward||{}).BTCUSDT||{}).cum_return_pct,1)}٪ · ETH ${fmt(((d.forward||{}).ETHUSDT||{}).cum_return_pct,1)}٪ (${((d.forward||{}).BTCUSDT||{}).weeks||0} هفته)</div>
+    </div>`;
+  }catch(e){}
 }
 
 function setTrendSizing(){
@@ -1670,9 +1724,10 @@ document.addEventListener("keydown", e=>{
   if(e.key==="Escape"){ closeDrawer(); closeSettings(); closeTModal(); }
 });
 
-loadVersion(); loadGateBanner(); loadTrendBanner(); loadOverview(); loadPositions(); loadConfig(false); loadEngineCred(); loadCalibBanner(); loadEdgeHealth(); loadBot();
+loadVersion(); loadGateBanner(); loadMomentum(); loadTrendBanner(); loadOverview(); loadPositions(); loadConfig(false); loadEngineCred(); loadCalibBanner(); loadEdgeHealth(); loadBot();
 setInterval(loadGateBanner, 60000);
-setInterval(loadTrendBanner, 60000);     // قیمتِ زندهٔ سیگنال‌ها (سرور ۶۰ ثانیه کش می‌کند؛ عکسِ روزانه ۳۰ دقیقه)
+setInterval(loadTrendBanner, 60000);
+setInterval(loadMomentum, 600000);     // قیمتِ زندهٔ سیگنال‌ها (سرور ۶۰ ثانیه کش می‌کند؛ عکسِ روزانه ۳۰ دقیقه)
 setInterval(loadBot, 6000);
 setInterval(loadOverview, 60000);
 setInterval(loadPositions, 30000);

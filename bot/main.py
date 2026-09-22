@@ -38,6 +38,7 @@ import advisor
 import gates
 import trend
 import trend_exec
+import momentum
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
@@ -486,6 +487,10 @@ def _startup():
             except Exception:  # noqa: BLE001
                 log.exc("trend tracker")
             try:
+                momentum.sync_demo(momentum.snapshot())   # دفترِ مومنتوم + خروجِ دمو در تصمیمِ «نقد»
+            except Exception:  # noqa: BLE001
+                log.exc("momentum tracker")
+            try:
                 trend_exec.step()           # فقط تست‌نت؛ بی‌مجوز یا بی‌کلید کاری نمی‌کند
             except Exception:  # noqa: BLE001
                 log.exc("trend testnet executor")
@@ -547,6 +552,25 @@ def trend_status(force: bool = False):
     """روندِ روزانه — نامزدِ پژوهشی و اثبات‌نشده: وضعیتِ قاعده‌ها روی ۲۰ ارزِ بزرگ،
     سیگنال‌های امروز، دفترِ رو-به-جلو و شواهدِ اکتشاف. هیچ مجوزی نمی‌دهد."""
     return trend.view(force=force)        # عکسِ روزانه (کش) + قیمتِ زندهٔ سیگنال‌های قابل‌اقدام
+
+
+@app.get("/api/momentum")
+def momentum_status(force: bool = False):
+    """مومنتومِ ۲۸روزهٔ BTC/ETH (در بازار یا نقد، تصمیمِ دوشنبه) — سازگار در پژوهش، اثبات‌نشده."""
+    return momentum.view(force=force)
+
+
+class MomentumDemoReq(BaseModel):
+    symbol: str
+    alloc_pct: float = 20.0
+
+
+@app.post("/api/momentum/demo")
+def momentum_demo_open(req: MomentumDemoReq):
+    try:
+        return momentum.open_demo(req.symbol.upper(), req.alloc_pct)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 class TrendDemoReq(BaseModel):
