@@ -1,0 +1,326 @@
+{
+ "generated_at": 1790103115.5129435,
+ "dev_cutoff_ms": 1727481600000,
+ "holdout_end_ms": 1754092800000,
+ "spot_round_trip_pct": 0.4,
+ "stress_extra_pct": 0.35,
+ "decision_rule": "Donchian-20 per TF: dev (entry+exit < cutoff, spot cost) mean>0, LCB95>0, both halves>0, stressed>0; holdout (cutoff..2025-08-02) mean>0",
+ "tfs": {
+  "4h": {
+   "symbols": 246,
+   "variants": {
+    "don20": {
+     "dev": {
+      "n": 4018,
+      "n_eff": 117.828,
+      "n_blocks": 72,
+      "mean": -0.0591,
+      "sd": 1.5156,
+      "lcb": -0.1761,
+      "t_stat": -0.424,
+      "win_rate": 30.31,
+      "profit_factor": 0.8726,
+      "uplift": -0.0591,
+      "alpha": 0.05,
+      "first_half_mean": -0.1046,
+      "second_half_mean": -0.0137,
+      "max_drawdown": 377.387,
+      "by_year": {
+       "2022": {
+        "n": 1338,
+        "mean": -0.1864
+       },
+       "2023": {
+        "n": 1572,
+        "mean": 0.0487
+       },
+       "2024": {
+        "n": 1108,
+        "mean": -0.0585
+       }
+      },
+      "positive_years": "1/3",
+      "mean_stressed": -0.105,
+      "mean_tier_cost": -0.0487,
+      "avg_bars": 23.5,
+      "avg_risk_pct": 9.41,
+      "trades_per_week": 28.29
+     },
+     "holdout": {
+      "n": 1276,
+      "n_eff": 36.212,
+      "n_blocks": 22,
+      "mean": 0.0346,
+      "sd": 1.5731,
+      "lcb": -0.2036,
+      "t_stat": 0.132,
+      "win_rate": 31.82,
+      "profit_factor": 1.0758,
+      "uplift": 0.0346,
+      "alpha": 0.05,
+      "first_half_mean": -0.0195,
+      "second_half_mean": 0.0886,
+      "max_drawdown": 152.179,
+      "by_year": {
+       "2024": {
+        "n": 384,
+        "mean": 0.1777
+       },
+       "2025": {
+        "n": 892,
+        "mean": -0.027
+       }
+      },
+      "positive_years": "1/2",
+      "mean_stressed": -0.0087,
+      "mean_tier_cost": 0.0473,
+      "avg_bars": 23.3,
+      "avg_risk_pct": 9.78,
+      "trades_per_week": 29.17
+     },
+     "adopt": false
+    },
+    "don55": {
+     "dev": {
+      "n": 2269,
+      "n_eff": 113.418,
+      "n_blocks": 71,
+      "mean": -0.0921,
+      "sd": 1.5653,
+      "lcb": -0.241,
+      "t_stat": -0.627,
+      "win_rate": 28.21,
+      "profit_factor": 0.8211,
+      "uplift": -0.0921,
+      "alpha": 0.05,
+      "first_half_mean": -0.1024,
+      "second_half_mean": -0.0818,
+      "max_drawdown": 270.294,
+      "by_year": {
+       "2022": {
+        "n": 663,
+        "mean": -0.2233
+       },
+       "2023": {
+        "n": 945,
+        "mean": 0.0488
+       },
+       "2024": {
+        "n": 661,
+        "mean": -0.1619
+       }
+      },
+      "positive_years": "1/3",
+      "mean_stressed": -0.1384,
+      "mean_tier_cost": -0.0781,
+      "avg_bars": 21.3,
+      "avg_risk_pct": 9.17,
+      "trades_per_week": 16.09
+     },
+     "holdout": {
+      "n": 721,
+      "n_eff": 35.47,
+      "n_blocks": 22,
+      "mean": 0.0203,
+      "sd": 1.6041,
+      "lcb": -0.2243,
+      "t_stat": 0.075,
+      "win_rate": 30.79,
+      "profit_factor": 1.0424,
+      "uplift": 0.0203,
+      "alpha": 0.05,
+      "first_half_mean": -0.0439,
+      "second_half_mean": 0.0843,
+      "max_drawdown": 106.343,
+      "by_year": {
+       "2024": {
+        "n": 226,
+        "mean": 0.203
+       },
+       "2025": {
+        "n": 495,
+        "mean": -0.0632
+       }
+      },
+      "positive_years": "1/2",
+      "mean_stressed": -0.0261,
+      "mean_tier_cost": 0.037,
+      "avg_bars": 22.4,
+      "avg_risk_pct": 9.3,
+      "trades_per_week": 16.61
+     },
+     "adopt": null
+    }
+   }
+  },
+  "1h": {
+   "symbols": 248,
+   "variants": {
+    "don20": {
+     "dev": {
+      "n": 16593,
+      "n_eff": 236.909,
+      "n_blocks": 143,
+      "mean": -0.1611,
+      "sd": 1.215,
+      "lcb": -0.214,
+      "t_stat": -2.04,
+      "win_rate": 29.02,
+      "profit_factor": 0.6847,
+      "uplift": -0.1611,
+      "alpha": 0.05,
+      "first_half_mean": -0.155,
+      "second_half_mean": -0.1671,
+      "max_drawdown": 2699.502,
+      "by_year": {
+       "2022": {
+        "n": 5615,
+        "mean": -0.1812
+       },
+       "2023": {
+        "n": 6342,
+        "mean": -0.1556
+       },
+       "2024": {
+        "n": 4636,
+        "mean": -0.1442
+       }
+      },
+      "positive_years": "0/3",
+      "mean_stressed": -0.258,
+      "mean_tier_cost": -0.1185,
+      "avg_bars": 24.4,
+      "avg_risk_pct": 4.67,
+      "trades_per_week": 116.3
+     },
+     "holdout": {
+      "n": 5124,
+      "n_eff": 72.9,
+      "n_blocks": 44,
+      "mean": -0.0298,
+      "sd": 1.4701,
+      "lcb": -0.1593,
+      "t_stat": -0.173,
+      "win_rate": 32.06,
+      "profit_factor": 0.9361,
+      "uplift": -0.0298,
+      "alpha": 0.05,
+      "first_half_mean": -0.1277,
+      "second_half_mean": 0.0681,
+      "max_drawdown": 541.61,
+      "by_year": {
+       "2024": {
+        "n": 1629,
+        "mean": -0.1027
+       },
+       "2025": {
+        "n": 3495,
+        "mean": 0.0041
+       }
+      },
+      "positive_years": "1/2",
+      "mean_stressed": -0.1152,
+      "mean_tier_cost": 0.0135,
+      "avg_bars": 25.2,
+      "avg_risk_pct": 5.23,
+      "trades_per_week": 117.02
+     },
+     "adopt": false
+    },
+    "don55": {
+     "dev": {
+      "n": 9200,
+      "n_eff": 234.931,
+      "n_blocks": 143,
+      "mean": -0.1664,
+      "sd": 1.2481,
+      "lcb": -0.224,
+      "t_stat": -2.044,
+      "win_rate": 28.67,
+      "profit_factor": 0.6824,
+      "uplift": -0.1664,
+      "alpha": 0.05,
+      "first_half_mean": -0.1731,
+      "second_half_mean": -0.1598,
+      "max_drawdown": 1625.884,
+      "by_year": {
+       "2022": {
+        "n": 3019,
+        "mean": -0.2115
+       },
+       "2023": {
+        "n": 3573,
+        "mean": -0.149
+       },
+       "2024": {
+        "n": 2608,
+        "mean": -0.1382
+       }
+      },
+      "positive_years": "0/3",
+      "mean_stressed": -0.264,
+      "mean_tier_cost": -0.1219,
+      "avg_bars": 22.6,
+      "avg_risk_pct": 4.58,
+      "trades_per_week": 64.56
+     },
+     "holdout": {
+      "n": 2933,
+      "n_eff": 72.363,
+      "n_blocks": 44,
+      "mean": -0.0034,
+      "sd": 1.5931,
+      "lcb": -0.1725,
+      "t_stat": -0.018,
+      "win_rate": 31.16,
+      "profit_factor": 0.9931,
+      "uplift": -0.0034,
+      "alpha": 0.05,
+      "first_half_mean": -0.0906,
+      "second_half_mean": 0.0838,
+      "max_drawdown": 286.196,
+      "by_year": {
+       "2024": {
+        "n": 943,
+        "mean": -0.1086
+       },
+       "2025": {
+        "n": 1990,
+        "mean": 0.0465
+       }
+      },
+      "positive_years": "1/2",
+      "mean_stressed": -0.094,
+      "mean_tier_cost": 0.044,
+      "avg_bars": 23.9,
+      "avg_risk_pct": 4.93,
+      "trades_per_week": 67.05
+     },
+     "adopt": null
+    }
+   }
+  }
+ },
+ "romano_wolf_dev": {
+  "4h_don20": {
+   "t_stat": -2.474,
+   "p_adj": 0.975,
+   "reject_null": false
+  },
+  "4h_don55": {
+   "t_stat": -2.802,
+   "p_adj": 0.975,
+   "reject_null": false
+  },
+  "1h_don20": {
+   "t_stat": -17.077,
+   "p_adj": 1.0,
+   "reject_null": false
+  },
+  "1h_don55": {
+   "t_stat": -12.79,
+   "p_adj": 1.0,
+   "reject_null": false
+  }
+ }
+}

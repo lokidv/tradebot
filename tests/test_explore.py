@@ -259,6 +259,35 @@ class FilterStudyTests(unittest.TestCase):
         self.assertLess(p["mean_without_top_decile"], 0)
 
 
+class IntradayTests(unittest.TestCase):
+    H4 = 14_400_000
+
+    def _h4(self, n=900, seed=61):
+        k = _arrays(_daily(n, drift=0.002, vol=0.01, seed=seed))
+        k["t"] = T0 + np.arange(n, dtype=np.int64) * self.H4
+        return k
+
+    def test_intraday_trades_use_the_timeframes_cost_window_and_spot_costs(self):
+        k = self._h4()
+        rows = explore.intraday_trades({"AAAUSDT": k}, [(T0 - DAY, frozenset({"AAAUSDT"}))],
+                                       {"rule": "donchian", "n": 20, "side": 1}, "4h")
+        self.assertGreater(len(rows), 3)
+        for r in rows:
+            self.assertNotEqual(r["outcome"], "end_of_data")                     # سانسورشده‌ها بیرون
+            self.assertAlmostEqual(r["net_r_spot"], r["gross_r"] - explore.SPOT_ROUND_TRIP_PCT / max(r["risk_pct"], 0.05))
+            self.assertLess(r["net_r_stress"], r["net_r_spot"])
+            self.assertEqual(r["entry_ts"] % self.H4, 0)
+
+    def test_adoption_needs_dev_and_holdout(self):
+        dev = {"n": 500, "mean": 0.2, "lcb": 0.05, "first_half_mean": 0.3, "second_half_mean": 0.1,
+               "mean_stressed": 0.1}
+        self.assertTrue(explore.intraday_passes(dev, {"n": 80, "mean": 0.05}))
+        self.assertFalse(explore.intraday_passes(dev, {"n": 80, "mean": -0.01}))
+        self.assertFalse(explore.intraday_passes(dict(dev, lcb=-0.01), {"n": 80, "mean": 0.3}))
+        self.assertFalse(explore.intraday_passes(dict(dev, mean_stressed=-0.02), {"n": 80, "mean": 0.3}))
+        self.assertFalse(explore.intraday_passes(dev, {"n": 0, "mean": None}))
+
+
 class SetupParityTests(unittest.TestCase):
     """ستاپ‌های اکتشاف باید دقیقاً همان رویدادهای آموزش باشند؛ وگرنه دو آزمون دو چیزِ متفاوت را می‌سنجند."""
 

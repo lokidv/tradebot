@@ -975,6 +975,80 @@ def filter_study(cutoff_ms=None, hist_dir=None, key="T_don20_long", top_n=50):
     return out
 
 
+# ───────────────────────── روند روی تایم‌فریم‌های درون‌روزی (۴h، ۱h) ─────────────────────────
+# کاربر در ۲۰۲۶-۰۹-۲۲: «در تایم‌فریم‌های مختلف سیگنال درست نمی‌دهد». ستاپ‌های کوتاه‌مدت دو بار رد شده‌اند؛
+# تنها خانواده‌ای که لبه داشت (روند) فقط روی روزانه آزموده شده بود. معیارِ پذیرش پیش از اجرا به کاربر گفته شد:
+#   اکتشاف (ورود و خروج پیش از ۲۰۲۴-۰۹-۲۸) با کارمزدِ اسپات: میانگین > ۰، کرانِ پایینِ ۹۵٪ > ۰،
+#   هر دو نیمه > ۰، زیرِ لغزشِ بیشتر > ۰؛ و تأییدِ یک‌باره روی ۲۰۲۴-۰۹-۲۸ تا ۲۰۲۵-۰۸-۰۲ (هیچ آزمونِ
+#   ۴h/۱h آن را ندیده؛ پنجرهٔ منجمدِ ۴h از ۲۰۲۵-۰۸-۰۲ شروع می‌شود): میانگین > ۰.
+# قاعدهٔ اصلی Donchian-20 است (همان قاعدهٔ روزانه)؛ Donchian-55 فقط گزارش می‌شود.
+INTRADAY_HIST = paths.data("hist_research")
+INTRADAY_END_MS = 1_754_092_800_000        # 2025-08-02 — آغازِ پنجرهٔ منجمدِ ۴h
+INTRADAY_BLOCK_MS = {"4h": 14 * DAY_MS, "1h": 7 * DAY_MS}
+STRESS_EXTRA_PCT = 0.35
+
+
+def intraday_trades(panel, snaps, spec, tf):
+    out = []
+    for sym, k in panel.items():
+        for i, e, entry, R, res in trend_paths(sym, k, spec, snaps):
+            if res is None or res["outcome"] == "end_of_data":
+                continue                                  # سانسورشده: نتیجه‌اش هنوز معلوم نبود
+            tr = _trade(sym, tf, spec["side"], i, e, res, entry, R, k)
+            tr["net_r_spot"] = bracket.net_r(tr["gross_r"], tr["risk_pct"], SPOT_ROUND_TRIP_PCT)
+            tr["net_r_stress"] = bracket.net_r(tr["gross_r"], tr["risk_pct"], SPOT_ROUND_TRIP_PCT + STRESS_EXTRA_PCT)
+            out.append(tr)
+    return out
+
+
+def intraday_passes(dev, hold):
+    return bool(dev.get("n") and (dev.get("mean") or 0) > 0 and (dev.get("lcb") or 0) > 0
+                and (dev.get("first_half_mean") or 0) > 0 and (dev.get("second_half_mean") or 0) > 0
+                and (dev.get("mean_stressed") or 0) > 0 and hold.get("n") and (hold.get("mean") or 0) > 0)
+
+
+def intraday_study(tfs=("4h", "1h"), hist_dir=None, top_n=50):
+    dev_cut = dev_cutoff_ms()
+    daily = load_panel("1d", INTRADAY_END_MS)
+    snaps = universe.snapshots_from_histories(
+        {s: {"t": k["t"].tolist(), "c": k["c"].tolist(), "v": k["v"].tolist()} for s, k in daily.items()},
+        top_n=top_n)
+    out = {"generated_at": time.time(), "dev_cutoff_ms": dev_cut, "holdout_end_ms": INTRADAY_END_MS,
+           "spot_round_trip_pct": SPOT_ROUND_TRIP_PCT, "stress_extra_pct": STRESS_EXTRA_PCT,
+           "decision_rule": "Donchian-20 per TF: dev (entry+exit < cutoff, spot cost) mean>0, LCB95>0, "
+                            "both halves>0, stressed>0; holdout (cutoff..2025-08-02) mean>0",
+           "tfs": {}}
+    family = {}
+    for tf in tfs:
+        panel = load_panel(tf, INTRADAY_END_MS, min_bars=300, hist_dir=hist_dir or INTRADAY_HIST)
+        block = INTRADAY_BLOCK_MS[tf]
+        res_tf = {"symbols": len(panel), "variants": {}}
+        for n_look in (20, 55):
+            spec = {"rule": "donchian", "n": n_look, "side": 1}
+            rows = intraday_trades(panel, snaps, spec, tf)
+            dev = [r for r in rows if r["exit_ts"] < dev_cut]
+            hold = [r for r in rows if r["entry_ts"] >= dev_cut]
+
+            def pack(rs):
+                s = describe([r["net_r_spot"] for r in rs], [r["entry_ts"] for r in rs], block)
+                s["mean_stressed"] = round(float(np.mean([r["net_r_stress"] for r in rs])), 4) if rs else None
+                s["mean_tier_cost"] = round(float(np.mean([r["net_r"] for r in rs])), 4) if rs else None
+                s["avg_bars"] = round(float(np.mean([r["bars"] for r in rs])), 1) if rs else None
+                s["avg_risk_pct"] = round(float(np.mean([r["risk_pct"] for r in rs])), 2) if rs else None
+                s["trades_per_week"] = round(len(rs) / max((max(r["entry_ts"] for r in rs) - min(r["entry_ts"] for r in rs))
+                                                            / (7 * DAY_MS), 1e-9), 2) if len(rs) > 1 else None
+                return s
+            v = {"dev": pack(dev), "holdout": pack(hold)}
+            v["adopt"] = intraday_passes(v["dev"], v["holdout"]) if n_look == 20 else None
+            res_tf["variants"][f"don{n_look}"] = v
+            if len(dev) >= 2:
+                family[f"{tf}_don{n_look}"] = (np.asarray([r["net_r_spot"] for r in dev], float),
+                                               np.asarray([r["entry_ts"] for r in dev], np.int64))
+        out["tfs"][tf] = res_tf
+    out["romano_wolf_dev"] = stats.romano_wolf(family, 14 * DAY_MS, alpha=ALPHA, B=B) if family else {}
+    return out
+
+
 def write_named(rep, prefix, out_dir=None):
     out_dir = out_dir or OUT_DIR
     os.makedirs(out_dir, exist_ok=True)

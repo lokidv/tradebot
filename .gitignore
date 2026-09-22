@@ -1,5 +1,6 @@
 # runtime data (large / secrets / mutable state)
 bot/data/hist/
+bot/data/hist_research/
 bot/data/calib.json
 bot/data/calib.json.tmp
 bot/data/positions.json

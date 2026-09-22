@@ -745,7 +745,8 @@ async function loadTrendBanner(){
       ${trendTestnetHtml(x)}
     </div>`;
     window.TREND = d;
-    if(VIEW.filter === "ok") renderTable();              // فیلترِ «قابل‌اقدام» از همین داده می‌خواند
+    renderTable();                                       // ردیف‌های روند در هر تب بالای جدول + فیلترِ «قابل‌اقدام»
+    renderTfNote();
     notifyTrendSignals(d);
   }catch(e){ setTimeout(loadTrendBanner, 15000); }   // خطای شبکه در بالا آمدنِ سرور — ۱۰ دقیقه صبر نکن
 }
@@ -953,7 +954,49 @@ function rowHtml(c){
     <td>${actionCell(c)}</td>
   </tr>`;
 }
+// سیگنالِ روندِ روزانهٔ همین ارز (ورودِ تازه یا پیوستن، معتبر) — در هر تبِ تایم‌فریم نشان داده می‌شود،
+// چون تنها روشی است که آزمون را گذرانده؛ بدونِ این، کاربر در تب‌های ۱۵m/۱h/۴h فقط «مسدود» می‌دید.
+function trendRowFor(sym){
+  const t = window.TREND;
+  if(!t || !t.now) return null;
+  const x = t.now.find(r => r.sym === sym);
+  return x && (x.category === "new" || x.category === "join") && x.valid !== false ? x : null;
+}
+// یادداشتِ بالای جدول برای هر تب: چه چیزی در این تایم‌فریم آزموده و رد شد، و سیگنال‌های قابل‌اقدام کجایند
+function renderTfNote(){
+  const tn = $("#tfTrustNote");
+  if(!tn) return;
+  const n = trendCountToday();
+  const go = n ? ` <button class="gear" style="padding:2px 10px;font-size:12px" onclick="showActionable()">📈 نمایشِ ${n} سیگنالِ قابل‌اقدامِ امروز</button>` : "";
+  const why = {
+    "1d": "ستاپ‌های کوتاه‌مدتِ ستون‌های جدول روی روزانه در آزمونِ منجمد رد شدند؛ سیگنالِ معتبرِ روزانه همان روند است",
+    "4h": "ستاپ‌های جدول در آزمونِ منجمد رد شدند و روندِ ۴h هم آزموده و رد شد (−۰٫۰۶R در هر معامله)",
+    "1h": "ستاپ‌های جدول در آزمون پس از هزینه زیان‌ده بودند و روندِ ۱h هم آزموده و رد شد (−۰٫۱۶R در هر معامله)",
+    "15m": "روی ۱۵m هزینهٔ معامله از هر لبهٔ آزموده‌شده بزرگ‌تر است",
+  }[TF] || "";
+  tn.innerHTML = `ℹ️ ستونِ «اقدام» در تبِ <b>${TF}</b> فقط «مشاهده» است: ${why}. ` +
+    (n ? `امروز <b>${n}</b> سیگنالِ خریدِ روندِ روزانه (تنها روشِ گذرانده) بالای جدول با دکمهٔ دمو آمده‌اند.${go}`
+       : `امروز سیگنالِ روندِ روزانه‌ای نیست.`);
+}
+function trendCountToday(){
+  const t = window.TREND;
+  return t && t.now ? t.now.filter(r => (r.category === "new" || r.category === "join") && r.valid !== false).length : 0;
+}
+function showActionable(){
+  const chip = document.querySelector('.fchip[data-f="ok"]');
+  if(chip) setFilter(chip);
+}
 function actionCell(c){
+  const tr = trendRowFor(c.symbol);
+  if(tr){
+    const open = ((window.TREND||{}).demo_open||[]).includes(c.symbol);
+    const L = trendLive(tr);
+    return `<div style="display:flex;flex-direction:column;gap:3px;align-items:center" onclick="event.stopPropagation()">
+      ${open ? `<span class="btn gray" style="min-width:104px">✓ روند در دمو باز است</span>`
+             : `<button class="btn long" onclick="openTrendDemo('${c.symbol}')">📈 خرید در دمو (روند روزانه)</button>`}
+      <small class="mid" style="font-size:10px">${tr.category==="new"?"ورودِ تازه":"پیوستن روزِ "+tr.days_in} · حدضرر ${px(tr.stop)} (−${fmt(L.dist,1)}٪)${tr.tight?" · ⚠ نزدیک":""}</small>
+    </div>`;
+  }
   // سیگنالِ پرمیومِ تأییدشده (از همهٔ دروازه‌ها گذشته)
   if(c.side && c.tradeable){
     return `<button class="btn ${c.side}" onclick="event.stopPropagation();openTradeModal('${c.symbol}')">پوزیشن ${c.side==="long"?"خرید ▲":"فروش ▼"} ✅</button>
@@ -1047,7 +1090,7 @@ function renderTable(){
   else if(F==="sided") rows = rows.filter(c=>c.side);
   else if(F==="blocked") rows = rows.filter(c=>c.side && !c.tradeable);
   else if(F==="waiting") rows = rows.filter(c=>!c.side);
-  else if(F==="long") rows = rows.filter(c=>c.side==="long");
+  else if(F==="long") rows = rows.filter(c=>c.side==="long" || trendRowFor(c.symbol));
   else if(F==="short") rows = rows.filter(c=>c.side==="short");
   else if(F==="watch") rows = rows.filter(c=>WATCH.has(c.symbol));
   if(F==="predict"){                       // در حالتِ پیش‌بینی: مرتب بر اساس اطمینانِ جهت (قوی‌ترین‌ها اول)
@@ -1061,6 +1104,8 @@ function renderTable(){
       return VIEW.dir * (av - bv);
     });
   }
+  // ارزهای دارای سیگنالِ روندِ روزانه همیشه بالای جدول (در هر تب)
+  rows = rows.filter(c => trendRowFor(c.symbol)).concat(rows.filter(c => !trendRowFor(c.symbol)));
   const total = rows.length;
   if(!VIEW.showAll && total > 50) rows = rows.slice(0, 50);
   $("#pageChip").textContent = VIEW.showAll ? `همه (${total})` : `۵۰ برتر از ${total}`;
@@ -1116,13 +1161,8 @@ async function loadOverview(){
     if(d.calib && d.calib.building) $("#updated").textContent += ` · کالیبراسیون در حال ساخت`;
     renderTable();
     renderStats(d);
-    const tr = d.tf_trust || {}, tn = $("#tfTrustNote");
-    if(tn){
-      if(tr.policy_ok)
-        tn.innerHTML = `ℹ️ آزمونِ داخلیِ مدل برای <b>${TF}</b> (${tr.policy_type==="action"?"انتخاب مستقیم لانگ/شورت/عدم معامله":"فیلتر ستاپ"}): n=${tr.policy_n}، میانگین خالص ${fmt(tr.policy_avg_net_r,2)}R، کران پایین ${fmt(tr.policy_lcb_net_r,2)}R، PF=${fmt(tr.policy_profit_factor,2)} — <b>تشخیصی</b>: این سیاست جزوِ فرضیه‌های پیش‌ثبت‌شده نبوده و آزمونِ منجمد آن را نسنجیده؛ مجوزِ ورود فقط از قفلِ ایمنی.`;
-      else
-        tn.innerHTML = `⚠️ سیاستِ تایم‌فریمِ <b>${TF}</b> حتی آزمونِ داخلیِ مدل را پاس نکرده؛ پیش‌بینی فقط نمایشی است و مجوزِ ورود نیست.`;
-    }
+    window.TF_TRUST = d.tf_trust || {};
+    renderTfNote();
   }catch(e){ $("#rows").innerHTML = `<tr><td colspan="13" class="err loading">خطا در دریافت داده: ${e}</td></tr>`; }
   $("#led").classList.remove("busy"); nprog.done();
   const nCoins = ((window.OV && window.OV.coins) || []).length;

@@ -24,6 +24,7 @@ LEVERAGED_SUFFIX = ("UP", "DOWN", "BULL", "BEAR")
 # سنجیده روی ۲۹۹۹ روز: آرام‌ترین روزِ BTC ۰٫۳۴٪ و TRX ۰٫۳۹٪؛ میانهٔ USDG ۰٫۰۲٪.
 # ۰٫۱٪ با هر دو طرف فاصلهٔ چندبرابری دارد.
 PEG_MAX_RANGE_PCT = 0.1
+STALE_TICKER_MS = 6 * 3600 * 1000       # تیکری که ۶ ساعت معامله نداشته، بازارِ زنده نیست
 
 
 def _is_pegged(last, high, low):
@@ -76,6 +77,10 @@ def get_top_symbols(n=15):
             if base in STABLE_BASES or any(base.endswith(sfx) for sfx in LEVERAGED_SUFFIX):
                 continue
             try:
+                # جفتِ متوقف‌شده (status=BREAK) در ticker/24hr با حجمِ **کهنه** می‌ماند؛ TON و RNDR و POLY
+                # با closeTimeِ ۳۲۴ ساعت پیش واردِ ۲۰۰ ارزِ برتر شده بودند و هر تایم‌فریم ۸ خطا می‌داد
+                if time.time() * 1000 - float(t.get("closeTime") or 0) > STALE_TICKER_MS:
+                    continue
                 last = float(t["lastPrice"])
                 if _is_pegged(last, float(t["highPrice"]), float(t["lowPrice"])):
                     continue

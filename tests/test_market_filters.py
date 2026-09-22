@@ -16,9 +16,11 @@ import _hermetic  # noqa: E402,F401  — پیش از هر ماژولِ ربات:
 import market  # noqa: E402
 
 
-def _ticker(sym, last, high, low, qv):
+def _ticker(sym, last, high, low, qv, age_h=0.0):
+    import time
     return {"symbol": sym, "lastPrice": str(last), "highPrice": str(high), "lowPrice": str(low),
-            "quoteVolume": str(qv), "priceChangePercent": "0.1"}
+            "quoteVolume": str(qv), "priceChangePercent": "0.1",
+            "closeTime": int(time.time() * 1000 - age_h * 3_600_000)}
 
 
 class PeggedAssetsTests(unittest.TestCase):
@@ -39,6 +41,14 @@ class PeggedAssetsTests(unittest.TestCase):
         with mock.patch.object(market, "_binance_json", return_value=rows):
             symbols, _t = market.get_top_symbols(10)
         self.assertEqual(symbols, ["BTCUSDT", "ETHUSDT"])
+
+    def test_a_halted_pair_with_a_stale_ticker_is_dropped(self):
+        """بایننس جفتِ متوقف‌شده را با حجمِ قدیمی نگه می‌دارد (TON: closeTimeِ ۳۲۴ ساعت پیش)."""
+        rows = [_ticker("TONUSDT", 3.0, 3.2, 2.9, 9e9, age_h=324.5),
+                _ticker("BTCUSDT", 60000, 61000, 59000, 7e9)]
+        with mock.patch.object(market, "_binance_json", return_value=rows):
+            symbols, _t = market.get_top_symbols(10)
+        self.assertEqual(symbols, ["BTCUSDT"])
 
     def test_the_threshold_sits_far_below_the_quietest_major(self):
         self.assertFalse(market._is_pegged(60000, 60100, 59896))   # ۰٫۳۴٪
