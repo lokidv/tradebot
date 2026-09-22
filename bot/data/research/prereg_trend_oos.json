@@ -1,0 +1,34 @@
+{
+ "title": "One-shot out-of-sample test of the daily trend strategy",
+ "registered_at_utc": "2026-09-22",
+ "why": "Every trend number so far comes from exploration data (2018-06..2024-09-28). The period after it has never been used by any trend test. Before real capital, the live strategy must be confirmed on data that played no part in choosing it.",
+ "window": {"start": "2024-09-28T00:00:00Z", "start_ms": 1727481600000,
+            "end": "2026-09-15T00:00:00Z", "end_ms": 1789430400000,
+            "note": "end = start of live forward tracking, so no day is counted twice"},
+ "strategy": {
+  "rule": "explore.VARIANTS T_don20_long: close above the prior 20-day high, entry at the next daily open, initial stop 3xATR20, trailing stop 3xATR20 on closes, max hold 120 days, long only",
+  "universe": "point-in-time monthly top-50 by trailing 30-day dollar volume, same exclusions as exploration (stablecoins, pegged, wrapped, OKX-sourced)",
+  "costs": "spot round trip 0.4% (explore.SPOT_ROUND_TRIP_PCT), no funding",
+  "entries_counted": "trades with entry on or after start and signal before end; trades still open at end are marked to the last close for the account view but excluded from per-trade expectancy"
+ },
+ "primary_test": {
+  "statistic": "mean net R per trade (spot costs), top-50",
+  "PASS": "mean > 0 AND block-bootstrap (30-day blocks) one-sided 90% lower bound > 0",
+  "CONSISTENT": "mean > 0 but the 90% lower bound <= 0 (edge not confirmed, not refuted)",
+  "FAIL": "mean <= 0"
+ },
+ "reported_not_decisive": [
+  "top-20 majors and ranks 21-50 separately",
+  "heavier costs (+0.35% slippage)",
+  "each half of the window",
+  "account simulation exactly as the demo: 0.5% risk per trade, open-risk cap 4% (max 8 positions), entries in time order, ties by symbol",
+  "BTC buy-and-hold over the same window",
+  "drawdown distribution by risk level (block bootstrap of monthly account returns, dev + OOS)"
+ ],
+ "consequences": {
+  "FAIL": "the panel states that the strategy failed out of sample; no real-money use recommended",
+  "CONSISTENT": "the panel shows both results; real money only at minimal risk, forward record decides",
+  "PASS": "the panel's evidence line switches to out-of-sample numbers"
+ },
+ "no_changes_after_seeing_results": "rule, universe, costs, window and criteria above are fixed; nothing is re-run with other parameters"
+}
