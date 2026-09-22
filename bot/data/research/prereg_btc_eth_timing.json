@@ -1,0 +1,27 @@
+{
+ "title": "BTC/ETH long-or-cash timing: four economically motivated hypotheses",
+ "registered_at_utc": "2026-09-22",
+ "why": "The user trades only BTC and ETH, spot, own money. Short-horizon setups and the multi-coin trend strategy failed out of sample. This tests daily long-or-cash timing on the two coins, including a data source never used for prediction here: the 6-year funding-rate history (crowding of leveraged longs and shorts).",
+ "assets": ["BTCUSDT", "ETHUSDT"],
+ "timing": "position for day d (00:00-24:00 UTC) decided only from data up to the close of day d-1; funding settlements counted only if at or before that close",
+ "hypotheses": {
+  "H1_FUND_LOW": "7-day mean funding below its 20th percentile of the prior 365 days (shorts crowded) -> long for the next 7 days, else cash",
+  "H2_FUND_NOT_HIGH": "long unless 7-day mean funding is above its 80th percentile of the prior 365 days (longs crowded) -> cash",
+  "H3_TSMOM28": "decided on Mondays: long for the week if the Sunday close is above the close 28 days earlier, else cash",
+  "H4_SMA200": "long if the previous close is above the 200-day simple average of closes, else cash"
+ },
+ "windows": {
+  "discovery": ["2021-01-01", "2023-06-30"],
+  "confirmation": ["2023-07-01", "2026-08-31"],
+  "note": "signals need 365 days of funding history, so both windows start from 2021; the funding archive ends 2026-08-31"
+ },
+ "costs": "0.2% of position value per switch (0.4% round trip), no funding (spot)",
+ "statistic": "timing edge = mean daily return while long minus mean daily return while in cash (computed exactly as mean of (in - p)*r / (p(1-p)))",
+ "adopt_rule": {
+  "discovery": "timing edge > 0 with Romano-Wolf adjusted p < 0.10 across all 8 tests (4 hypotheses x 2 assets), 30-day blocks",
+  "confirmation": "timing edge > 0 AND the strategy's Sharpe after costs >= buy-and-hold Sharpe",
+  "CONSISTENT": "edge > 0 in both windows without meeting the full rule: reported, not adopted"
+ },
+ "also_reported": "strategy vs buy-and-hold CAGR, max drawdown and time in market per window; descriptive charts",
+ "no_changes_after_seeing_results": "hypotheses, parameters, windows, costs and the rule above are fixed"
+}
