@@ -1,0 +1,302 @@
+{
+ "generated_at": 1790103654.4594986,
+ "prereg": "bot/data/research/prereg_trend_oos.json",
+ "window_ms": [
+  1727481600000,
+  1789430400000
+ ],
+ "symbols_with_history": 377,
+ "primary_top50": {
+  "n": 420,
+  "n_eff": 35.333,
+  "n_blocks": 23,
+  "mean": -0.0141,
+  "sd": 1.6618,
+  "lcb": -0.3043,
+  "t_stat": -0.051,
+  "win_rate": 32.14,
+  "profit_factor": 0.9698,
+  "uplift": -0.0141,
+  "alpha": 0.05,
+  "first_half_mean": 0.2564,
+  "second_half_mean": -0.2847,
+  "max_drawdown": 79.415,
+  "by_year": {
+   "2024": {
+    "n": 80,
+    "mean": 0.4764
+   },
+   "2025": {
+    "n": 180,
+    "mean": -0.0664
+   },
+   "2026": {
+    "n": 160,
+    "mean": -0.2006
+   }
+  },
+  "positive_years": "1/3",
+  "lcb90": -0.2505,
+  "mean_stressed": -0.0344,
+  "profile": {
+   "n": 420,
+   "win_rate": 32.1,
+   "avg_win_r": 1.415,
+   "avg_loss_r": -0.691,
+   "median_r": -0.475,
+   "max_consecutive_losses": 18,
+   "top_decile_share_of_gains": 0.731,
+   "mean_without_top_decile": -0.3852
+  }
+ },
+ "verdict": "FAIL",
+ "top20": {
+  "n": 166,
+  "n_eff": 31.91,
+  "n_blocks": 22,
+  "mean": 0.2116,
+  "sd": 2.1591,
+  "lcb": -0.1523,
+  "t_stat": 0.554,
+  "win_rate": 39.16,
+  "profit_factor": 1.5325,
+  "uplift": 0.2116,
+  "alpha": 0.05,
+  "first_half_mean": 0.5536,
+  "second_half_mean": -0.1304,
+  "max_drawdown": 18.224,
+  "by_year": {
+   "2024": {
+    "n": 31,
+    "mean": 1.0898
+   },
+   "2025": {
+    "n": 73,
+    "mean": 0.031
+   },
+   "2026": {
+    "n": 62,
+    "mean": -0.0149
+   }
+  },
+  "positive_years": "2/3",
+  "lcb90": -0.0719,
+  "mean_stressed": 0.1882,
+  "profile": {
+   "n": 166,
+   "win_rate": 39.2,
+   "avg_win_r": 1.555,
+   "avg_loss_r": -0.653,
+   "median_r": -0.318,
+   "max_consecutive_losses": 11,
+   "top_decile_share_of_gains": 0.673,
+   "mean_without_top_decile": -0.2194
+  }
+ },
+ "ranks_21_50": {
+  "n": 254,
+  "n_eff": 33.319,
+  "n_blocks": 22,
+  "mean": -0.1617,
+  "sd": 1.2157,
+  "lcb": -0.4127,
+  "t_stat": -0.768,
+  "win_rate": 27.56,
+  "profit_factor": 0.6866,
+  "uplift": -0.1617,
+  "alpha": 0.05,
+  "first_half_mean": 0.0525,
+  "second_half_mean": -0.3759,
+  "max_drawdown": 64.787,
+  "by_year": {
+   "2024": {
+    "n": 49,
+    "mean": 0.0882
+   },
+   "2025": {
+    "n": 107,
+    "mean": -0.1329
+   },
+   "2026": {
+    "n": 98,
+    "mean": -0.3181
+   }
+  },
+  "positive_years": "1/3",
+  "lcb90": -0.3635,
+  "mean_stressed": -0.1799,
+  "profile": {
+   "n": 254,
+   "win_rate": 27.6,
+   "avg_win_r": 1.286,
+   "avg_loss_r": -0.712,
+   "median_r": -0.618,
+   "max_consecutive_losses": 20,
+   "top_decile_share_of_gains": 0.745,
+   "mean_without_top_decile": -0.472
+  }
+ },
+ "open_at_end": 21,
+ "account_demo_rules": {
+  "trades_taken": 170,
+  "final_equity": 10281.35,
+  "cagr_pct": 1.43,
+  "max_drawdown_pct": 11.66,
+  "pnl_by_year": {
+   "2024": 419.67,
+   "2025": -599.68,
+   "2026": 461.36
+  }
+ },
+ "account_monthly_returns_pct": [
+  -3.15,
+  -1.11,
+  8.79,
+  -2.05,
+  -1.21,
+  -1.99,
+  -1.98,
+  2.83,
+  0.12,
+  3.99,
+  2.65,
+  -2.38,
+  -2.18,
+  -2.92,
+  -0.48,
+  0.0,
+  0.0,
+  -2.27,
+  -0.27,
+  3.22,
+  -1.56,
+  -1.25,
+  0.23,
+  6.8
+ ],
+ "btc_buy_and_hold": {
+  "cagr_pct": 9.15,
+  "max_drawdown_pct": 52.97
+ },
+ "dev_same_rule_spot": {
+  "n": 1372,
+  "n_eff": 113.495,
+  "n_blocks": 74,
+  "mean": 0.363,
+  "sd": 2.0885,
+  "lcb": 0.1431,
+  "t_stat": 1.852,
+  "win_rate": 38.99,
+  "profit_factor": 1.8979,
+  "uplift": 0.363,
+  "alpha": 0.05,
+  "first_half_mean": 0.6736,
+  "second_half_mean": 0.0524,
+  "max_drawdown": 92.823,
+  "by_year": {
+   "2018": {
+    "n": 24,
+    "mean": -0.6564
+   },
+   "2019": {
+    "n": 138,
+    "mean": 0.1547
+   },
+   "2020": {
+    "n": 284,
+    "mean": 0.7872
+   },
+   "2021": {
+    "n": 284,
+    "mean": 0.761
+   },
+   "2022": {
+    "n": 187,
+    "mean": -0.3619
+   },
+   "2023": {
+    "n": 268,
+    "mean": 0.5811
+   },
+   "2024": {
+    "n": 187,
+    "mean": -0.1885
+   }
+  },
+  "positive_years": "4/7",
+  "lcb90": 0.1811,
+  "mean_stressed": 0.3466,
+  "profile": {
+   "n": 1372,
+   "win_rate": 39.0,
+   "avg_win_r": 1.968,
+   "avg_loss_r": -0.663,
+   "median_r": -0.336,
+   "max_consecutive_losses": 30,
+   "top_decile_share_of_gains": 0.677,
+   "mean_without_top_decile": -0.1739
+  }
+ },
+ "drawdown_by_risk": {
+  "0.25": {
+   "heat_cap_pct": 2.0,
+   "one_year_return_pct": {
+    "p5": -6.7,
+    "median": 2.4,
+    "p95": 14.6
+   },
+   "prob_losing_year_pct": 35.4,
+   "max_drawdown_pct": {
+    "median": 3.6,
+    "p95": 7.8,
+    "p99": 9.7
+   },
+   "historical_max_drawdown_pct": 10.1
+  },
+  "0.5": {
+   "heat_cap_pct": 4.0,
+   "one_year_return_pct": {
+    "p5": -13.8,
+    "median": 4.0,
+    "p95": 30.1
+   },
+   "prob_losing_year_pct": 37.8,
+   "max_drawdown_pct": {
+    "median": 7.0,
+    "p95": 15.5,
+    "p99": 18.6
+   },
+   "historical_max_drawdown_pct": 19.4
+  },
+  "1": {
+   "heat_cap_pct": 8.0,
+   "one_year_return_pct": {
+    "p5": -24.7,
+    "median": 7.5,
+    "p95": 63.6
+   },
+   "prob_losing_year_pct": 38.4,
+   "max_drawdown_pct": {
+    "median": 13.7,
+    "p95": 27.9,
+    "p99": 33.9
+   },
+   "historical_max_drawdown_pct": 35.5
+  },
+  "2": {
+   "heat_cap_pct": 16.0,
+   "one_year_return_pct": {
+    "p5": -44.9,
+    "median": 10.5,
+    "p95": 145.6
+   },
+   "prob_losing_year_pct": 41.3,
+   "max_drawdown_pct": {
+    "median": 25.8,
+    "p95": 49.4,
+    "p99": 56.4
+   },
+   "historical_max_drawdown_pct": 61.3
+  }
+ }
+}

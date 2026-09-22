@@ -288,6 +288,39 @@ class IntradayTests(unittest.TestCase):
         self.assertFalse(explore.intraday_passes(dev, {"n": 0, "mean": None}))
 
 
+class OosTests(unittest.TestCase):
+    def test_verdict_follows_the_preregistered_rule(self):
+        self.assertEqual(explore.oos_verdict(0.2, 0.01), "PASS")
+        self.assertEqual(explore.oos_verdict(0.2, -0.05), "CONSISTENT")
+        self.assertEqual(explore.oos_verdict(0.2, None), "CONSISTENT")
+        self.assertEqual(explore.oos_verdict(0.0, 0.1), "FAIL")
+        self.assertEqual(explore.oos_verdict(None, None), "FAIL")
+
+    def test_window_matches_the_preregistration_file(self):
+        import json as _json
+        with open(os.path.join(ROOT, "bot", "data", "research", "prereg_trend_oos.json"), encoding="utf-8") as f:
+            pre = _json.load(f)
+        self.assertEqual((explore.OOS_START_MS, explore.OOS_END_MS),
+                         (pre["window"]["start_ms"], pre["window"]["end_ms"]))
+        self.assertEqual(explore.OOS_START_MS, 1_727_481_600_000)            # = مرزِ اکتشاف (2024-09-28)
+
+    def test_account_path_matches_portfolio_and_monthly_returns_compound_back(self):
+        rows = [{"sym": f"S{i}", "entry_ts": T0 + i * 5 * DAY, "exit_ts": T0 + (i * 5 + 12) * DAY,
+                 "net_r": (1.5 if i % 3 == 0 else -1.0)} for i in range(40)]
+        acc = explore.portfolio(rows, risk_equity_pct=0.5, max_open=2)
+        path = explore.account_path(rows, 0.5, 2)
+        self.assertAlmostEqual(path[-1][1], acc["final_equity"], places=2)
+        mr = explore.monthly_returns(path)
+        self.assertAlmostEqual(10_000 * float(np.prod([1 + x for x in mr])), path[-1][1], places=4)
+
+    def test_drawdown_table_grows_with_risk(self):
+        rng = np.random.default_rng(4)
+        rows = [{"sym": "S", "entry_ts": T0 + i * 3 * DAY, "exit_ts": T0 + (i * 3 + 2) * DAY,
+                 "net_r": float(rng.choice([2.0, -1.0], p=[0.4, 0.6]))} for i in range(400)]
+        t = explore.drawdown_table(rows, risks=(0.5, 2.0), max_open=1, n_sim=400)
+        self.assertLess(t["0.5"]["max_drawdown_pct"]["median"], t["2"]["max_drawdown_pct"]["median"])
+
+
 class SetupParityTests(unittest.TestCase):
     """ستاپ‌های اکتشاف باید دقیقاً همان رویدادهای آموزش باشند؛ وگرنه دو آزمون دو چیزِ متفاوت را می‌سنجند."""
 

@@ -1049,6 +1049,144 @@ def intraday_study(tfs=("4h", "1h"), hist_dir=None, top_n=50):
     return out
 
 
+# ───────────────────────── آزمونِ یک‌بارهٔ خارج از نمونه (پیش‌ثبت: data/research/prereg_trend_oos.json) ─────────────────────────
+OOS_START_MS = 1_727_481_600_000         # 2024-09-28 — پایانِ دادهٔ اکتشاف
+OOS_END_MS = 1_789_430_400_000           # 2026-09-15 — آغازِ ردیابیِ زنده
+OOS_LCB_ALPHA = 0.10
+DEMO_RISK_PCT, DEMO_MAX_OPEN = 0.5, 8    # همان قواعدِ دمو: ۰٫۵٪ ریسک، سقفِ ریسکِ باز ۴٪
+
+
+def oos_verdict(mean, lcb90):
+    if mean is None or mean <= 0:
+        return "FAIL"
+    return "PASS" if (lcb90 is not None and lcb90 > 0) else "CONSISTENT"
+
+
+def account_path(trades, risk_pct, max_open, start=10_000.0, key="net_r"):
+    """منحنیِ حساب روی خروجِ معامله‌ها: ``[(exit_ts, equity), ...]`` — همان منطقِ ``portfolio``."""
+    events = sorted(trades, key=lambda t: (t["entry_ts"], t["sym"]))
+    equity, path, open_pos = start, [], []
+
+    def settle(until):
+        nonlocal equity, open_pos
+        keep = []
+        for pos in sorted(open_pos, key=lambda p: p["exit_ts"]):
+            if until is None or pos["exit_ts"] <= until:
+                equity += pos["stake"] * pos["r"]
+                path.append((pos["exit_ts"], equity))
+            else:
+                keep.append(pos)
+        open_pos = keep
+    for tr in events:
+        settle(tr["entry_ts"])
+        if len(open_pos) >= max_open:
+            continue
+        open_pos.append({"exit_ts": tr["exit_ts"], "r": tr[key], "stake": equity * risk_pct / 100.0})
+    settle(None)
+    return path
+
+
+def monthly_returns(path, start=10_000.0):
+    """بازدهِ ماهانه از منحنیِ حساب (ماه‌های بی‌معامله صفر)."""
+    if not path:
+        return []
+    by_month, eq = {}, start
+    for ts, e in path:
+        g = time.gmtime(ts / 1000)
+        by_month[(g.tm_year, g.tm_mon)] = e
+    y, m = time.gmtime(path[0][0] / 1000)[:2]
+    y2, m2 = time.gmtime(path[-1][0] / 1000)[:2]
+    out = []
+    while (y, m) <= (y2, m2):
+        e = by_month.get((y, m), eq)
+        out.append(e / eq - 1.0)
+        eq = e
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+    return out
+
+
+def drawdown_table(trades, risks=(0.25, 0.5, 1.0, 2.0), max_open=DEMO_MAX_OPEN, n_sim=5000, horizon=12,
+                   block=3, seed=stats.SEED):
+    """با هر درصدِ ریسک در هر معامله: توزیعِ بازدهِ یک‌ساله و بیشترین افت (بوت‌استرپِ بلوک‌های ۳ماهه
+    از بازدهِ ماهانهٔ حسابِ شبیه‌سازی‌شده). برای تصمیمِ «با سرمایهٔ بزرگ چقدر ریسک کنم»."""
+    rng = np.random.default_rng(seed)
+    out = {}
+    for r in risks:
+        mr = np.asarray(monthly_returns(account_path(trades, r, max_open)), float)
+        if len(mr) < block * 2:
+            continue
+        starts = np.arange(len(mr) - block + 1)
+        yr, dd = [], []
+        for _ in range(n_sim):
+            seq = np.concatenate([mr[s:s + block] for s in rng.choice(starts, size=-(-horizon // block))])[:horizon]
+            eq = np.cumprod(1 + seq)
+            yr.append(eq[-1] - 1)
+            dd.append(float(np.max(1 - eq / np.maximum.accumulate(np.concatenate([[1.0], eq]))[1:])))
+        yr, dd = np.asarray(yr), np.asarray(dd)
+        out[f"{r:g}"] = {"heat_cap_pct": r * max_open,
+                         "one_year_return_pct": {p: round(float(np.percentile(yr, q)) * 100, 1)
+                                                 for p, q in (("p5", 5), ("median", 50), ("p95", 95))},
+                         "prob_losing_year_pct": round(float((yr < 0).mean()) * 100, 1),
+                         "max_drawdown_pct": {p: round(float(np.percentile(dd, q)) * 100, 1)
+                                              for p, q in (("median", 50), ("p95", 95), ("p99", 99))},
+                         "historical_max_drawdown_pct": round(float(np.max(1 - np.cumprod(1 + mr) / np.maximum.accumulate(
+                             np.concatenate([[1.0], np.cumprod(1 + mr)]))[1:])) * 100, 1)}
+    return out
+
+
+def oos_study(hist_dir=None, top_n=50, key="T_don20_long"):
+    daily = load_panel("1d", OOS_END_MS, hist_dir=hist_dir)
+    snaps = universe.snapshots_from_histories(
+        {s: {"t": k["t"].tolist(), "c": k["c"].tolist(), "v": k["v"].tolist()} for s, k in daily.items()},
+        top_n=top_n)
+    small = universe.snapshots_from_histories(
+        {s: {"t": k["t"].tolist(), "c": k["c"].tolist(), "v": k["v"].tolist()} for s, k in daily.items()},
+        top_n=20)
+    ever = set().union(*[u for _t, u in snaps])
+    spec = {v["key"]: v for v in VARIANTS}[key]
+    rows = trend_trades({s: k for s, k in daily.items() if s in ever}, snaps, spec)
+    for r in rows:
+        r["net_r_spot"] = bracket.net_r(r["gross_r"], r["risk_pct"], SPOT_ROUND_TRIP_PCT)
+        r["net_r_stress"] = bracket.net_r(r["gross_r"], r["risk_pct"], SPOT_ROUND_TRIP_PCT + STRESS_EXTRA_PCT)
+        r["top20"] = universe.in_universe(small, r["sym"], r["ts"])
+    oos_all = [r for r in rows if r["entry_ts"] >= OOS_START_MS]
+    oos = [r for r in oos_all if r["outcome"] != "end_of_data"]
+    dev = [r for r in rows if r["exit_ts"] < OOS_START_MS and r["outcome"] != "end_of_data"]
+
+    def pack(rs, k="net_r_spot"):
+        vals = [r[k] for r in rs]
+        ts = [r["entry_ts"] for r in rs]
+        s = describe(vals, ts, TREND_BLOCK_MS)
+        s["lcb90"] = stats.block_bootstrap_lcb(vals, ts, TREND_BLOCK_MS, alpha=OOS_LCB_ALPHA, B=B) if vals else None
+        s["mean_stressed"] = round(float(np.mean([r["net_r_stress"] for r in rs])), 4) if rs else None
+        s["profile"] = trade_profile(rs, k)
+        return s
+
+    prim = pack(oos)
+    spot = lambda rs: [dict(r, net_r=r["net_r_spot"]) for r in rs]
+    acc = portfolio(spot(oos_all), risk_equity_pct=DEMO_RISK_PCT, max_open=DEMO_MAX_OPEN)
+    path = account_path(spot(oos_all), DEMO_RISK_PCT, DEMO_MAX_OPEN)
+    mret = monthly_returns(path)
+    return {
+        "generated_at": time.time(),
+        "prereg": "bot/data/research/prereg_trend_oos.json",
+        "window_ms": [OOS_START_MS, OOS_END_MS],
+        "symbols_with_history": len(daily),
+        "primary_top50": prim,
+        "verdict": oos_verdict(prim.get("mean"), prim.get("lcb90")),
+        "top20": pack([r for r in oos if r["top20"]]),
+        "ranks_21_50": pack([r for r in oos if not r["top20"]]),
+        "open_at_end": len(oos_all) - len(oos),
+        "account_demo_rules": acc,
+        "account_monthly_returns_pct": [round(x * 100, 2) for x in mret],
+        "btc_buy_and_hold": buy_and_hold(daily["BTCUSDT"], OOS_START_MS, OOS_END_MS) if "BTCUSDT" in daily else None,
+        "dev_same_rule_spot": pack(dev),
+        "drawdown_by_risk": drawdown_table(spot([r for r in rows if r["outcome"] != "end_of_data"])),
+    }
+
+
 def write_named(rep, prefix, out_dir=None):
     out_dir = out_dir or OUT_DIR
     os.makedirs(out_dir, exist_ok=True)

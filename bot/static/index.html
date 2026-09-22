@@ -615,7 +615,7 @@ function notifyTrendSignals(d){
   try{
     if(localStorage.notif==="1" && "Notification" in window && Notification.permission==="granted")
       new Notification(`📈 سیگنالِ خرید (روندِ روزانه): ${names.join("، ")}`,
-        {body:"شکستِ سقفِ ۲۰روزه — قیمتِ ورود، حدضرر و حجم در پنلِ روند. اثبات‌نشده؛ با ریسکِ کم."});
+        {body: trendOosFailed() ? "شکستِ سقفِ ۲۰روزه — فقط برای دمو: این روش در آزمونِ خارج از نمونه رد شد." : "شکستِ سقفِ ۲۰روزه — اثبات‌نشده؛ با ریسکِ کم."});
   }catch(e){}
   toast(`📈 سیگنالِ خرید: ${names.join("، ")} — ورود و حدضرر در پنلِ روند`);
   try{ localStorage.trendSeen = JSON.stringify(seen.concat(news).slice(-200)); }catch(e){}
@@ -711,9 +711,21 @@ async function loadTrendBanner(){
         <td class="num">اگر بستهٔ روزانه بالای ${px(x.trigger)} شود</td><td class="num mid">${fmt(x.distance_pct,1)}٪ فاصله</td><td></td></tr>`);
     const table = rows => rows.length ? `<div style="overflow-x:auto"><table class="mini"><tbody>${rows.join("")}</tbody></table></div>` : "";
     const j5 = jn["5d"] || {}, j10 = jn["10d"] || {};
-    el.innerHTML = `<div class="calbanner trend">
-      <div class="top"><span>📈 <b>سیگنال‌های روندِ روزانه</b> — فقط خرید، روی هر صرافیِ اسپات · بی‌اهرم · <b>اثبات‌نشده</b></span>
+    const oo = evd.oos || {}, failed = oo.verdict === "FAIL";
+    const oosLine = oo.verdict ? `<div class="sub" style="margin:4px 0 6px;padding:8px 10px;border-radius:8px;
+        border:1px solid ${failed?"var(--dn)":"var(--brass)"};color:var(--ink);line-height:1.8">
+      ${failed ? "⛔" : oo.verdict === "PASS" ? "✅" : "⚠️"} <b>آزمونِ خارج از نمونه (از پیش ثبت‌شده، ۲۰۲۴-۰۹ تا ۲۰۲۶-۰۹، داده‌ای که در ساختِ قاعده دیده نشده بود):
+        ${failed ? "رد شد" : oo.verdict === "PASS" ? "قبول شد" : "تأیید نشد"}</b> —
+        ۵۰ ارز ${fmt((oo.top50||{}).mean,2)}R در هر معامله (۲۰ ارزِ اصلی ${fmt((oo.top20||{}).mean,2)}R، رتبه‌های ۲۱–۵۰ ${fmt((oo.ranks_21_50||{}).mean,2)}R) ·
+        حسابِ دمو با همین قواعد ${fmt((oo.account||{}).cagr_pct,1)}٪ سالانه، افتِ ${fmt((oo.account||{}).max_drawdown_pct,0)}٪ ·
+        خرید و نگه‌داریِ BTC ${fmt((oo.btc||{}).cagr_pct,1)}٪ سالانه با افتِ ${fmt((oo.btc||{}).max_drawdown_pct,0)}٪.
+        ${failed ? `<b>این سیگنال‌ها فقط برای دمو و ردیابی‌اند؛ برای پولِ واقعی — به‌خصوص سرمایهٔ دیگران — توصیه نمی‌شوند.</b>
+          لبه‌ای که در ۲۰۱۸–۲۰۲۴ دیده شد، در دو سالِ اخیر تکرار نشد؛ کارنامهٔ رو-به-جلو تصمیم می‌گیرد.` : ""}
+    </div>` : "";
+    el.innerHTML = `<div class="calbanner trend" ${failed?'style="border-color:var(--dn)"':""}>
+      <div class="top"><span>📈 <b>سیگنال‌های روندِ روزانه</b> — فقط خرید · بی‌اهرم · <b>${failed ? "در آزمونِ خارج از نمونه رد شد — فقط دمو" : "اثبات‌نشده"}</b></span>
         <span class="mid">${(d.symbols||[]).length} ارزِ بزرگ · به‌روزرسانی هر روز ساعتِ ۳:۳۰ بامدادِ تهران (۰۰:۰۰ UTC)</span></div>
+      ${oosLine}
       <div class="sub">روش: در قیمتِ فعلی بخرید و حدضررِ نوشته‌شده را در صرافی بگذارید. هدفِ ثابت ندارد — هر روز حدضررِ تازه را
         از همین‌جا بخوانید و فقط رو به بالا جابه‌جا کنید، تا وقتی بخورد. بهترین زمانِ ورود نزدیکِ بازشدنِ کندلِ روزانه است (۳:۳۰ بامدادِ تهران)؛
         قیمت‌ها زنده‌اند و اگر کفِ امروز به حدضرر برسد سیگنال باطل می‌شود.
@@ -975,9 +987,10 @@ function renderTfNote(){
     "15m": "روی ۱۵m هزینهٔ معامله از هر لبهٔ آزموده‌شده بزرگ‌تر است",
   }[TF] || "";
   tn.innerHTML = `ℹ️ ستونِ «اقدام» در تبِ <b>${TF}</b> فقط «مشاهده» است: ${why}. ` +
-    (n ? `امروز <b>${n}</b> سیگنالِ خریدِ روندِ روزانه (تنها روشِ گذرانده) بالای جدول با دکمهٔ دمو آمده‌اند.${go}`
+    (n ? `امروز <b>${n}</b> سیگنالِ خریدِ روندِ روزانه بالای جدول با دکمهٔ دمو آمده‌اند — ${trendOosFailed() ? "این روش هم در آزمونِ خارج از نمونه رد شد؛ فقط برای دمو" : "بهترین روشِ آزموده، اثبات‌نشده"}.${go}`
        : `امروز سیگنالِ روندِ روزانه‌ای نیست.`);
 }
+function trendOosFailed(){ return ((((window.TREND||{}).evidence||{}).oos)||{}).verdict === "FAIL"; }
 function trendCountToday(){
   const t = window.TREND;
   return t && t.now ? t.now.filter(r => (r.category === "new" || r.category === "join") && r.valid !== false).length : 0;
@@ -1053,8 +1066,8 @@ function trendSignalRows(){
   let act = t.now.filter(x => x.category === "new" || x.category === "join");
   if(VIEW.q) act = act.filter(x => x.sym.includes(VIEW.q));
   const head = `<tr><td colspan="13" style="padding:10px 12px;line-height:1.8;color:var(--dim)">
-      📈 <b style="color:var(--ink)">سیگنال‌های قابل‌اقدامِ امروز</b> — استراتژیِ روندِ روزانه: فقط خرید، روی هر صرافیِ اسپات، بی‌اهرم.
-      بهترین شواهدِ پژوهش، ولی <b>اثبات‌نشده</b> — با ریسکِ کم. سیگنال‌های کوتاه‌مدتِ ستون‌های جدول از آزمون رد شده‌اند و این‌جا نمی‌آیند.</td></tr>`;
+      📈 <b style="color:var(--ink)">سیگنال‌های امروزِ روندِ روزانه</b> — فقط خرید، بی‌اهرم.${trendOosFailed() ? ' <b style="color:var(--dn)">⛔ در آزمونِ خارج از نمونه رد شد — فقط برای دمو، نه پولِ واقعی.</b>' : ""}
+      سیگنال‌های کوتاه‌مدتِ ستون‌های جدول هم از آزمون رد شده‌اند و این‌جا نمی‌آیند.</td></tr>`;
   if(!act.length){
     const near = t.now.filter(x => x.category === "watch").slice(0, 3)
       .map(x => `${coin(x.sym)} (بستهٔ بالای ${px(x.trigger)} — ${fmt(x.distance_pct,1)}٪ فاصله)`).join("، ");

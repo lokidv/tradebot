@@ -302,9 +302,21 @@ def dev_evidence():
             "account_top50": {k: {x: v.get(x) for x in ("cagr_pct", "max_drawdown_pct", "trades_taken")}
                               for k, v in (fr.get("account_top50") or {}).items()},
         }
+    oos = None
+    ofiles = sorted(glob.glob(os.path.join(explore.OUT_DIR, "trend_oos_*.json")))
+    if ofiles:
+        with open(ofiles[-1], "r", encoding="utf-8") as f:
+            orep = json.load(f)
+        g = lambda s: {k: (s or {}).get(k) for k in ("n", "mean", "lcb90", "win_rate", "first_half_mean",
+                                                     "second_half_mean", "by_year")}
+        oos = {"report": os.path.basename(ofiles[-1]), "verdict": orep.get("verdict"),
+               "window_ms": orep.get("window_ms"), "top50": g(orep.get("primary_top50")),
+               "top20": g(orep.get("top20")), "ranks_21_50": g(orep.get("ranks_21_50")),
+               "account": orep.get("account_demo_rules"), "btc": orep.get("btc_buy_and_hold")}
     return {"report": os.path.basename(files[-1]), "cutoff_ms": rep.get("cutoff_ms"),
             "btc_buy_and_hold": (rep.get("robustness") or {}).get("btc_buy_and_hold"), "rules": rules,
-            "joins": joins, "join_max_days": JOIN_MAX_DAYS, "universe": uni, "behaviour": behaviour}
+            "joins": joins, "join_max_days": JOIN_MAX_DAYS, "universe": uni, "behaviour": behaviour,
+            "oos": oos}
 
 
 # ───────────────────────── پوزیشنِ دمو برای سیگنالِ امروز ─────────────────────────
