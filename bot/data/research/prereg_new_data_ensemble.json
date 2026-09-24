@@ -2,7 +2,10 @@
  "title": "Phase 2 new-data hypotheses, phase 3 exposure ensemble, phase 5 go/no-go for BTC/ETH",
  "registered_at_utc": "2026-09-24",
  "why": "Every tested method used only price and volume. Signals can only improve with information that is not in the chart. All rules, sources, windows and criteria are fixed here before any of this data is downloaded.",
- "assets": ["BTCUSDT", "ETHUSDT"],
+ "assets": [
+  "BTCUSDT",
+  "ETHUSDT"
+ ],
  "timing": "exposure for day d is decided only from data available at the close of day d-1 (timing.py convention); daily macro series use the last value dated on or before d-1; the FRED dollar index additionally lags 7 days for publication delay",
  "honesty_note": "discovery/confirmation windows are the same calendar windows used by prereg_btc_eth_timing.json; these are new hypothesis classes on new data, but the price path is not new. A forward test (phase 5) is therefore required before any real-money use.",
  "phase2_hypotheses": {
@@ -14,7 +17,16 @@
   "N6_FNG_NOT_GREEDY": "alternative.me Fear & Greed 7-day mean at d-1 above 75 -> cash, else long (extreme greed)"
  },
  "phase2_rule": {
-  "windows": {"discovery": ["2021-01-01", "2023-06-30"], "confirmation": ["2023-07-01", "2026-08-31"]},
+  "windows": {
+   "discovery": [
+    "2021-01-01",
+    "2023-06-30"
+   ],
+   "confirmation": [
+    "2023-07-01",
+    "2026-08-31"
+   ]
+  },
   "costs": "0.2% of position value per switch",
   "ADOPT": "discovery timing edge > 0 with Romano-Wolf p_adj < 0.10 across these 12 tests (6 x 2 assets, 30-day blocks) AND confirmation timing edge > 0 AND confirmation Sharpe after costs >= buy-and-hold Sharpe",
   "CONSISTENT": "edge > 0 in both windows without the full rule: reported, not used"
@@ -31,5 +43,12 @@
   "GO_small": "forward return of the displayed model >= buy-and-hold return - 5 percentage points AND forward max drawdown <= buy-and-hold max drawdown, per asset",
   "brake": "if at any time the forward drawdown of the model exceeds 1.5x its worst confirmation-window drawdown, the app stops showing it as usable and says why"
  },
- "no_changes_after_seeing_results": "nothing above is changed after data is downloaded"
+ "no_changes_after_seeing_results": "nothing above is changed after data is downloaded",
+ "amendments": [
+  {
+   "date_utc": "2026-09-24",
+   "before_any_computation": true,
+   "change": "N4_SPX_RISK_ON data source: stooq ^spx now sits behind an anti-bot proof-of-work challenge, which will not be bypassed; the same index (S&P 500 daily close) is taken from FRED series SP500 instead. The rule is unchanged; FRED values are used only if dated on or before d-1."
+  }
+ ]
 }
