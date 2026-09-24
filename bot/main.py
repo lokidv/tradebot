@@ -467,6 +467,10 @@ def _compute_analysis(symbol, tf):
         if symbol != "BTCUSDT":
             btc = get_analysis("BTCUSDT", tf)          # عمق بازگشت حداکثر ۱
             btc_z = btc.get("z") if "error" not in btc else None   # همان متغیر آموزش (z نه score)
+        # کندلِ تحلیل‌شده پیش از ورودی‌های مدل: همهٔ زمینه‌ها (فاندینگ، وضعیتِ بازار، طلا) در
+        # **همین** کندل (tk = زمانِ بازِ آخرین کندلِ بسته) ساخته می‌شوند، مثلِ آموزش
+        kl = market.get_klines(symbol, tf)
+        tk, bar_ms = int(kl["t"][-1]), tf_spec.bar_ms(tf)
         htf_sign = 0
         htf = HTF_OF.get(tf)
         if htf:
@@ -484,7 +488,7 @@ def _compute_analysis(symbol, tf):
         finfo = _funding_info(symbol)
         oinfo = _oi_info(symbol)
         extras = {# ویژگیِ مدل با فرمولِ آموزش ساخته می‌شود، نه با z شلوغیِ متا-گیت
-                  "funding_z": features.live_funding_z(symbol),
+                  "funding_z": features.live_funding_z(symbol, tk, bar_ms),
                   "funding_crowd_z": float(finfo.get("z") or 0.0),
                   "funding_persist": int(finfo.get("persist") or 0),
                   "crowded_long": bool(finfo.get("crowded_long")),
@@ -514,7 +518,6 @@ def _compute_analysis(symbol, tf):
             extras["session"] = meta_gate.session_quality()
         except Exception:  # noqa: BLE001
             extras["session"] = {"tier": "mid", "mult": 0.92}
-        kl = market.get_klines(symbol, tf)
         # ⚰️ گاردِ فیدِ مرده: جفتِ حذف‌شده/بی‌معامله چارتِ یخ‌زده دارد و سیگنالش بی‌معناست (درسِ MATIC/DNT)
         if time.time() * 1000 - kl["t"][-1] > tf_spec.bar_ms(tf) * 3:
             age_d = (time.time() * 1000 - kl["t"][-1]) / 86400000

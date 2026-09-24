@@ -3,7 +3,6 @@
 طبقه‌بند ensemble احتمال برد و مدل مستقل Ridge/LightGBM برای بازده خالص روی ۲۳ ویژگی.
 انتخاب، کالیبراسیون و آزمون نهایی پنجره‌های زمانی جدا و purged دارند. خروجی زنده
 همراه بازهٔ عدم‌قطعیت، کران پایین EV، اعتبار رژیم و تشخیص خارج‌ازدامنه است."""
-import bisect
 import json
 import math
 import os
@@ -1519,15 +1518,6 @@ def keys_for(direction, z, votes, trending, btc_align):
     return [f"{d}|{zb}|{v}|{t}|{b}", f"{d}|{zb}|{t}", f"{zb}|{t}", "all"]
 
 
-def _fz_at(fz_list, ts):
-    """آخرین z فاندینگ قبل از ts (جست‌وجوی دودویی)."""
-    if not fz_list:
-        return 0.0
-    keys = [row[0] for row in fz_list]
-    i = bisect.bisect_right(keys, ts) - 1
-    return float(fz_list[i][1]) if i >= 0 else 0.0
-
-
 def mom_norm_map(ts_list, closes, look=20, win=250):
     """نقشه ts→مومنتوم نرمال‌شده [-1,1] با انحراف‌معیارِ *علّیِ متحرک* (فقط داده گذشته — بدون نشتی آینده).
     مشترک آموزش/اجرا: هر ردیف با انحراف‌معیار پنجرهٔ گذشتهٔ خودش مقیاس می‌شود."""
@@ -1569,6 +1559,11 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
     # نمونه‌های مدل جهت‌یاب همیشه‌روشن: هر ۴ کندل یک نمونه — برچسب = جهت بازده تا افق H
     H = engine.HORIZON[tf]
     dir_X, dir_y, dir_R = [], [], []
+    # فاندینگ: آخرین تسویهٔ پیش از **بسته‌شدنِ** کندل — همان قاعدهٔ اجرا (features.funding_z_at)
+    fz_keys = [row[0] for row in fz_list] if fz_list else []
+
+    def _fz(ts_):
+        return features.funding_z_at(fz_list, ts_, TF_MS[tf], keys=fz_keys)
 
     def _barrier(i, sig):
         res = bracket.signal_trade(o, h, l, c, cs["a14"][i], i, sig)
@@ -1591,7 +1586,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
         ret = c[i + H] / entry - 1
         bz = btc_zmap.get(ts) if btc_zmap else None
         common_kwargs = dict(
-            funding_z=_fz_at(fz_list, ts),
+            funding_z=_fz(ts),
             rs_rank=(rs_map.get(ts, {}) or {}).get(sym, 0.5),
             htf_sign=_htf_sign(htf_zmap, ts, HTF_OF[tf]),
             gold_m=(gold_map or {}).get(ts, 0.0),
@@ -1639,7 +1634,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
             btc_align = (bz is None) or (bz * sig > -0.3)
         feats = engine.event_features(
             cs, c, i, sig, setup, ts,
-            funding_z=_fz_at(fz_list, ts),
+            funding_z=_fz(ts),
             rs_rank=(rs_map.get(ts, {}) or {}).get(sym, 0.5),
             htf_sign=_htf_sign(htf_zmap, ts, HTF_OF[tf]),
             btc_align=btc_align,
@@ -1791,15 +1786,19 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
         _state.update(building=True, progress="دریافت فاندینگ", done=0,
                       total=len(symbols) * len(tfs), error=None)
     try:
+        # تاریخچهٔ فاندینگ تا ابتدای عمیق‌ترین پنجرهٔ آموزش صفحه‌بندی می‌شود (calib-F4)؛ قبلاً
+        # فقط ۱۰۰۰ ردیفِ آخر بود و funding_dir در بیشترِ نمونه‌های 4h/1d صفر می‌ماند.
+        fund_since = int(time.time() * 1000) - max(BARS.get(tf, bars) * TF_MS[tf] for tf in tfs)
+
         def _fz_one(s):
             try:
-                return s, market.funding_z_map(s)
+                return s, market.funding_z_map(s, since_ms=fund_since)
             except Exception:  # noqa: BLE001
                 return s, []
 
         def _fr_one(s):
             try:
-                return s, market.get_funding_history(s)
+                return s, market.get_funding_history(s, since_ms=fund_since)
             except Exception:  # noqa: BLE001
                 return s, []
         with ThreadPoolExecutor(max_workers=8) as pool:      # دریافتِ موازیِ فاندینگ (I/O شبکه)
@@ -1972,11 +1971,23 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             # ── سلامتِ ویژگی‌ها پیش از آموزش ──
             # ویژگیِ با واریانسِ صفر چیزی برای یادگرفتن ندارد و فقط بُعد اضافه می‌کند؛
             # dxy_dir دقیقاً همین بود و کسی متوجه نشد. حالا در جدول ثبت می‌شود.
-            feat_health = features.health([e["feats"] for e in all_events])
-            if feat_health["dead"]:
+            feat_health = features.health([e["feats"] for e in all_events],
+                                          expected=features.expected_constant(tf))
+            dense_health = features.health([row[0] for row in dx],
+                                           expected=features.expected_constant(tf, dense=True))
+            dead_any = sorted(set(feat_health["dead"]) | set(dense_health["dead"]))
+            if dead_any:
                 with _lock:
-                    _state["progress"] = (f"⚠️ {tf}: ویژگیِ بی‌واریانس "
-                                          f"{', '.join(feat_health['dead'])}")
+                    _state["progress"] = f"⚠️ {tf}: ویژگیِ بی‌واریانس {', '.join(dead_any)}"
+            # ویژگیِ «۰ = نبود» با پوششِ ناچیز در آموزش **و** اجرا ۰ می‌شود (calib-F4): مدل از چند
+            # ردیفِ پراکنده وزنِ پرنویز یاد نمی‌گیرد و در اجرا ورودیِ خارج از توزیع نمی‌بیند.
+            zero_ev, zero_dn = features.live_zeroed(feat_health), features.live_zeroed(dense_health)
+            if zero_ev:
+                all_events = [dict(e, feats=features.zero_features(e["feats"], zero_ev))
+                              for e in all_events]
+            if zero_dn:
+                dx = [(features.zero_features(lf, zero_dn), features.zero_features(sf, zero_dn))
+                      for lf, sf in dx]
             model = _train_logistic(all_events, tf)
             edge_model = _fit_edge_model(all_events, tf, COST_PCT)
             policy_model = _fit_policy_model(all_events, tf, COST_PCT)
@@ -1985,6 +1996,8 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             return tf, {"cells": cells, "events": len(all_events),
                         "held_out_final_events": len(final_events.get(tf) or []),
                         "feature_health": feat_health,
+                        "feature_health_dense": dense_health,
+                        "live_zeroed": {"events": zero_ev, "dense": zero_dn},
                         "model": model, "edge_model": edge_model,
                         "policy_model": policy_model, "dir_model": dir_model,
                         "action_model": action_model}
@@ -2049,8 +2062,10 @@ def status():
         st["events"] = {tf: d.get("events", 0) for tf, d in t.get("tfs", {}).items()}
         st["breakeven_win_rate"] = round(bracket.breakeven_win_rate() * 100, 1)
         st["feature_health"] = {
-            tf: {k: (d.get("feature_health") or {}).get(k)
-                 for k in ("ok", "dead", "low_coverage", "n", "n_feat")}
+            tf: {**{k: (d.get("feature_health") or {}).get(k)
+                    for k in ("ok", "dead", "low_coverage", "expected_constant", "n", "n_feat")},
+                 "dense_dead": (d.get("feature_health_dense") or {}).get("dead"),
+                 "live_zeroed": d.get("live_zeroed")}
             for tf, d in t.get("tfs", {}).items() if d.get("feature_health")
         }
         st["models"] = {}
@@ -2180,6 +2195,12 @@ def _model_nfeat(m):
     return m.get("n_feat", len(m.get("mu", [])))
 
 
+def _live_feats(tf_blob, feats, which):
+    """همان ویژگی‌هایی که آموزش صفر کرد (پوششِ ناچیز) در اجرا هم صفر — ``which``: events یا dense."""
+    names = ((tf_blob or {}).get("live_zeroed") or {}).get(which) or []
+    return features.zero_features(feats, names) if names else feats
+
+
 def _score_model(m, feats):
     """احتمالِ کالیبره از مدل (تک‌مدل یا ترکیبی) + کالیبراسیونِ پلَت."""
     x = np.array(feats, float).reshape(1, -1)
@@ -2236,6 +2257,7 @@ def predict_dir(tf, feats):
         return None
     if not trusted_with_hysteresis(tf, "dir_model", t):
         return None
+    feats = _live_feats(t["tfs"][tf], feats, "dense")
     pd = _score_model_details(dm, feats)
     p = pd["p"]
     return {"p_up": round(p * 100, 1),
@@ -2260,6 +2282,8 @@ def predict_action(tf, long_feats, short_feats, risk_pct, cost=None, regime=None
     if not trusted_with_hysteresis(tf, "action_model", t):
         return None
     actual_cost = cost if cost is not None else t.get("cost_pct", COST_PCT)
+    long_feats = _live_feats(t["tfs"][tf], long_feats, "dense")
+    short_feats = _live_feats(t["tfs"][tf], short_feats, "dense")
     return _score_action_policy(m, long_feats, short_feats, risk_pct, actual_cost)
 
 
@@ -2307,6 +2331,7 @@ def predict(tf, feats, risk_pct, legacy=None, cost=None, regime=None):
         return None
     d = t["tfs"][tf]
     actual_cost = cost if cost is not None else t.get("cost_pct", COST_PCT)
+    feats = _live_feats(d, feats, "events")
     pm = d.get("policy_model")
     policy_diag = None
     if pm and _model_nfeat(pm) == len(feats):

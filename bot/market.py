@@ -619,51 +619,230 @@ def _answered(e):
     return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (400, 404)
 
 
-def get_funding_history(symbol, max_rows=1000):
-    """تاریخچه فاندینگ‌ریت فیوچرز (هر ۸ ساعت) — کش دیسک ۱۲ساعته. خالی اگر در دسترس نباشد."""
-    os.makedirs(HIST_DIR, exist_ok=True)
-    path = os.path.join(HIST_DIR, f"funding_{symbol}.json")
-    # تحلیل (live_funding_z) و واکشیِ پس‌زمینه (_fetch_funding) هم‌زمان همین را می‌خواستند
-    with _flight_lock(("funding", path)):
-        if os.path.exists(path) and time.time() - os.path.getmtime(path) < 43200:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        if _neg_hit(path):
-            return []
-        return _fetch_funding_history(symbol, max_rows, path)
+FUNDING_TTL = 43200             # سقفِ سنِ کشِ فاندینگ حتی اگر تسویهٔ تازه‌ای در راه نباشد
+FUNDING_RECHECK_SEC = 300       # پس از موعدِ تسویه، تا انتشارش هر ۵ دقیقه یک‌بار
+FUNDING_PUBLISH_GRACE_MS = 60_000
+FUNDING_STEP_MS = 8 * 3600 * 1000
+FUNDING_MAX_PAGES = 80          # سقفِ صفحه در هر واکشی (بایننس ۱۰۰۰ ردیف، کوکوین ۱۰۰ ردیف در صفحه)
+FUNDING_PAGE_GAP = {"binance": 0.65, "kucoin": 0.12, "okx": 0.12}   # فاصلهٔ کمینهٔ درخواست‌ها (سقفِ نرخ)
+_fund_pace_lock = threading.Lock()
+_fund_pace_last: dict = {}
 
 
-def _fetch_funding_history(symbol, max_rows, path):
-    rows = []
-    answered = True
-    try:
-        raw = _fapi_json("/fapi/v1/fundingRate", {"symbol": symbol, "limit": max_rows})
-        rows = [[int(r["fundingTime"]), float(r["fundingRate"])] for r in raw]
-    except Exception as e1:  # noqa: BLE001
-        # پشتیبان OKX
-        try:
-            inst = symbol.replace("USDT", "") + "-USDT-SWAP"
-            raw = _get_json(OKX + "/api/v5/public/funding-rate-history",
-                            {"instId": inst, "limit": min(max_rows, 100)})["data"]
-            rows = [[int(r["fundingTime"]), float(r["fundingRate"])] for r in reversed(raw)]
-        except Exception as e2:  # noqa: BLE001
-            rows = []
-            answered = _answered(e1) or _answered(e2)
-    if not answered:
-        # هیچ منبعی در دسترس نبود: مثل قبل خالی برمی‌گردد، ولی «خالی» به‌جای ۱۲ ساعت روی دیسک
-        # فقط NEG_TTL در حافظه می‌ماند — با برگشتنِ شبکه زودتر درست می‌شود
-        _neg_until[path] = time.time() + NEG_TTL
-        return rows
+def _fund_pace(src):
+    """صفحه‌بندیِ عمیقِ ۱۰۰ نماد نباید به سقفِ نرخ بخورد (بایننس ۵۰۰ درخواست در ۵ دقیقه).
+    فقط صفحه‌های دوم به بعد صبر می‌کنند؛ به‌روزرسانیِ یک‌صفحه‌ایِ زنده معطل نمی‌شود."""
+    gap = FUNDING_PAGE_GAP.get(src, 0.0)
+    with _fund_pace_lock:
+        wait = _fund_pace_last.get(src, 0.0) + gap - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _fund_pace_last[src] = time.time()
+
+
+def _funding_rows_binance(symbol, start_ms, end_ms):
+    """[start, end] از /fapi/v1/fundingRate با startTime — صفحه‌به‌صفحه رو به جلو."""
+    out, start, pages = {}, int(start_ms), 0
+    while start <= end_ms and pages < FUNDING_MAX_PAGES:
+        if pages:
+            _fund_pace("binance")
+        raw = _fapi_json("/fapi/v1/fundingRate",
+                         {"symbol": symbol, "startTime": start, "endTime": int(end_ms), "limit": 1000})
+        pages += 1
+        if not raw:
+            break
+        for r in raw:
+            out[int(r["fundingTime"])] = float(r["fundingRate"])
+        last = max(int(r["fundingTime"]) for r in raw)
+        if len(raw) < 1000 or last < start:
+            break
+        start = last + 1
+    return sorted([t, v] for t, v in out.items())
+
+
+def _funding_rows_kucoin(symbol, start_ms, end_ms):
+    """[start, end] از کوکوین فیوچرز — تاریخچهٔ عمیق وقتی fapi بایننس مسدود است (۴۵۱)."""
+    pages = []
+
+    def get(url, params):
+        if pages:
+            _fund_pace("kucoin")
+        pages.append(1)
+        return _get_json(url, params)
+    rows = kucoin_funding_pages(kucoin_contract(symbol), int(start_ms), int(end_ms),
+                                max_pages=FUNDING_MAX_PAGES, get=get)
+    return [[int(t), float(v)] for t, v in rows]
+
+
+def _funding_rows_okx(symbol, start_ms, end_ms):
+    """[start, end] از OKX — فقط حدودِ سه ماهِ اخیر را نگه می‌دارد (after = قدیمی‌تر از)."""
+    inst = symbol.replace("USDT", "") + "-USDT-SWAP"
+    out, after, pages = {}, None, 0
+    while pages < FUNDING_MAX_PAGES:
+        params = {"instId": inst, "limit": 100}
+        if after is not None:
+            params["after"] = str(after)
+        if pages:
+            _fund_pace("okx")
+        raw = _get_json(OKX + "/api/v5/public/funding-rate-history", params)["data"]
+        pages += 1
+        if not raw:
+            break
+        for r in raw:
+            t = int(r["fundingTime"])
+            if start_ms <= t <= end_ms:
+                out[t] = float(r["fundingRate"])
+        oldest = min(int(r["fundingTime"]) for r in raw)
+        if oldest <= start_ms or len(raw) < 100:
+            break
+        after = oldest
+    return sorted([t, v] for t, v in out.items())
+
+
+_FUNDING_SOURCES = {"binance": _funding_rows_binance, "kucoin": _funding_rows_kucoin,
+                    "okx": _funding_rows_okx}
+FUNDING_CHAIN = ("binance", "kucoin", "okx")   # عمیق‌ها اول؛ OKX فقط ~۳ ماه دارد
+
+
+def _read_funding_doc(path):
+    """فایلِ کش → {src, from_ms, rows}. قالبِ قدیمی (فهرستِ خالی) منبعِ نامعلوم دارد و از نو گرفته می‌شود."""
+    with open(path, "r", encoding="utf-8") as f:
+        doc = json.load(f)
+    if isinstance(doc, list):
+        return {"src": None, "from_ms": None, "rows": doc}
+    doc.setdefault("rows", [])
+    return doc
+
+
+def _write_funding_doc(path, doc):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(rows, f)
+        json.dump(doc, f)
     os.replace(tmp, path)
-    return rows
 
 
-def funding_z_map(symbol, window=30):
-    """نقشه ts→z-score فاندینگ (نسبت به ۳۰ فاندینگ قبلی) برای ویژگی‌سازی رویدادها."""
-    rows = get_funding_history(symbol)
+def _funding_doc_fresh(doc, mtime, now=None):
+    """کش تا **تسویهٔ بعدی** تازه است، نه ۱۲ ساعتِ ثابت (calib-F3).
+
+    موعدِ تسویهٔ بعد از فاصلهٔ دو ردیفِ آخر (۱/۴/۸ ساعت) درمی‌آید؛ پس از موعد تا انتشارش هر
+    ``FUNDING_RECHECK_SEC`` یک‌بار سر می‌زند. کشِ قدیمی‌تر از ``FUNDING_TTL`` در هر حال کهنه است.
+    """
+    now = time.time() if now is None else now
+    if doc.get("src") is None and doc.get("rows"):
+        return False                               # قالبِ قدیمی: منبع نامعلوم ⇒ یک‌بار از نو
+    if now - mtime >= FUNDING_TTL:
+        return False
+    rows = doc.get("rows") or []
+    if len(rows) < 2:
+        return True
+    step_h = min(max(round((rows[-1][0] - rows[-2][0]) / 3_600_000), 1), 8)
+    due = rows[-1][0] + step_h * 3_600_000 + FUNDING_PUBLISH_GRACE_MS
+    if now * 1000 < due:
+        return True
+    return now - mtime < FUNDING_RECHECK_SEC
+
+
+def get_funding_history(symbol, max_rows=1000, since_ms=None):
+    """تاریخچه فاندینگ‌ریت فیوچرز ``[[fundingTime, rate], ...]`` صعودی — خالی اگر در دسترس نباشد.
+
+    * بی ``since_ms`` (اجرا، متا-گیت، پوزیشن‌ها): آخرین ``max_rows`` ردیف، مثل قبل.
+    * با ``since_ms`` (آموزش): **همهٔ** ردیف‌ها از ``since_ms``؛ تاریخچه صفحه‌به‌صفحه تا آن‌جا
+      پر می‌شود (calib-F4). قبلاً فقط ۱۰۰۰ ردیفِ آخر (~۳۳۳ روز) بود و funding_dir در ۷۸-۸۹٪
+      نمونه‌های 4h/1d صفر می‌ماند در حالی که زنده همیشه مقدار داشت.
+
+    کشِ دیسک همهٔ ردیف‌ها را با منبعشان نگه می‌دارد؛ به‌روزرسانی فقط ردیف‌های تازه را از **همان**
+    منبع می‌گیرد (آموزش و اجرا یک سری می‌بینند، نه بایننس این‌جا و OKX آن‌جا).
+    """
+    os.makedirs(HIST_DIR, exist_ok=True)
+    path = os.path.join(HIST_DIR, f"funding_{symbol}.json")
+    now = time.time()
+    # با since: ۴۰ تسویهٔ پیش از آن هم، تا z غلتانِ ۳۰تایی از اولین ردیفِ لازم گرم باشد
+    want_from = (int(since_ms) - 40 * FUNDING_STEP_MS if since_ms is not None
+                 else int(now * 1000) - int(max_rows) * FUNDING_STEP_MS)
+    # تحلیل (live_funding_z) و واکشیِ پس‌زمینه (_fetch_funding) هم‌زمان همین را می‌خواستند
+    with _flight_lock(("funding", path)):
+        doc = None
+        if os.path.exists(path):
+            try:
+                doc = _read_funding_doc(path)
+            except (OSError, ValueError):
+                doc = None
+        covered = bool(doc) and doc.get("from_ms") is not None and doc["from_ms"] <= want_from
+        if not (covered and _funding_doc_fresh(doc, os.path.getmtime(path), now)):
+            if _neg_hit(path):
+                rows = (doc or {}).get("rows") or []
+            else:
+                doc = _fetch_funding_history(symbol, path, doc, want_from)
+                rows = (doc or {}).get("rows") or []
+        else:
+            rows = doc.get("rows") or []
+    if since_ms is not None:
+        return [r for r in rows if r[0] >= want_from]
+    return rows[-int(max_rows):] if max_rows else rows
+
+
+def _fetch_funding_history(symbol, path, doc, want_from):
+    """ردیف‌های تازه (و در صورتِ نیاز، پرکردنِ عقب تا ``want_from``) از منبعِ کش، وگرنه زنجیره."""
+    end = int(time.time() * 1000)
+    rows = {int(t): float(v) for t, v in ((doc or {}).get("rows") or [])}
+    src = old_src = (doc or {}).get("src")
+    from_ms = (doc or {}).get("from_ms")
+    if src == "okx" and (from_ms is None or want_from < from_ms):
+        src = None                     # OKX فقط ~۳ ماه دارد: برای پرکردنِ عقب اول منبعِ عمیق‌تر
+    answered = False
+    try:
+        if src in _FUNDING_SOURCES:
+            fetch = _FUNDING_SOURCES[src]
+            if from_ms is None or want_from < from_ms:        # پرکردنِ عقب
+                lo_end = (min(rows) - 1) if rows else end
+                for t, v in fetch(symbol, want_from, lo_end):
+                    rows[t] = v
+                from_ms = want_from
+            start = (max(rows) + 1) if rows else want_from
+            for t, v in fetch(symbol, start, end):
+                rows[t] = v
+            answered = True
+        else:
+            src, got = _funding_chain(symbol, want_from, end)
+            if src != old_src:
+                rows = {}                  # منبعِ تازه: سری‌های دو صرافی آمیخته نمی‌شوند
+            for t, v in got:
+                rows[int(t)] = float(v)
+            from_ms, answered = want_from, True
+    except Exception as e:  # noqa: BLE001 — منبعِ کش در دسترس نیست: همان کشِ قبلی، بدونِ آمیختنِ منبع
+        answered = _answered(e)
+        if not answered:
+            _neg_until[path] = time.time() + NEG_TTL
+            return doc
+    if not answered:
+        # هیچ منبعی در دسترس نبود: «خالی» به‌جای ۱۲ ساعت روی دیسک فقط NEG_TTL در حافظه می‌ماند
+        _neg_until[path] = time.time() + NEG_TTL
+        return doc
+    new = {"src": src, "from_ms": from_ms, "rows": sorted([t, v] for t, v in rows.items())}
+    _write_funding_doc(path, new)
+    return new
+
+
+def _funding_chain(symbol, start_ms, end_ms):
+    """اولین منبعی که پاسخ داد → (src, rows). پاسخِ ۴۰۰/۴۰۴ (نمادِ بی‌قرارداد) منبعِ بعدی را امتحان
+    می‌کند؛ اگر همه «نیست» گفتند ``("none", [])`` — «پاسخ‌داده»، پس کشِ خالی روی دیسک می‌ماند.
+    هیچ منبعی در دسترس نبود ⇒ خطا (فراخوان فقط کشِ منفیِ حافظه می‌سازد)."""
+    any_answered = False
+    for src in FUNDING_CHAIN:
+        try:
+            return src, _FUNDING_SOURCES[src](symbol, start_ms, end_ms)
+        except Exception as e:  # noqa: BLE001 — منبعِ بعدی
+            any_answered = any_answered or _answered(e)
+    if any_answered:
+        return "none", []
+    raise RuntimeError("هیچ منبعِ فاندینگی در دسترس نبود")
+
+
+def funding_z_map(symbol, window=30, since_ms=None):
+    """نقشه ts→z-score فاندینگ (نسبت به ۳۰ فاندینگ قبلی) برای ویژگی‌سازی رویدادها.
+    ``since_ms`` (آموزش): کلِ تاریخچه از آن لحظه؛ بی آن (اجرا) ۱۰۰۰ ردیفِ آخر — z هر ردیف فقط به
+    ۳۰ ردیفِ قبلش بسته است، پس مقدارِ ردیف‌های اخیر در هر دو یکی است."""
+    rows = get_funding_history(symbol, since_ms=since_ms)
     out = []
     vals = []
     for ts, rate in rows:

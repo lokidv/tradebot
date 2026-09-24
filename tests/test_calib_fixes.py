@@ -4,6 +4,7 @@
 هر کلاس یک یافته را می‌پاید: اگر آموزش و اجرا دو تعریفِ متفاوت از یک ویژگی بسازند،
 یا آماری از پنجرهٔ آزمون نشت کند، این‌جا قرمز می‌شود.
 """
+import json
 import os
 import sys
 import tempfile
@@ -18,6 +19,8 @@ sys.path.insert(0, os.path.join(ROOT, "bot"))
 import _hermetic  # noqa: E402,F401  — پیش از هر ماژولِ ربات: داده به پوشهٔ موقت
 
 import calib  # noqa: E402
+import features  # noqa: E402
+import market  # noqa: E402
 
 
 class TiedPredictionLiftTests(unittest.TestCase):
@@ -243,6 +246,173 @@ class LiveCostAdjustmentTests(unittest.TestCase):
         self.assertAlmostEqual(s1["edge_r"] - s2["edge_r"], 0.2, delta=0.002)
 
 
+H8 = 8 * 3_600_000
+
+
+class FundingAlignmentTests(unittest.TestCase):
+    """calib-F3: یک قاعده در آموزش و اجرا — آخرین تسویهٔ پیش از بسته‌شدنِ کندل."""
+
+    def test_settlement_at_the_close_is_excluded_and_at_the_open_included(self):
+        rows = [[0, 0.1], [H8 + 3, 0.2], [2 * H8 + 2, 0.3]]        # +ms مثلِ fundingTimeِ بایننس
+        bar = 4 * 3_600_000
+        # کندلِ ۰۴:۰۰-۰۸:۰۰: تسویهٔ ۰۸:۰۰ روی مرزِ بسته‌شدن است ⇒ هنوز ۰٫۱
+        self.assertEqual(features.funding_z_at(rows, bar, bar), 0.1)
+        # کندلِ ۰۸:۰۰-۱۲:۰۰: تسویهٔ ۰۸:۰۰ داخلِ کندل ⇒ ۰٫۲ (قاعدهٔ قدیمِ «≤ باز» ۰٫۱ می‌داد)
+        self.assertEqual(features.funding_z_at(rows, 2 * bar, bar), 0.2)
+        # روزانه: سه تسویهٔ روز، آخری (۱۶:۰۰) پیش از بسته‌شدن
+        self.assertEqual(features.funding_z_at(rows, 0, 86_400_000), 0.3)
+        self.assertEqual(features.funding_z_at([], 0, 86_400_000), 0.0)
+
+    def test_live_value_is_the_one_training_sees_for_the_same_bar(self):
+        kl = _klines(900, seed=4)
+        fz = [[k * H8 + 1, float(np.sin(k / 3.0)) * 3] for k in range(0, 900 // 8 + 2)]
+        _e, _z, dx, dy, _dr = calib.extract_events("AUSDT", kl, "1h", fz, {}, None, None)
+        j = calib.engine.FEATS.index("funding_dir")
+        checked = 0
+        for (lf, _sf), (ts, _y) in zip(dx, dy):
+            with mock.patch.object(features.market, "funding_z_map", return_value=fz):
+                live = features.live_funding_z("AUSDT", ts, calib.TF_MS["1h"])
+            self.assertAlmostEqual(lf[j], max(-1.0, min(1.0, live / 4.0)), places=12)
+            checked += 1
+        self.assertGreater(checked, 50)
+
+    def test_live_without_a_bar_keeps_the_old_latest_row(self):
+        with mock.patch.object(features.market, "funding_z_map", return_value=[[1, 0.5], [2, 1.5]]):
+            self.assertEqual(features.live_funding_z("X"), 1.5)
+
+
+class _FakeBinanceFunding:
+    """/fapi/v1/fundingRate با startTime/endTime/limit — مثلِ بایننس، رو به جلو."""
+
+    def __init__(self, rows):
+        self.rows, self.calls = rows, []
+
+    def __call__(self, path, params=None):
+        self.calls.append(dict(params))
+        lo, hi = params.get("startTime", 0), params.get("endTime", 1 << 62)
+        got = [r for r in self.rows if lo <= r[0] <= hi][: params.get("limit", 1000)]
+        return [{"fundingTime": t, "fundingRate": v} for t, v in got]
+
+
+class FundingHistoryPagingTests(unittest.TestCase):
+    """calib-F4: تاریخچه تا ابتدای پنجرهٔ آموزش صفحه‌بندی می‌شود و کش هم‌منبع می‌ماند."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.now_ms = 1_790_000_000_000
+        start = self.now_ms - 3000 * H8 - 3_600_000                     # آخرین تسویه یک ساعت پیش
+        self.series = [[start + k * H8 + 2, float(1e-4 * np.sin(k))] for k in range(3001)]
+        self.pats = [mock.patch.object(market, "HIST_DIR", self.tmp.name),
+                     mock.patch.object(market, "FUNDING_PAGE_GAP", {}),
+                     mock.patch.object(market.time, "time", lambda: self.now_ms / 1000.0)]
+        for p in self.pats:
+            p.start()
+        market._neg_until.clear()
+
+    def tearDown(self):
+        for p in reversed(self.pats):
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_training_pages_back_and_live_reads_the_same_cache(self):
+        since = self.now_ms - 2500 * H8
+        fake = _FakeBinanceFunding(self.series)
+        with mock.patch.object(market, "_fapi_json", side_effect=fake):
+            rows = market.get_funding_history("BTCUSDT", since_ms=since)
+            self.assertGreaterEqual(len(fake.calls), 3)                   # ۱۰۰۰ ردیف در هر صفحه
+            self.assertLessEqual(rows[0][0], since - 30 * H8)             # گرم‌شدنِ z
+            self.assertEqual(rows[-1], self.series[-1])
+            n_calls = len(fake.calls)
+            live = market.get_funding_history("BTCUSDT")                  # همان کش، بی شبکه
+            self.assertEqual(len(fake.calls), n_calls)
+        self.assertEqual(live, self.series[-1000:])
+
+    def test_z_of_recent_settlements_is_the_same_for_training_and_live(self):
+        since = self.now_ms - 2500 * H8
+        with mock.patch.object(market, "_fapi_json", side_effect=_FakeBinanceFunding(self.series)):
+            z_train = dict(market.funding_z_map("BTCUSDT", since_ms=since))
+            z_live = dict(market.funding_z_map("BTCUSDT"))
+        common = sorted(set(z_train) & set(z_live))[40:]
+        self.assertGreater(len(common), 900)
+        for t in common:
+            self.assertAlmostEqual(z_train[t], z_live[t], places=12)
+
+    def test_refresh_after_a_settlement_fetches_only_new_rows_from_the_same_source(self):
+        fake = _FakeBinanceFunding(self.series[:-3])
+        with mock.patch.object(market, "_fapi_json", side_effect=fake):
+            market.get_funding_history("BTCUSDT")
+        path = os.path.join(self.tmp.name, "funding_BTCUSDT.json")
+        os.utime(path, (self.now_ms / 1000.0, self.now_ms / 1000.0))
+        # سه تسویهٔ تازه منتشر شد؛ منبعِ کش بایننس است
+        self.now_ms += 3 * H8 + 120_000
+        fake2 = _FakeBinanceFunding(self.series)
+        with mock.patch.object(market, "_fapi_json", side_effect=fake2), \
+                mock.patch.object(market, "_get_json", side_effect=AssertionError("منبعِ دیگر")):
+            rows = market.get_funding_history("BTCUSDT")
+        self.assertEqual(len(fake2.calls), 1)
+        self.assertGreater(fake2.calls[0]["startTime"], self.series[-5][0])
+        self.assertEqual(rows[-1], self.series[-1])
+
+    def test_cache_is_fresh_until_the_next_settlement_is_due(self):
+        rows = [[0, 0.1], [H8, 0.2]]
+        doc = {"src": "binance", "from_ms": 0, "rows": rows}
+        mtime = 2 * H8 / 1000 - 3600                                     # یک ساعت پیش از موعد نوشته شد
+        self.assertTrue(market._funding_doc_fresh(doc, mtime, now=(2 * H8 - 1000) / 1000))
+        due = (2 * H8 + market.FUNDING_PUBLISH_GRACE_MS) / 1000
+        self.assertFalse(market._funding_doc_fresh(doc, mtime, now=due + 1))
+        self.assertTrue(market._funding_doc_fresh(doc, due + 1 - 10, now=due + 1))   # همین حالا چک شد
+        self.assertFalse(market._funding_doc_fresh({"src": None, "rows": rows}, mtime, now=2.0))
+
+    def test_blocked_binance_falls_back_to_deep_kucoin_history(self):
+        def blocked(*a, **k):
+            raise RuntimeError("451")
+        pages = []
+
+        def kucoin(url, params):
+            pages.append(params)
+            lo, hi = params["from"], params["to"]
+            got = [r for r in self.series if lo <= r[0] <= hi][-100:][::-1]
+            return {"code": "200000", "data": [{"timepoint": t, "fundingRate": v} for t, v in got]}
+        since = self.now_ms - 2000 * H8
+        with mock.patch.object(market, "_fapi_json", side_effect=blocked), \
+                mock.patch.object(market, "_get_json", side_effect=kucoin):
+            rows = market.get_funding_history("ETHUSDT", since_ms=since)
+        self.assertGreater(len(pages), 15)
+        self.assertLessEqual(rows[0][0], since)
+        with open(os.path.join(self.tmp.name, "funding_ETHUSDT.json"), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["src"], "kucoin")
+
+
+class LowCoverageFeatureTests(unittest.TestCase):
+    """calib-F4: «۰ = نبود» با پوششِ ناچیز در آموزش و اجرا صفر؛ ثابت‌های طبیعی «مرده» نیستند."""
+
+    def test_rare_context_feature_is_zeroed_in_live(self):
+        n = len(calib.engine.FEATS)
+        j = calib.engine.FEATS.index("funding_dir")
+        rows = [[0.1 * ((i + k) % 7) for k in range(n)] for i in range(400)]
+        for i, r in enumerate(rows):
+            r[j] = 0.3 if i < 8 else 0.0                                   # پوشش ۲٪
+        rep = features.health(rows)
+        self.assertIn("funding_dir", features.live_zeroed(rep))
+        blob = {"live_zeroed": {"events": ["funding_dir"], "dense": []}}
+        vec = [0.5] * n
+        self.assertEqual(calib._live_feats(blob, vec, "events")[j], 0.0)
+        self.assertEqual(calib._live_feats(blob, vec, "dense")[j], 0.5)
+
+    def test_expected_constants_are_not_reported_dead(self):
+        n = len(calib.engine.FEATS)
+        rows = [[0.0 if name in ("hour_sin", "rs_dir", "breadth_dir") else 1.0 if name == "hour_cos"
+                 else 0.01 * ((i * 7 + k) % 13) for k, name in enumerate(calib.engine.FEATS)]
+                for i in range(200)]
+        rep = features.health(rows, expected=features.expected_constant("1d"))
+        self.assertEqual(rep["dead"], [])
+        self.assertTrue(rep["ok"])
+        self.assertIn("hour_cos", rep["expected_constant"])
+        rep_4h = features.health(rows, expected=features.expected_constant("4h"))
+        self.assertIn("hour_sin", rep_4h["dead"])
+        self.assertEqual(len(rows[0]), n)
+
+
 T0_4H = 1_640_995_200_000          # 2022-01-01، مرزِ کندلِ 4h
 BAR_4H = 14_400_000
 
@@ -309,6 +479,19 @@ class _BuildHarness:
 def _prereg(start_bar, end_bar):
     return {"hash": "x" * 64, "final_windows": {
         "4h": {"start_ms": T0_4H + start_bar * BAR_4H, "end_ms": T0_4H + end_bar * BAR_4H}}}
+
+
+class BuildFeatureHealthTests(unittest.TestCase):
+    def test_build_records_and_applies_the_live_zeroed_features(self):
+        h = _BuildHarness(prereg=None)
+        table = h.run()
+        blob = table["tfs"]["4h"]
+        self.assertIn("funding_dir", blob["live_zeroed"]["events"])    # بی تاریخچهٔ فاندینگ
+        self.assertIn("funding_dir", blob["live_zeroed"]["dense"])
+        self.assertIn("feature_health_dense", blob)
+        self.assertNotIn("rs_dir", blob["feature_health"]["dead"])       # خنثیِ عمدی، نه «مرده»
+        j = calib.engine.FEATS.index("funding_dir")
+        self.assertTrue(all(e["feats"][j] == 0.0 for e in h.seen["model"][0]))
 
 
 class FrozenWindowTests(unittest.TestCase):

@@ -244,7 +244,7 @@ class MarketTests(unittest.TestCase):
             self.assertEqual(market.get_funding_history(sym), [])
             self.assertEqual(market.get_funding_history(sym), [])          # از کشِ منفیِ حافظه
         self.assertFalse(os.path.exists(path), "«خالی» ناشی از قطعی نباید ۱۲ ساعت روی دیسک بماند")
-        self.assertEqual(len(n), 2)                                        # یک fapi + یک OKX، فقط یک‌بار
+        self.assertEqual(len(n), 3)                                        # fapi + کوکوین + OKX، فقط یک‌بار
 
     def test_answered_empty_funding_is_still_cached_on_disk(self):
         sym = "ZZNOPERPUSDT"
