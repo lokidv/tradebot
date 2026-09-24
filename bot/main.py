@@ -134,9 +134,32 @@ def _model_era(tf=None):
         return None
 
 
+# ── بازخوردِ زنده: تعلیقِ خودکار (ستاپ/تایم‌فریم/ترکیب)، جیبِ لبه و هشدارِ drift ──
+# همه از signals_log.json (shadow) خوانده می‌شدند، ولی از ۱۶ جولای هیچ کدِ تولیدی در آن نمی‌نویسد
+# (shadow.log_signal فقط در تست‌ها صدا زده می‌شود؛ دفترِ جایگزین candidates.jsonl است). پس این «ترمزها»
+# هرگز فعال نمی‌شدند، در حالی که UI ترمزِ خودکار را القا می‌کرد. احیایشان تصمیمِ زنده را از کارنامهٔ
+# بازپخش (decision.replay، بی‌تعلیق) جدا می‌کرد؛ پس عمداً خاموش‌اند و API/UI صریحاً «غیرفعال» می‌گویند.
+LIVE_FEEDBACK_ACTIVE = False
+LIVE_FEEDBACK_NOTE_FA = ("تعلیقِ خودکارِ ستاپ/تایم‌فریم/ترکیب، جیبِ لبه و هشدارِ افتِ عملکرد غیرفعال‌اند: "
+                         "دفترِ سایه‌ای که از آن تغذیه می‌شدند از ژوئیه ثبتی ندارد. تصمیم‌ها دقیقاً همان قاعدهٔ "
+                         "کارنامه‌اند و هیچ ترمزِ خودکاری رویشان نیست؛ عملکردِ زنده در کارنامهٔ رو-به-جلوی "
+                         "میزِ تصمیم است.")
+
+
+def _live_feedback():
+    """وضعیتِ بازخوردِ زنده برای API/UI — صریح، نه ضمنی."""
+    state = "active" if LIVE_FEEDBACK_ACTIVE else "inactive"
+    return {"active": LIVE_FEEDBACK_ACTIVE, "suspension": state, "edge_pockets": state, "drift": state,
+            "source": "signals_log.json (shadow.log_signal) — بدونِ نویسندهٔ تولیدی از ۱۶ جولای",
+            "live_ledger": "decision_ledger.jsonl (/api/decisions → live_overall)",
+            "note_fa": None if LIVE_FEEDBACK_ACTIVE else LIVE_FEEDBACK_NOTE_FA}
+
+
 def _suspended_setups():
     """تعلیق سراسری فقط برای ستاپ‌های واقعاً سمی.
     تعلیقِ خفیفِ سراسری (مثل zx با −۰٫۰۱R) جیب‌های سوددهٔ تایم‌فریم‌محور را می‌کشت."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}                                  # منبع تغذیه نمی‌شود — هیچ تعلیقی (تصمیم = کارنامه)
     if time.time() - _susp_cache["ts"] < 120:
         return _susp_cache["map"]
     with _once("susp"):
@@ -161,6 +184,8 @@ def _suspended_setups_build():
 _tf_susp_cache = {"ts": 0.0, "map": {}}
 def _live_edge_book():
     """جیب‌های سودده و ترکیب‌های معلق — معیار LCB/نیمه‌ها در edge_book."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}, {}
     try:
         import edge_book
         with _once("edge_book"):                   # edge_book کشِ ۹۰ثانیه‌ای دارد ولی قفل ندارد
@@ -173,6 +198,8 @@ def _live_edge_book():
 def _suspended_tfs():
     """تایم‌فریم‌هایی که بازده خالص زندهٔ ۳۰روزه‌شان با n کافی مثبت نیست — معلق تا بهبود.
     اگر همان TF جیب سوددهٔ ترکیبی داشته باشد، تعلیقِ کل TF اعمال نمی‌شود."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}
     if time.time() - _tf_susp_cache["ts"] < 120:
         return _tf_susp_cache["map"]
     with _once("tf_susp"):
@@ -335,6 +362,24 @@ def _symbol_cost(symbol):
     if qv >= 2e7:
         return 0.18
     return 0.30
+
+
+def _cost_basis():
+    """مبنای هزینهٔ هر دفتر/عدد — برچسبِ صریح کنارِ هر API (LP-10).
+
+    عمداً یکی نشده‌اند: کارنامه و دفترِ تصمیمِ قاعده با کارمزدِ ثابتِ ``decision.COST_PCT`` بازپخش/داوری
+    می‌شوند؛ دفترِ کاندیدها (که اثباتِ سایه با آزمونِ منجمد مقایسه‌اش می‌کند) مدلِ هزینهٔ پیش‌ثبت‌شده
+    (``costs.event_cost_pct``) را دارد و فقط جزءِ ردهٔ نقدشوندگی‌اش را. بک‌تستِ کوچکِ هر نماد همان رده را
+    از ``extras["cost"]`` می‌گیرد (همان عدد به مدل‌ها هم می‌رود، پس اینجا فقط برچسب می‌خورد).
+    """
+    return {
+        "decision_ledger": {"model": "flat", "cost_pct": decision.COST_PCT,
+                            "maker_cost_pct": decision.MAKER_COST_PCT,
+                            "desc_fa": "کارمزدِ ثابتِ رفت‌وبرگشت (تیکرِ فیوچرزِ کوکوین ×۲ + لغزش) — کارنامه و دفترِ تصمیم"},
+        "candidates": dict(candidates.COST_BASIS),
+        "symbol_backtest": {"model": "tier",
+                            "desc_fa": "ردهٔ نقدشوندگیِ همان نماد (۰٫۰۸ تا ۰٫۳۰٪، ورودِ میکر) — «cost»ِ هر ردیف"},
+    }
 
 
 def _funding_info(symbol):
@@ -529,6 +574,8 @@ def _compute_analysis(symbol, tf):
             res["btc_z"] = btc_z
             # منبعِ کندل‌ها: «okx» یعنی پشتیبان (حجمِ OKX، بی‌qv/n/tbv) — کارنامه روی بایننس است
             res["data_src"] = kl.get("src")
+            if isinstance(res.get("backtest"), dict):   # مبنای هزینهٔ بک‌تستِ کوچک (نه ۰٫۱۴٪ِ کارنامه)
+                res["backtest"].update(cost_pct=extras["cost"], cost_basis="tier")
         res["symbol"] = symbol
     except Exception as e:  # noqa: BLE001
         res = {"symbol": symbol, "tf": tf, "error": str(e)}
@@ -991,13 +1038,18 @@ def live_stats(tf: str | None = None):
     st = shadow.stats(tf)
     drift = None
     # drift با بازده خالص تشخیص داده می‌شود، نه win-rate خام که نسبت سود/ضرر را نادیده می‌گیرد.
-    if tf and st.get("n", 0) >= 20 and st.get("avg_r") is not None and st["avg_r"] <= 0:
+    # فقط وقتی بازخوردِ زنده فعال است: متنش «ورودها متوقف می‌شوند» است و بی‌تعلیقِ واقعی دروغ می‌شد.
+    if (LIVE_FEEDBACK_ACTIVE and tf and st.get("n", 0) >= 20 and st.get("avg_r") is not None
+            and st["avg_r"] <= 0):
         drift = (f"⚠️ عملکرد زندهٔ {tf} ({st['avg_r']:+.2f}R از {st['n']} سیگنال) "
                  "پس از هزینه مثبت نیست — ورودهای تازهٔ این تایم‌فریم متوقف می‌شوند.")
     return {"tf": tf, "stats": st, "all": shadow.stats(None), "drift": drift,
             "suspended": _suspended_setups(),
             "edge_pockets": _live_edge_book()[0],
             "suspended_combos": _live_edge_book()[1],
+            # stats/all/suspended/edge_pockets/drift از دفترِ سایهٔ بی‌نویسنده‌اند — «feedback» می‌گوید غیرفعال‌اند
+            "feedback": _live_feedback(),
+            "cost_basis": _cost_basis(),
             # دفترِ کاندیدها: همهٔ ستاپ‌های دیده‌شده، نه فقط مجازها
             "candidates": candidates.counts(),
             "candidate_stats": candidates.stats(tf),
@@ -1010,10 +1062,17 @@ def edge_health():
     try:
         import edge_book
         import fill_quality
-        h = edge_book.get_health()
         fq = fill_quality.summary(14)
-        return {"ok": True, "health": h, "fill_quality": fq,
+        if not LIVE_FEEDBACK_ACTIVE:                # منبعِ جیب‌ها تغذیه نمی‌شود: «منجمد» نه، «غیرفعال»
+            h = {"updated": time.time(), "pocket_count": 0, "pockets": {}, "suspended_count": 0,
+                 "verdict": "inactive", "advice": LIVE_FEEDBACK_NOTE_FA}
+            return {"ok": True, "active": False, "health": h, "fill_quality": fq, "scan_hint": [],
+                    "feedback": _live_feedback(),
+                    "version": {"app": APP_VERSION, "ai_core": AI_CORE_VERSION}}
+        h = edge_book.get_health()
+        return {"ok": True, "active": True, "health": h, "fill_quality": fq,
                 "scan_hint": edge_book.scan_tfs_for(["1h", "4h", "15m"]),
+                "feedback": _live_feedback(),
                 "version": {"app": APP_VERSION, "ai_core": AI_CORE_VERSION}}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
@@ -1213,6 +1272,8 @@ def overview(tf: str = "1h"):
             "live_suspended": _suspended_tfs().get(tf),
             "edge_pockets": {k: v for k, v in _live_edge_book()[0].items()
                              if k.startswith(tf + "|")},
+            "live_feedback": _live_feedback(),       # live_suspended/edge_pockets/combo_suspended: غیرفعال؟
+            "cost_basis": _cost_basis(),             # «cost»ِ هر ردیف = ردهٔ نقدشوندگی، نه ۰٫۱۴٪ِ کارنامه
             "btc_macro": _btc_macro(),
             "breadth_macro": round((_market_state("1d") or {}).get("breadth", 0.0), 2),
             "calib": {"building": cs.get("building"), "progress": cs.get("progress"),

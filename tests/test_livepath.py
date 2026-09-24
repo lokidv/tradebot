@@ -18,11 +18,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "bot"))
 import _hermetic  # noqa: E402,F401  — پیش از هر ماژولِ ربات: داده به پوشهٔ موقت
 
+from fastapi.testclient import TestClient  # noqa: E402
+
 import bracket  # noqa: E402
+import calib  # noqa: E402
 import candidates  # noqa: E402
 import decision  # noqa: E402
 import edge_book  # noqa: E402
 import engine  # noqa: E402
+import features  # noqa: E402
 import main  # noqa: E402
 import market  # noqa: E402
 import meta_gate  # noqa: E402
@@ -576,6 +580,73 @@ class DecisionSchedulerTests(unittest.TestCase):
         self.assertEqual(main._expected_bar("4h", self.B5), self.DAY * 1000)          # ۰۰:۰۰→۰۴:۰۰
         self.assertEqual(main._expected_bar("1d", self.B5), (self.DAY - 86400) * 1000)
         self.assertEqual(main._expected_bar("5m", self.B5), (self.B5 - 300) * 1000)
+
+
+# ───────────────────────── LP-1: بازخوردِ زندهٔ بی‌منبع صریحاً «غیرفعال» ─────────────────────────
+class LiveFeedbackIsHonestTests(_Shadow, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        now = int(time.time() * 1000)
+        # دفترِ سایهٔ «زنده» با ۴۰ باخت: اگر بازخورد روشن بود، ستاپ/تایم‌فریم/ترکیب معلق می‌شد
+        shadow._save({"pending": [], "resolved": [self._resolved(now - i * H, -0.5, sym=f"S{i}USDT")
+                                                  for i in range(40)]})
+        main._susp_cache.update(ts=0.0, map={})
+        main._tf_susp_cache.update(ts=0.0, map={})
+        self.c = TestClient(main.app)
+
+    def test_feedback_is_off_so_nothing_is_suspended_and_decisions_equal_the_scorecard_rule(self):
+        self.assertFalse(main.LIVE_FEEDBACK_ACTIVE)
+        self.assertEqual(main._suspended_setups(), {})
+        self.assertEqual(main._suspended_tfs(), {})
+        self.assertEqual(main._live_edge_book(), ({}, {}))
+
+    def test_live_stats_says_inactive_and_never_claims_a_halt(self):
+        with mock.patch.object(shadow, "resolve", return_value=0), \
+                mock.patch.object(candidates, "resolve", return_value=0), \
+                mock.patch.object(calib, "load", return_value={}):
+            d = self.c.get("/api/live-stats?tf=1h").json()
+        self.assertIs(d["feedback"]["active"], False)
+        self.assertEqual(d["feedback"]["suspension"], "inactive")
+        self.assertTrue(d["feedback"]["note_fa"])
+        self.assertIsNone(d["drift"])                                  # «ورودها متوقف می‌شوند» دروغ بود
+        self.assertEqual((d["suspended"], d["edge_pockets"], d["suspended_combos"]), ({}, {}, {}))
+        for k in ("stats", "all", "candidates", "candidate_stats"):  # سازگاریِ رو به عقب
+            self.assertIn(k, d)
+        cb = d["cost_basis"]
+        self.assertEqual(cb["decision_ledger"]["cost_pct"], decision.COST_PCT)
+        self.assertEqual(cb["candidates"]["model"], "tier")
+        self.assertEqual(d["candidate_stats"]["cost_basis"]["model"], "tier")
+
+    def test_edge_health_is_inactive_not_frozen(self):
+        d = self.c.get("/api/edge-health").json()
+        self.assertTrue(d["ok"])
+        self.assertIs(d["active"], False)
+        self.assertEqual(d["health"]["verdict"], "inactive")
+        self.assertEqual(d["health"]["pockets"], {})
+        self.assertEqual(d["scan_hint"], [])
+
+
+class AnalysisTagsTests(unittest.TestCase):
+    def test_analysis_carries_its_data_source_and_backtest_cost_basis(self):
+        now_ms = int(time.time() * 1000) // H * H
+        kl = _bars(420, now_ms - 420 * H)
+        kl["src"] = "okx"
+        fake = {"trade": {}, "backtest": {"n": 3, "win_rate": 33.0}}
+        with mock.patch.object(main, "get_analysis", return_value={"error": "stub"}), \
+                mock.patch.object(main, "_funding_info", return_value={}), \
+                mock.patch.object(main, "_oi_info", return_value={}), \
+                mock.patch.object(main, "_rs_rank", return_value={}), \
+                mock.patch.object(main, "_macro", return_value={}), \
+                mock.patch.object(main, "_market_state", return_value={}), \
+                mock.patch.object(main, "_btc_macro", return_value={}), \
+                mock.patch.object(main, "_symbol_cost", return_value=0.08), \
+                mock.patch.object(features, "live_funding_z", return_value=0.0), \
+                mock.patch.object(market, "get_klines", return_value=kl), \
+                mock.patch.object(engine, "analyze", side_effect=lambda *a, **k: dict(fake, backtest=dict(fake["backtest"]))):
+            res = main._compute_analysis("ETHUSDT", "1h")
+        self.assertNotIn("error", res, res.get("error"))
+        self.assertEqual(res["data_src"], "okx")
+        self.assertEqual((res["backtest"]["cost_pct"], res["backtest"]["cost_basis"]), (0.08, "tier"))
 
 
 if __name__ == "__main__":
