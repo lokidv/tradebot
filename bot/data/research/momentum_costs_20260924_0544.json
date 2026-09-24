@@ -1,0 +1,87 @@
+{
+ "generated_at": 1790228689.127834,
+ "rule": "H3_TSMOM28",
+ "note": "cost = % of position value per switch (one side); round trip = 2x",
+ "window_2021_2026": [
+  1609459200000,
+  1788220800000
+ ],
+ "assets": {
+  "BTCUSDT": {
+   "0.05": {
+    "cagr_pct": 47.43,
+    "max_drawdown_pct": 32.83,
+    "sharpe": 1.173
+   },
+   "0.1": {
+    "cagr_pct": 46.53,
+    "max_drawdown_pct": 33.23,
+    "sharpe": 1.158
+   },
+   "0.2": {
+    "cagr_pct": 44.73,
+    "max_drawdown_pct": 34.03,
+    "sharpe": 1.127
+   },
+   "0.3": {
+    "cagr_pct": 42.96,
+    "max_drawdown_pct": 34.81,
+    "sharpe": 1.096
+   },
+   "0.5": {
+    "cagr_pct": 39.46,
+    "max_drawdown_pct": 36.36,
+    "sharpe": 1.034
+   },
+   "1": {
+    "cagr_pct": 31.07,
+    "max_drawdown_pct": 40.45,
+    "sharpe": 0.877
+   },
+   "buy_and_hold": {
+    "cagr_pct": 19.31,
+    "max_drawdown_pct": 76.63,
+    "sharpe": 0.594
+   },
+   "switches_per_year": 12.4
+  },
+  "ETHUSDT": {
+   "0.05": {
+    "cagr_pct": 65.48,
+    "max_drawdown_pct": 59.54,
+    "sharpe": 1.155
+   },
+   "0.1": {
+    "cagr_pct": 64.58,
+    "max_drawdown_pct": 59.59,
+    "sharpe": 1.145
+   },
+   "0.2": {
+    "cagr_pct": 62.79,
+    "max_drawdown_pct": 59.68,
+    "sharpe": 1.126
+   },
+   "0.3": {
+    "cagr_pct": 61.02,
+    "max_drawdown_pct": 59.77,
+    "sharpe": 1.108
+   },
+   "0.5": {
+    "cagr_pct": 57.53,
+    "max_drawdown_pct": 59.94,
+    "sharpe": 1.07
+   },
+   "1": {
+    "cagr_pct": 49.11,
+    "max_drawdown_pct": 60.38,
+    "sharpe": 0.976
+   },
+   "buy_and_hold": {
+    "cagr_pct": 23.81,
+    "max_drawdown_pct": 79.3,
+    "sharpe": 0.662
+   },
+   "switches_per_year": 10.9
+  }
+ }
+}

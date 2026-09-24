@@ -39,6 +39,7 @@ import gates
 import trend
 import trend_exec
 import momentum
+import notify
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
@@ -487,7 +488,9 @@ def _startup():
             except Exception:  # noqa: BLE001
                 log.exc("trend tracker")
             try:
-                momentum.sync_demo(momentum.snapshot())   # دفترِ مومنتوم + خروجِ دمو در تصمیمِ «نقد»
+                msnap = momentum.snapshot()
+                momentum.sync_demo(msnap)             # دفترِ مومنتوم + خروجِ دمو در تصمیمِ «نقد»
+                notify.maybe_notify_monday(msnap)     # تلگرام — فقط اگر کاربر تنظیم کرده باشد
             except Exception:  # noqa: BLE001
                 log.exc("momentum tracker")
             try:
@@ -558,6 +561,40 @@ def trend_status(force: bool = False):
 def momentum_status(force: bool = False):
     """مومنتومِ ۲۸روزهٔ BTC/ETH (در بازار یا نقد، تصمیمِ دوشنبه) — سازگار در پژوهش، اثبات‌نشده."""
     return momentum.view(force=force)
+
+
+class NotifyReq(BaseModel):
+    enabled: bool = False
+    token: str = ""
+    chat_id: str = ""
+
+
+@app.get("/api/notify")
+def notify_get():
+    return notify.public_cfg()                      # توکن هرگز برگردانده نمی‌شود
+
+
+@app.post("/api/notify")
+def notify_set(req: NotifyReq):
+    cfg = notify.load_cfg()
+    cfg["enabled"] = bool(req.enabled)
+    if req.token.strip():
+        cfg["token"] = req.token.strip()
+    if req.chat_id.strip():
+        cfg["chat_id"] = req.chat_id.strip()
+    notify.save_cfg(cfg)
+    return notify.public_cfg()
+
+
+@app.post("/api/notify/test")
+def notify_test():
+    try:
+        ok = notify.send("✅ اتصالِ اعلانِ میزِ فرمانِ CTP برقرار است.")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"ارسال نشد: {e}")
+    if not ok:
+        raise HTTPException(409, "اعلان روشن نیست یا توکن/شناسهٔ چت وارد نشده")
+    return {"ok": True}
 
 
 class MomentumDemoReq(BaseModel):

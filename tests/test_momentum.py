@@ -49,6 +49,40 @@ class RuleParityTests(unittest.TestCase):
         self.assertIsNotNone(st["provisional_next"])
 
 
+class GoNoGoTests(unittest.TestCase):
+    """حکمِ فاز ۵ دقیقاً همان معیارِ ازپیش‌ثبت‌شده است."""
+
+    def _rows(self, weekly, in_market):
+        rows, prev = [], None
+        for i, (g, inm) in enumerate(zip(weekly, in_market)):
+            rows.append({"sym": "BTCUSDT", "monday_ms": MON + i * 7 * DAY, "in_market": inm,
+                         "prev_in_market": prev, "prev_week_market_ret": g if prev is not None else None})
+            prev = inm
+        return rows
+
+    def test_in_progress_before_twelve_weeks(self):
+        f = momentum.forward_stats(self._rows([0.01] * 5, [True] * 5))["BTCUSDT"]
+        self.assertEqual(f["verdict"], "IN_PROGRESS")
+
+    def test_go_when_close_to_buy_and_hold_with_smaller_drawdown(self):
+        weekly = [0.03, -0.10, -0.10, 0.05, 0.04, 0.03, 0.02, 0.03, 0.01, 0.02, 0.02, 0.01, 0.02, 0.01]
+        inm = [True, False, False, True, True, True, True, True, True, True, True, True, True, True]
+        f = momentum.forward_stats(self._rows(weekly, inm))["BTCUSDT"]
+        self.assertGreaterEqual(f["weeks"], 12)
+        self.assertEqual(f["verdict"], "GO_SMALL")
+
+    def test_no_go_when_it_trails_buy_and_hold(self):
+        weekly = [0.05] * 14
+        inm = [True, False] * 7
+        f = momentum.forward_stats(self._rows(weekly, inm))["BTCUSDT"]
+        self.assertEqual(f["verdict"], "NO_GO")
+
+    def test_brake_when_live_drawdown_exceeds_one_and_a_half_times_the_test(self):
+        weekly = [-0.2, -0.2, -0.2]
+        f = momentum.forward_stats(self._rows(weekly, [True] * 3), conf_dd={"BTCUSDT": 20.0})["BTCUSDT"]
+        self.assertEqual(f["verdict"], "BRAKE")
+
+
 class DemoTests(unittest.TestCase):
     def setUp(self):
         for p in (paper.PATH, paper._ledger_path(), momentum.LEDGER_PATH):

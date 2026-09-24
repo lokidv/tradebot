@@ -124,23 +124,89 @@ def record(sym, t, c):
     return len(new)
 
 
-def forward_stats(rows=None):
-    """کارنامهٔ رو-به-جلو: بازدهِ هفته‌هایی که قاعده در بازار بود، منهای ۰٫۲٪ در هر جابه‌جایی."""
+GO_WEEKS = 12
+GO_MARGIN_PCT = 5.0
+BRAKE_MULT = 1.5
+
+
+def forward_stats(rows=None, conf_dd=None):
+    """کارنامهٔ رو-به-جلو در برابرِ نگه‌داری + حکمِ ازپیش‌ثبت‌شدهٔ فاز ۵ (prereg_new_data_ensemble.json).
+
+    بازدهِ هفتگی = بستهٔ یکشنبه به یکشنبه؛ هفته‌ای که قاعده در بازار بود بازدهِ بازار را می‌گیرد، وگرنه صفر؛
+    هر جابه‌جایی ۰٫۲٪.
+    """
     rows = _read() if rows is None else rows
     out = {}
     for sym in SYMBOLS:
         mine = sorted((r for r in rows if r["sym"] == sym), key=lambda r: r["monday_ms"])
-        rets, prev = [], None
+        model, bh, prev = [], [], None
         for r in mine:
             if r.get("prev_in_market") is not None and r.get("prev_week_market_ret") is not None:
-                g = r["prev_week_market_ret"] if r["prev_in_market"] else 0.0
-                rets.append(g)
-            if prev is not None and prev != r["in_market"]:
-                rets.append(-0.002)
+                g = float(r["prev_week_market_ret"])
+                model.append((g if r["prev_in_market"] else 0.0) - (0.002 if (prev is not None and prev != r["in_market"]) else 0.0))
+                bh.append(g)
             prev = r["in_market"]
-        out[sym] = {"weeks": len(mine), "cum_return_pct": round((float(np.prod([1 + x for x in rets])) - 1) * 100, 2)
-                    if rets else 0.0}
+
+        def curve(x):
+            # سرمایهٔ اولیه (۱٫۰) جزوِ منحنی است؛ وگرنه افت از خودِ سرمایهٔ اول دیده نمی‌شد
+            eq = np.concatenate([[1.0], np.cumprod(1 + np.asarray(x, float))])
+            return eq, float(np.max(1 - eq / np.maximum.accumulate(eq))) * 100
+        meq, mdd = curve(model)
+        beq, bdd = curve(bh)
+        res = {"weeks": len(model), "model_return_pct": round((meq[-1] - 1) * 100, 2),
+               "buy_hold_return_pct": round((beq[-1] - 1) * 100, 2),
+               "model_max_dd_pct": round(mdd, 2), "buy_hold_max_dd_pct": round(bdd, 2),
+               "cum_return_pct": round((meq[-1] - 1) * 100, 2)}
+        cdd = (conf_dd or {}).get(sym)
+        if cdd and mdd > BRAKE_MULT * cdd:
+            res["verdict"] = "BRAKE"
+            res["verdict_reason"] = f"افتِ زنده {mdd:.0f}٪ از {BRAKE_MULT}× بدترین افتِ آزمون ({cdd:.0f}٪) گذشت"
+        elif len(model) < GO_WEEKS:
+            res["verdict"] = "IN_PROGRESS"
+            res["verdict_reason"] = f"{len(model)} از {GO_WEEKS} هفته"
+        elif (res["model_return_pct"] >= res["buy_hold_return_pct"] - GO_MARGIN_PCT
+              and res["model_max_dd_pct"] <= res["buy_hold_max_dd_pct"]):
+            res["verdict"] = "GO_SMALL"
+            res["verdict_reason"] = "معیارِ ازپیش‌ثبت‌شده برقرار شد: فقط با مبلغِ کم"
+        else:
+            res["verdict"] = "NO_GO"
+            res["verdict_reason"] = "معیارِ ازپیش‌ثبت‌شده برقرار نشد"
+        out[sym] = res
     return out
+
+
+def context():
+    """شاخص‌های زمینه — در آزمون «سازگار» ولی اثبات‌نشده؛ در تصمیم دخالت ندارند (فقط نمایش)."""
+    import extdata
+    now_ms = int(time.time() * 1000) // DAY_MS * DAY_MS
+    out = {}
+    try:
+        rows = extdata.fetch("stablecoin_supply")
+        a, b = extdata.asof(rows, now_ms - DAY_MS), extdata.asof(rows, now_ms - 31 * DAY_MS)
+        if a and b:
+            out["stablecoin"] = {"growing": a > b, "change_30d_pct": round((a / b - 1) * 100, 2), "supply_bn": round(a / 1e9, 1)}
+    except Exception:  # noqa: BLE001
+        log.exc("context stablecoin")
+    try:
+        rows = extdata.fetch("dxy_broad")
+        keys = [r[0] for r in rows]
+        import bisect
+        i = bisect.bisect_right(keys, now_ms - 8 * DAY_MS) - 1
+        if i >= 99:
+            avg = float(np.mean([r[1] for r in rows[i - 99:i + 1]]))
+            out["dollar"] = {"weak": rows[i][1] < avg, "value": rows[i][1], "avg100": round(avg, 2),
+                             "as_of_ms": rows[i][0]}
+    except Exception:  # noqa: BLE001
+        log.exc("context dollar")
+    return out
+
+
+def cost_table():
+    files = sorted(glob.glob(paths.data("research", "momentum_costs_*.json")))
+    if not files:
+        return None
+    with open(files[-1], encoding="utf-8") as f:
+        return json.load(f)
 
 
 # ───────────────────────── شواهد ─────────────────────────
@@ -228,10 +294,13 @@ def snapshot(force=False, fetch=None, now_ms=None):
                 log.exc("momentum ledger")
         except Exception:  # noqa: BLE001, silent-ok — در خروجی به‌عنوانِ بی‌داده گزارش می‌شود
             missing.append(sym)
+    ev = evidence()
     data = {"rule": "long for the week if Sunday close > close 28 days earlier; decided Mondays 00:00 UTC",
             "status": "consistent_not_proven", "tracking_start_ms": TRACKING_START_MS,
-            "assets": assets, "missing_data": missing, "evidence": evidence(),
-            "forward": forward_stats(), "generated_at": time.time()}
+            "assets": assets, "missing_data": missing, "evidence": ev,
+            "forward": forward_stats(conf_dd={k: (((ev or {}).get(k) or {}).get("confirmation") or {}).get("strategy", {}).get("max_drawdown_pct")
+                                                for k in SYMBOLS}),
+            "context": context(), "costs": cost_table(), "generated_at": time.time()}
     with _lock:
         _cache.update(ts=time.time(), data=data)
     return data
