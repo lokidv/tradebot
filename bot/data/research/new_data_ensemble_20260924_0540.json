@@ -1,0 +1,679 @@
+{
+ "generated_at": 1790228428.7897468,
+ "prereg": "bot/data/research/prereg_new_data_ensemble.json",
+ "phase2": {
+  "BTCUSDT:N1_STABLE_GROWTH": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 54.7,
+    "edge_daily_pct": 0.1074,
+    "mean_in_pct": 0.1196,
+    "mean_out_pct": 0.0122,
+    "strategy": {
+     "cagr_pct": 6.76,
+     "max_drawdown_pct": 53.14,
+     "sharpe": 0.397
+    },
+    "buy_and_hold": {
+     "cagr_pct": 2.12,
+     "max_drawdown_pct": 76.63,
+     "sharpe": 0.375
+    },
+    "switches": 17
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 78.9,
+    "edge_daily_pct": 0.1369,
+    "mean_in_pct": 0.1396,
+    "mean_out_pct": 0.0027,
+    "strategy": {
+     "cagr_pct": 34.38,
+     "max_drawdown_pct": 40.69,
+     "sharpe": 0.922
+    },
+    "buy_and_hold": {
+     "cagr_pct": 34.86,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.878
+    },
+    "switches": 37
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": 0.458,
+    "p_adj": 0.862,
+    "reject_null": false
+   },
+   "verdict": "CONSISTENT"
+  },
+  "BTCUSDT:N2_MVRV_NOT_HOT": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 84.3,
+    "edge_daily_pct": -0.38,
+    "mean_in_pct": 0.0113,
+    "mean_out_pct": 0.3913,
+    "strategy": {
+     "cagr_pct": -14.12,
+     "max_drawdown_pct": 75.91,
+     "sharpe": 0.046
+    },
+    "buy_and_hold": {
+     "cagr_pct": 2.12,
+     "max_drawdown_pct": 76.63,
+     "sharpe": 0.375
+    },
+    "switches": 9
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 66.5,
+    "edge_daily_pct": -0.127,
+    "mean_in_pct": 0.0682,
+    "mean_out_pct": 0.1953,
+    "strategy": {
+     "cagr_pct": 8.1,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.395
+    },
+    "buy_and_hold": {
+     "cagr_pct": 34.86,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.878
+    },
+    "switches": 34
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": -0.949,
+    "p_adj": 0.9755,
+    "reject_null": false
+   },
+   "verdict": "REJECT"
+  },
+  "BTCUSDT:N3_DVOL_CALM": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 53.7,
+    "edge_daily_pct": -0.2048,
+    "mean_in_pct": -0.024,
+    "mean_out_pct": 0.1809,
+    "strategy": {
+     "cagr_pct": -13.9,
+     "max_drawdown_pct": 68.8,
+     "sharpe": -0.12
+    },
+    "buy_and_hold": {
+     "cagr_pct": 2.12,
+     "max_drawdown_pct": 76.63,
+     "sharpe": 0.375
+    },
+    "switches": 7
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 75.2,
+    "edge_daily_pct": -0.1766,
+    "mean_in_pct": 0.067,
+    "mean_out_pct": 0.2436,
+    "strategy": {
+     "cagr_pct": 9.91,
+     "max_drawdown_pct": 61.8,
+     "sharpe": 0.439
+    },
+    "buy_and_hold": {
+     "cagr_pct": 34.86,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.878
+    },
+    "switches": 32
+   },
+   "missing_data_days": 383,
+   "romano_wolf_discovery": {
+    "t_stat": -0.837,
+    "p_adj": 0.9755,
+    "reject_null": false
+   },
+   "verdict": "REJECT"
+  },
+  "BTCUSDT:N4_SPX_RISK_ON": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 63.1,
+    "edge_daily_pct": 0.1387,
+    "mean_in_pct": 0.1221,
+    "mean_out_pct": -0.0166,
+    "strategy": {
+     "cagr_pct": 11.14,
+     "max_drawdown_pct": 54.05,
+     "sharpe": 0.468
+    },
+    "buy_and_hold": {
+     "cagr_pct": 2.12,
+     "max_drawdown_pct": 76.63,
+     "sharpe": 0.375
+    },
+    "switches": 20
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 92.0,
+    "edge_daily_pct": -0.4287,
+    "mean_in_pct": 0.0763,
+    "mean_out_pct": 0.505,
+    "strategy": {
+     "cagr_pct": 16.7,
+     "max_drawdown_pct": 59.22,
+     "sharpe": 0.57
+    },
+    "buy_and_hold": {
+     "cagr_pct": 34.86,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.878
+    },
+    "switches": 10
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": 0.574,
+    "p_adj": 0.853,
+    "reject_null": false
+   },
+   "verdict": "REJECT"
+  },
+  "BTCUSDT:N5_DXY_WEAK": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 39.8,
+    "edge_daily_pct": 0.3585,
+    "mean_in_pct": 0.2866,
+    "mean_out_pct": -0.0719,
+    "strategy": {
+     "cagr_pct": 33.67,
+     "max_drawdown_pct": 55.51,
+     "sharpe": 0.849
+    },
+    "buy_and_hold": {
+     "cagr_pct": 2.12,
+     "max_drawdown_pct": 76.63,
+     "sharpe": 0.375
+    },
+    "switches": 22
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 50.9,
+    "edge_daily_pct": 0.1674,
+    "mean_in_pct": 0.1929,
+    "mean_out_pct": 0.0255,
+    "strategy": {
+     "cagr_pct": 33.62,
+     "max_drawdown_pct": 35.11,
+     "sharpe": 1.052
+    },
+    "buy_and_hold": {
+     "cagr_pct": 34.86,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.878
+    },
+    "switches": 26
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": 1.428,
+    "p_adj": 0.547,
+    "reject_null": false
+   },
+   "verdict": "CONSISTENT"
+  },
+  "BTCUSDT:N6_FNG_NOT_GREEDY": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 91.9,
+    "edge_daily_pct": -0.2879,
+    "mean_in_pct": 0.0475,
+    "mean_out_pct": 0.3354,
+    "strategy": {
+     "cagr_pct": -5.1,
+     "max_drawdown_pct": 74.89,
+     "sharpe": 0.235
+    },
+    "buy_and_hold": {
+     "cagr_pct": 2.12,
+     "max_drawdown_pct": 76.63,
+     "sharpe": 0.375
+    },
+    "switches": 13
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 91.5,
+    "edge_daily_pct": -0.012,
+    "mean_in_pct": 0.1098,
+    "mean_out_pct": 0.1217,
+    "strategy": {
+     "cagr_pct": 31.03,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.842
+    },
+    "buy_and_hold": {
+     "cagr_pct": 34.86,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.878
+    },
+    "switches": 8
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": -0.482,
+    "p_adj": 0.9585,
+    "reject_null": false
+   },
+   "verdict": "REJECT"
+  },
+  "ETHUSDT:N1_STABLE_GROWTH": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 54.7,
+    "edge_daily_pct": 0.3886,
+    "mean_in_pct": 0.3958,
+    "mean_out_pct": 0.0072,
+    "strategy": {
+     "cagr_pct": 64.71,
+     "max_drawdown_pct": 57.2,
+     "sharpe": 1.043
+    },
+    "buy_and_hold": {
+     "cagr_pct": 47.33,
+     "max_drawdown_pct": 79.3,
+     "sharpe": 0.882
+    },
+    "switches": 17
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 78.9,
+    "edge_daily_pct": 0.0851,
+    "mean_in_pct": 0.0964,
+    "mean_out_pct": 0.0114,
+    "strategy": {
+     "cagr_pct": 8.64,
+     "max_drawdown_pct": 64.66,
+     "sharpe": 0.431
+    },
+    "buy_and_hold": {
+     "cagr_pct": 8.0,
+     "max_drawdown_pct": 67.55,
+     "sharpe": 0.44
+    },
+    "switches": 37
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": 1.257,
+    "p_adj": 0.63,
+    "reject_null": false
+   },
+   "verdict": "CONSISTENT"
+  },
+  "ETHUSDT:N2_MVRV_NOT_HOT": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 75.1,
+    "edge_daily_pct": -0.5598,
+    "mean_in_pct": 0.0801,
+    "mean_out_pct": 0.6399,
+    "strategy": {
+     "cagr_pct": -5.69,
+     "max_drawdown_pct": 78.03,
+     "sharpe": 0.278
+    },
+    "buy_and_hold": {
+     "cagr_pct": 47.33,
+     "max_drawdown_pct": 79.3,
+     "sharpe": 0.882
+    },
+    "switches": 25
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 75.9,
+    "edge_daily_pct": 0.0181,
+    "mean_in_pct": 0.0829,
+    "mean_out_pct": 0.0648,
+    "strategy": {
+     "cagr_pct": 2.94,
+     "max_drawdown_pct": 65.36,
+     "sharpe": 0.334
+    },
+    "buy_and_hold": {
+     "cagr_pct": 8.0,
+     "max_drawdown_pct": 67.55,
+     "sharpe": 0.44
+    },
+    "switches": 60
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": -1.327,
+    "p_adj": 0.9755,
+    "reject_null": false
+   },
+   "verdict": "REJECT"
+  },
+  "ETHUSDT:N3_DVOL_CALM": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 47.6,
+    "edge_daily_pct": -0.4476,
+    "mean_in_pct": -0.0147,
+    "mean_out_pct": 0.4328,
+    "strategy": {
+     "cagr_pct": -15.27,
+     "max_drawdown_pct": 70.75,
+     "sharpe": -0.068
+    },
+    "buy_and_hold": {
+     "cagr_pct": 47.33,
+     "max_drawdown_pct": 79.3,
+     "sharpe": 0.882
+    },
+    "switches": 11
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 66.8,
+    "edge_daily_pct": 0.0142,
+    "mean_in_pct": 0.0832,
+    "mean_out_pct": 0.069,
+    "strategy": {
+     "cagr_pct": 4.91,
+     "max_drawdown_pct": 65.55,
+     "sharpe": 0.348
+    },
+    "buy_and_hold": {
+     "cagr_pct": 8.0,
+     "max_drawdown_pct": 67.55,
+     "sharpe": 0.44
+    },
+    "switches": 38
+   },
+   "missing_data_days": 383,
+   "romano_wolf_discovery": {
+    "t_stat": -1.44,
+    "p_adj": 0.9755,
+    "reject_null": false
+   },
+   "verdict": "REJECT"
+  },
+  "ETHUSDT:N4_SPX_RISK_ON": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 63.1,
+    "edge_daily_pct": 0.3499,
+    "mean_in_pct": 0.3487,
+    "mean_out_pct": -0.0012,
+    "strategy": {
+     "cagr_pct": 66.84,
+     "max_drawdown_pct": 57.2,
+     "sharpe": 1.061
+    },
+    "buy_and_hold": {
+     "cagr_pct": 47.33,
+     "max_drawdown_pct": 79.3,
+     "sharpe": 0.882
+    },
+    "switches": 20
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 92.0,
+    "edge_daily_pct": -0.5528,
+    "mean_in_pct": 0.0341,
+    "mean_out_pct": 0.5869,
+    "strategy": {
+     "cagr_pct": -7.33,
+     "max_drawdown_pct": 73.15,
+     "sharpe": 0.178
+    },
+    "buy_and_hold": {
+     "cagr_pct": 8.0,
+     "max_drawdown_pct": 67.55,
+     "sharpe": 0.44
+    },
+    "switches": 10
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": 1.093,
+    "p_adj": 0.702,
+    "reject_null": false
+   },
+   "verdict": "REJECT"
+  },
+  "ETHUSDT:N5_DXY_WEAK": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 39.8,
+    "edge_daily_pct": 0.3243,
+    "mean_in_pct": 0.4147,
+    "mean_out_pct": 0.0904,
+    "strategy": {
+     "cagr_pct": 48.26,
+     "max_drawdown_pct": 65.25,
+     "sharpe": 0.946
+    },
+    "buy_and_hold": {
+     "cagr_pct": 47.33,
+     "max_drawdown_pct": 79.3,
+     "sharpe": 0.882
+    },
+    "switches": 22
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 50.9,
+    "edge_daily_pct": 0.3612,
+    "mean_in_pct": 0.2557,
+    "mean_out_pct": -0.1055,
+    "strategy": {
+     "cagr_pct": 41.43,
+     "max_drawdown_pct": 46.94,
+     "sharpe": 0.958
+    },
+    "buy_and_hold": {
+     "cagr_pct": 8.0,
+     "max_drawdown_pct": 67.55,
+     "sharpe": 0.44
+    },
+    "switches": 26
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": 0.979,
+    "p_adj": 0.74,
+    "reject_null": false
+   },
+   "verdict": "CONSISTENT"
+  },
+  "ETHUSDT:N6_FNG_NOT_GREEDY": {
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 91.9,
+    "edge_daily_pct": -0.5478,
+    "mean_in_pct": 0.1751,
+    "mean_out_pct": 0.7229,
+    "strategy": {
+     "cagr_pct": 24.5,
+     "max_drawdown_pct": 78.51,
+     "sharpe": 0.684
+    },
+    "buy_and_hold": {
+     "cagr_pct": 47.33,
+     "max_drawdown_pct": 79.3,
+     "sharpe": 0.882
+    },
+    "switches": 13
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 91.5,
+    "edge_daily_pct": 0.1299,
+    "mean_in_pct": 0.0895,
+    "mean_out_pct": -0.0404,
+    "strategy": {
+     "cagr_pct": 11.22,
+     "max_drawdown_pct": 67.55,
+     "sharpe": 0.477
+    },
+    "buy_and_hold": {
+     "cagr_pct": 8.0,
+     "max_drawdown_pct": 67.55,
+     "sharpe": 0.44
+    },
+    "switches": 8
+   },
+   "missing_data_days": 0,
+   "romano_wolf_discovery": {
+    "t_stat": -0.737,
+    "p_adj": 0.9755,
+    "reject_null": false
+   },
+   "verdict": "REJECT"
+  }
+ },
+ "adopted": {},
+ "phase3": {
+  "BTCUSDT": {
+   "models": {
+    "H3_TSMOM28": {
+     "discovery": {
+      "strategy": {
+       "cagr_pct": 59.67,
+       "max_drawdown_pct": 34.03,
+       "sharpe": 1.228
+      },
+      "buy_and_hold": {
+       "cagr_pct": 2.12,
+       "max_drawdown_pct": 76.63,
+       "sharpe": 0.375
+      },
+      "avg_exposure_pct": 47.0,
+      "turnover_per_year": 11.23
+     },
+     "confirmation": {
+      "strategy": {
+       "cagr_pct": 34.01,
+       "max_drawdown_pct": 32.62,
+       "sharpe": 1.052
+      },
+      "buy_and_hold": {
+       "cagr_pct": 34.86,
+       "max_drawdown_pct": 52.97,
+       "sharpe": 0.878
+      },
+      "avg_exposure_pct": 55.9,
+      "turnover_per_year": 13.25
+     }
+    },
+    "E1_MOM3": {
+     "discovery": {
+      "strategy": {
+       "cagr_pct": 35.36,
+       "max_drawdown_pct": 44.21,
+       "sharpe": 0.915
+      },
+      "buy_and_hold": {
+       "cagr_pct": 2.12,
+       "max_drawdown_pct": 76.63,
+       "sharpe": 0.375
+      },
+      "avg_exposure_pct": 49.8,
+      "turnover_per_year": 10.69
+     },
+     "confirmation": {
+      "strategy": {
+       "cagr_pct": 22.25,
+       "max_drawdown_pct": 34.77,
+       "sharpe": 0.81
+      },
+      "buy_and_hold": {
+       "cagr_pct": 34.86,
+       "max_drawdown_pct": 52.97,
+       "sharpe": 0.878
+      },
+      "avg_exposure_pct": 54.5,
+      "turnover_per_year": 11.57
+     }
+    }
+   },
+   "chosen": "H3_TSMOM28"
+  },
+  "ETHUSDT": {
+   "models": {
+    "H3_TSMOM28": {
+     "discovery": {
+      "strategy": {
+       "cagr_pct": 85.71,
+       "max_drawdown_pct": 59.68,
+       "sharpe": 1.221
+      },
+      "buy_and_hold": {
+       "cagr_pct": 47.33,
+       "max_drawdown_pct": 79.3,
+       "sharpe": 0.882
+      },
+      "avg_exposure_pct": 56.4,
+      "turnover_per_year": 10.83
+     },
+     "confirmation": {
+      "strategy": {
+       "cagr_pct": 46.83,
+       "max_drawdown_pct": 38.62,
+       "sharpe": 1.082
+      },
+      "buy_and_hold": {
+       "cagr_pct": 8.0,
+       "max_drawdown_pct": 67.55,
+       "sharpe": 0.44
+      },
+      "avg_exposure_pct": 50.3,
+      "turnover_per_year": 11.04
+     }
+    },
+    "E1_MOM3": {
+     "discovery": {
+      "strategy": {
+       "cagr_pct": 56.32,
+       "max_drawdown_pct": 56.07,
+       "sharpe": 1.011
+      },
+      "buy_and_hold": {
+       "cagr_pct": 47.33,
+       "max_drawdown_pct": 79.3,
+       "sharpe": 0.882
+      },
+      "avg_exposure_pct": 57.8,
+      "turnover_per_year": 9.22
+     },
+     "confirmation": {
+      "strategy": {
+       "cagr_pct": 23.83,
+       "max_drawdown_pct": 43.77,
+       "sharpe": 0.726
+      },
+      "buy_and_hold": {
+       "cagr_pct": 8.0,
+       "max_drawdown_pct": 67.55,
+       "sharpe": 0.44
+      },
+      "avg_exposure_pct": 51.0,
+      "turnover_per_year": 10.62
+     }
+    }
+   },
+   "chosen": "H3_TSMOM28"
+  }
+ }
+}
