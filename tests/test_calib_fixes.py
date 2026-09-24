@@ -489,6 +489,44 @@ class LiveMarketStateTests(unittest.TestCase):
         self.assertEqual(self.main._market_state("5m", self.tk), {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0})
 
 
+class LiveGoldTests(unittest.TestCase):
+    """calib-F7: طلای زنده در کندلِ تحلیل‌شده، با تازگیِ کندلِ بسته — نه کشِ ۲۴ساعته."""
+
+    def setUp(self):
+        import main
+        self.main = main
+        main._macro_cache.clear()
+        self.paxg = _klines(3000, seed=77, start_bar=480_000)
+
+    def test_gold_is_the_training_value_at_the_analysed_bar(self):
+        train_map = calib.mom_norm_map(self.paxg["t"], self.paxg["c"])
+        live = {k: v[-420:] for k, v in self.paxg.items()}
+        tk = live["t"][-1]
+        with mock.patch.object(market, "get_klines", return_value=live), \
+                mock.patch.object(market, "get_history", side_effect=AssertionError("کشِ ۲۴ساعته")):
+            g = self.main._macro("1h", tk)["gold"]
+        self.assertAlmostEqual(g, train_map[tk], places=12)
+
+    def test_a_grace_stale_paxg_cache_is_refreshed_for_the_new_bar(self):
+        live = {k: v[-420:] for k, v in self.paxg.items()}
+        stale = {k: v[:-1] for k, v in live.items()}
+        tk = live["t"][-1]
+        with mock.patch.object(market, "get_klines", return_value=stale), \
+                mock.patch.object(market, "_fetch_klines", return_value=live) as fetch:
+            g1 = self.main._macro("1h", tk)
+            g2 = self.main._macro("1h", tk)
+        fetch.assert_called_once()
+        self.assertEqual(g1, g2)
+        self.assertNotEqual(g1["gold"], 0.0)
+
+    def test_missing_bar_gives_neutral_gold(self):
+        live = {k: v[-420:] for k, v in self.paxg.items()}
+        stale = {k: v[:-1] for k, v in live.items()}
+        with mock.patch.object(market, "get_klines", return_value=stale), \
+                mock.patch.object(market, "_fetch_klines", return_value=stale):
+            self.assertEqual(self.main._macro("1h", live["t"][-1]), {"gold": 0.0})
+
+
 T0_4H = 1_640_995_200_000          # 2022-01-01، مرزِ کندلِ 4h
 BAR_4H = 14_400_000
 

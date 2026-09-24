@@ -81,14 +81,21 @@ def _basket_klines(tf, tk):
     out = {}
     for s in calib.MARKET_BASKET:
         try:
-            kl = market.get_klines(s, tf)
-            if kl and kl["t"] and int(kl["t"][-1]) < tk:
-                kl = market._fetch_klines(s, tf, 420)
-            if kl and tk in kl["t"]:
+            kl = _klines_at(s, tf, tk)
+            if kl:
                 out[s] = kl
         except Exception:  # noqa: BLE001 — ارزِ بی‌کندل از سبد کم می‌شود ⇒ دامیننس خنثی
             log.exc(f"market-state klines {s} {tf}")
     return out
+
+
+def _klines_at(symbol, tf, tk):
+    """کندل‌های بستهٔ ``symbol`` که کندلِ ``tk`` را دارند، وگرنه None.
+    اگر مهلتِ ۴۵ثانیه‌ایِ کش هنوز کندلِ قبلی را بدهد، یک‌بار مستقیم تازه می‌شود."""
+    kl = market.get_klines(symbol, tf)
+    if kl and kl["t"] and int(kl["t"][-1]) < tk:
+        kl = market._fetch_klines(symbol, tf, 420)
+    return kl if kl and tk in kl["t"] else None
 
 
 def _market_state(tf, tk=None):
@@ -217,7 +224,7 @@ _fz_pending: set = set()
 _oi_cache: dict = {}      # sym -> (ts, oi_stats)
 _oi_pending: set = set()
 _btc_macro_cache = {"ts": 0.0, "data": None}
-_macro_cache: dict = {}   # tf -> (ts, {"gold": x})
+_macro_cache: dict = {}   # (tf, tk) -> (ts, کندلِ tk بود؟, {"gold": x})
 
 
 def _rs_rank(tf):
@@ -231,37 +238,45 @@ def _rs_rank(tf):
     return {}
 
 
-def _macro(tf):
-    """مومنتوم زندهٔ طلا (PAXG) — از همان منبع و نرمال‌سازیِ آموزش (بدون skew).
+def _macro(tf, tk=None):
+    """مومنتوم زندهٔ طلا (PAXG) در **کندلِ تحلیل‌شده** ``tk`` — همان منبع و نرمال‌سازیِ آموزش.
+
+    قبلاً از ``get_history`` (کشِ دیسکِ ۲۴ساعته + کشِ حافظهٔ ۱۵دقیقه) آخرین مقدار برداشته می‌شد:
+    طلای زنده تا یک روز کهنه بود و روی 1h همبستگی‌اش با تعریفِ آموزش ~۰٫۴ (calib-F7). حالا
+    کندل‌های PAXG با همان تازگیِ کندلِ بسته‌ی تایم‌فریم (get_klines) و مقدار در خودِ ``tk``.
 
     شاخصِ دلار حذف شد: فایلِ dxy_daily.json هرگز پر نشد و ویژگی در تمامِ آموزش
     ثابتِ ۰ بود؛ زنده‌کردنش بعداً یعنی دادنِ ورودیِ ندیده به مدل.
     """
-    hit = _macro_cache.get(tf)
-    if hit and time.time() - hit[0] < 900:
-        return hit[1]
-    with _once(("macro", tf)):                     # تاریخچهٔ PAXG فقط یک‌بار صفحه‌بندی شود
-        hit = _macro_cache.get(tf)
-        if hit and time.time() - hit[0] < 900:
-            return hit[1]
-        return _macro_build(tf)
-
-
-def _macro_build(tf):
-    now = time.time()
-    out = {"gold": 0.0}
     if tf not in tf_spec.MODEL_TFS:
-        # طلا فقط ورودیِ مدل‌های calib است و 5m مدلی ندارد — صفحه‌بندیِ ۳۰۰۰ کندلِ ۵ دقیقه‌ایِ PAXG بی‌فایده است
-        _macro_cache[tf] = (now, out)
-        return out
+        # طلا فقط ورودیِ مدل‌های calib است و 5m مدلی ندارد — واکشیِ PAXG بی‌فایده است
+        return {"gold": 0.0}
+    tk = int(tk) if tk is not None else _last_closed_open(tf)
+    key = (tf, tk)
+    hit = _macro_cache.get(key)
+    if hit and (hit[1] or time.time() - hit[0] < 60):
+        return hit[2]
+    with _once(("macro", tf)):
+        hit = _macro_cache.get(key)
+        if hit and (hit[1] or time.time() - hit[0] < 60):
+            return hit[2]
+        return _macro_build(tf, tk)
+
+
+def _macro_build(tf, tk):
+    out = {"gold": 0.0}
+    found = False
     try:
-        gk = market.get_history("PAXGUSDT", tf, calib.BARS.get(tf, 3000))
-        gmap = calib.mom_norm_map(gk["t"], gk["c"])
-        if gmap:
-            out["gold"] = list(gmap.values())[-1]
+        gk = _klines_at("PAXGUSDT", tf, tk)
+        if gk:
+            gmap = calib.mom_norm_map(gk["t"], gk["c"])
+            found = tk in gmap
+            out["gold"] = float(gmap.get(tk, 0.0))          # همان gold_map.get(ts, 0.0) ِ آموزش
     except Exception:  # noqa: BLE001
         log.exc()
-    _macro_cache[tf] = (now, out)
+    for k in [k for k in _macro_cache if k[0] == tf and k[1] < tk]:
+        _macro_cache.pop(k, None)
+    _macro_cache[(tf, tk)] = (time.time(), found, out)   # بی‌کندلِ tk فقط ۶۰ ثانیه
     return out
 
 
@@ -493,7 +508,7 @@ def _compute_analysis(symbol, tf):
                   "oi_ok": bool(oinfo.get("ok")),
                   "rs_rank": _rs_rank(tf).get(symbol, 0.5),
                   "htf_sign": htf_sign}
-        extras.update(_macro(tf))
+        extras.update(_macro(tf, tk))
         extras.update(_market_state(tf, tk))
         extras["cost"] = _symbol_cost(symbol)
         extras["symbol"] = symbol                    # گیت نماد را هم می‌سنجد
