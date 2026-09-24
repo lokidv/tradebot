@@ -20,12 +20,15 @@ import _hermetic  # noqa: E402,F401  — پیش از هر ماژولِ ربات:
 
 import bracket  # noqa: E402
 import candidates  # noqa: E402
+import decision  # noqa: E402
 import edge_book  # noqa: E402
 import engine  # noqa: E402
+import main  # noqa: E402
 import market  # noqa: E402
 import meta_gate  # noqa: E402
 import report  # noqa: E402
 import shadow  # noqa: E402
+import tf_spec  # noqa: E402
 
 H = 3_600_000
 
@@ -457,6 +460,122 @@ class KucoinFundingSettlementTests(_MarketBase, unittest.TestCase):
             clock.t = self.T / 1000 + 30                                   # کندلِ بسته‌شده روی T
             after = market.get_kucoin_funding("ZZBTCUSDT")
         self.assertEqual(int(after["t"][-1]), self.T)
+
+
+# ───────────────────────── LP-4 / LP-5: زمان‌بندِ دفترِ تصمیم ─────────────────────────
+class _Cells:
+    """get_analysisِ ساختگی: هر خانه کندلِ مورد انتظارِ ``boundary`` را می‌دهد (لانگِ قاعده)، مگر ``plan``
+    برای فراخوانیِ nامِ آن خانه «error» یا «stale» (کندلِ قبلی) بگوید."""
+
+    def __init__(self, boundary, plan=None):
+        self.boundary, self.plan, self.calls = boundary, plan or {}, []
+
+    def __call__(self, symbol, tf, max_age=None):
+        self.calls.append((symbol, tf))
+        n = self.calls.count((symbol, tf))
+        how = self.plan.get((symbol, tf)) or []
+        what = how[n - 1] if n - 1 < len(how) else "ok"
+        if what == "error":
+            return {"symbol": symbol, "tf": tf, "error": "stub"}
+        exp = main._expected_bar(tf, self.boundary)
+        zt = exp - tf_spec.bar_ms(tf) if what == "stale" else exp
+        return {"symbol": symbol, "tf": tf, "zt": zt, "price": 100.0, "z": 1.5,
+                "votes_bull": 4, "votes_bear": 0, "components": {}, "regime": "trend",
+                "trade": {"side": "long", "setup": None, "setup_observed": False, "grade": "B",
+                          "entry": 100.0, "sl": 98.0, "tp": 103.6, "rr": 1.8,
+                          "risk_pct": 2.0, "atr14": 1.5}}
+
+
+class DecisionSchedulerTests(unittest.TestCase):
+    DAY = 1_790_208_000                                    # نیمه‌شبِ UTC
+    B5 = DAY + 5 * 3600                                    # ۰۵:۰۰
+
+    def setUp(self):
+        self.recorded = []
+        self.patches = [
+            mock.patch.dict(main._decision_state, {"last_boundary": self.B5 - 300, "retry": {}}),
+            mock.patch.object(decision, "record",
+                              side_effect=lambda ds, now=None: self.recorded.append(list(ds)) or 0),
+            mock.patch.object(decision, "resolve", return_value=0),
+            mock.patch.object(decision, "scorecards", return_value={}),
+            mock.patch.object(candidates, "resolve", return_value=0),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self.patches):
+            p.stop()
+
+    def _cycle(self, stub, boundary):
+        stub.boundary = boundary
+        with mock.patch.object(main, "get_analysis", stub):
+            return main._decision_cycle(now=boundary + main.DECISION_LAG)
+
+    def _rec(self, i, sym, tf):
+        return [d for d in self.recorded[i] if (d["sym"], d["tf"]) == (sym, tf)]
+
+    def test_errored_cell_is_retried_on_the_next_five_minute_cycle(self):
+        stub = _Cells(self.B5, {("ETHUSDT", "1h"): ["error"]})
+        out = self._cycle(stub, self.B5)
+        self.assertEqual(out["tfs"], ["5m", "15m", "1h"])
+        self.assertEqual(out["pending_retry"], 1)
+        self.assertEqual(self._rec(0, "ETHUSDT", "1h"), [])
+        out = self._cycle(stub, self.B5 + 300)                     # فقط 5m سررسید است…
+        self.assertEqual((out["tfs"], out["retried"], out["pending_retry"]), (["5m"], 1, 0))
+        eth = self._rec(1, "ETHUSDT", "1h")                         # …ولی کندلِ ۰۴:۰۰ِ ETH گم نشد
+        self.assertEqual([d["candle_ts"] for d in eth], [(self.B5 - 3600) * 1000])
+
+    def test_stale_cell_is_recomputed_and_the_previous_bar_is_never_recorded(self):
+        key = ("BTCUSDT", "1h")
+        main._an_cache[key] = (self.B5 - 10, {"symbol": "BTCUSDT", "tf": "1h", "zt": 0})
+        stub = _Cells(self.B5, {key: ["stale"]})                    # کشِ سردِ B−۱۰s: کندلِ قبلی
+        out = self._cycle(stub, self.B5)
+        self.assertEqual(out["stale"], 1)
+        self.assertNotIn(key, main._an_cache)                      # تحلیلِ کهنه دور انداخته شد
+        btc = self._rec(0, *key)
+        self.assertEqual([d["candle_ts"] for d in btc], [(self.B5 - 3600) * 1000])
+        self.assertEqual(stub.calls.count(("ETHUSDT", "1h")), 2)   # btc_zِ آلت‌ها هم از نو
+        self.assertEqual(out["pending_retry"], 0)
+
+    def test_persistently_stale_cell_is_held_back_and_retried(self):
+        key = ("ETHUSDT", "4h")
+        stub = _Cells(self.B5 - 3600, {key: ["stale", "stale"]})
+        main._decision_state["last_boundary"] = self.B5 - 3600 - 300
+        out = self._cycle(stub, self.B5 - 3600)                     # ۰۴:۰۰: مرزِ 4h
+        self.assertIn("4h", out["tfs"])
+        self.assertEqual(self._rec(0, *key), [])                    # کندلِ ۲۰:۰۰ِ دیروز (کهنه) ثبت نشد
+        self.assertEqual(out["pending_retry"], 1)
+        out = self._cycle(stub, self.B5 - 3600 + 300)
+        self.assertEqual(out["retried"], 1)
+        self.assertEqual([d["candle_ts"] for d in self._rec(1, *key)], [(self.B5 - 3600 - 14400) * 1000])
+
+    def test_retry_is_dropped_once_a_newer_bar_has_closed(self):
+        main._decision_state["retry"] = {("ETHUSDT", "1h"): main._expected_bar("1h", self.B5)}
+        stub = _Cells(self.B5 + 3600)
+        main._decision_state["last_boundary"] = self.B5 + 3600 - 300
+        out = self._cycle(stub, self.B5 + 3600)                     # ۰۶:۰۰ ⇒ 1h از راهِ tfs
+        self.assertEqual(out["retried"], 0)
+        self.assertEqual(stub.calls.count(("ETHUSDT", "1h")), 1)
+
+    def test_candidates_are_resolved_in_the_background_cycle(self):
+        self._cycle(_Cells(self.B5), self.B5)
+        candidates.resolve.assert_called_once()
+        self.assertEqual(candidates.resolve.call_args.kwargs.get("limit"), main.CANDIDATE_RESOLVE_LIMIT)
+
+    def test_an_overrun_cycle_does_not_skip_the_next_boundary(self):
+        b = self.B5
+        main._decision_state["last_boundary"] = b
+        self.assertEqual(main._decision_wait(b + main.DECISION_LAG + 310), 0.0)   # دورِ ۳۱۰ ثانیه‌ای
+        self.assertAlmostEqual(main._decision_wait(b + main.DECISION_LAG + 5), 295.0)
+        main._decision_state["last_boundary"] = None
+        self.assertAlmostEqual(main._decision_wait(b + 100), 220.0)                # دورِ اول: مثلِ قبل
+
+    def test_expected_bar_is_the_last_closed_bar_open(self):
+        self.assertEqual(main._expected_bar("1h", self.B5), (self.B5 - 3600) * 1000)
+        self.assertEqual(main._expected_bar("4h", self.B5), self.DAY * 1000)          # ۰۰:۰۰→۰۴:۰۰
+        self.assertEqual(main._expected_bar("1d", self.B5), (self.DAY - 86400) * 1000)
+        self.assertEqual(main._expected_bar("5m", self.B5), (self.B5 - 300) * 1000)
 
 
 if __name__ == "__main__":

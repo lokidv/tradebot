@@ -1231,18 +1231,21 @@ DECISION_LAG = 20.0          # ثانیه پس از هر مرزِ ۵دقیقه�
 # ۵ دقیقه = کوچک‌ترین تایم‌فریم (با ۹۰۰ ثانیه، decision.record با STALE_BARS=3 فقط ۱ از ۳ کندلِ 5m را می‌دید).
 # هر دور فقط تایم‌فریم‌هایی را تازه می‌کند که کندلشان از دورِ قبل بسته شده (5m همیشه، 1d فقط نیمه‌شبِ UTC).
 DECISION_PERIOD = 300
-_decision_state = {"last_boundary": None}   # آخرین مرزِ ۵دقیقه‌ای که تصمیم‌هایش جمع شد
+CANDIDATE_RESOLVE_LIMIT = 120   # داوریِ کاندیدها در هر دور (مثلِ ‎/api/live-stats)
+_decision_state = {"last_boundary": None,   # آخرین مرزِ ۵دقیقه‌ای که تصمیم‌هایش جمع شد
+                   "retry": {}}              # (sym, tf) -> openِ کندلی که هنوز دیده نشده (خطا/تحلیلِ کهنه)
 
 
-def _decision_lookup(symbols=None, tfs=None):
+def _decision_lookup(symbols=None, tfs=None, keys=None):
     """همهٔ تحلیل‌های ارز × تایم‌فریمِ میزِ تصمیم (۵×۵=۲۵) را موازی روی ``_pool`` می‌سازد
     و یک تابعِ جست‌وجوی ``(sym, tf) -> analysis`` برای ``decision.collect/refresh`` برمی‌گرداند.
+    ``keys`` (اختیاری): فقط همین خانه‌های ``(sym, tf)`` به‌جای ضربِ symbols × tfs.
 
     ترتیب: تایم‌فریمِ بالاتر و BTC اول — پیش‌نیازِ زنجیرهٔ HTF/BTCِ بقیه‌اند، پس منتظرها کمتر معطل می‌شوند.
     """
     symbols = tuple(symbols or decision.SYMBOLS)
     tfs = tuple(tfs or decision.TFS)
-    keys = sorted(((s, tf) for s in symbols for tf in tfs),
+    keys = sorted(keys if keys is not None else ((s, tf) for s in symbols for tf in tfs),
                   key=lambda k: (-tf_spec.MINUTES.get(k[1], 0), k[0] != "BTCUSDT"))
 
     def _one(k):
@@ -1275,23 +1278,98 @@ def _due_tfs(boundary, last_boundary=None):
     return tuple(tf for tf in decision.TFS if tf_spec.closed_between(tf, last_boundary, boundary))
 
 
+def _expected_bar(tf, boundary):
+    """openِ (ms) آخرین کندلِ بسته‌شدهٔ ``tf`` در مرزِ ``boundary`` (ثانیهٔ UTC)."""
+    bar = tf_spec.bar_ms(tf)
+    return (int(boundary) * 1000 // bar) * bar - bar
+
+
+def _collect_cells(cells):
+    """تصمیمِ خانه‌های ``cells`` (فهرستِ ``(sym, tf)``)، هر تایم‌فریم یک ``decision.collect``."""
+    if not cells:
+        return []
+    lookup = _decision_lookup(keys=cells)
+    by_tf = {}
+    for s, tf in cells:
+        by_tf.setdefault(tf, []).append(s)
+    out = []
+    for tf, syms in by_tf.items():
+        out += decision.collect(lookup, symbols=tuple(syms), tfs=(tf,)) or []
+    return out
+
+
+def _drop_analysis(keys):
+    """تحلیلِ کش‌شدهٔ این خانه‌ها دور انداخته می‌شود تا از نو ساخته شود (کشِ کندل تازگی را خودش می‌سنجد)."""
+    with _an_lock:
+        for k in keys:
+            _an_cache.pop(k, None)
+
+
+def _screen_decisions(decisions, boundary, retry):
+    """فقط تصمیم‌هایی که کندلِ مورد انتظارِ همین مرز را دارند برای ثبت می‌مانند.
+
+    * خطا ⇒ خانه در ``retry`` می‌ماند و دورِ ۵دقیقه‌ایِ بعد دوباره تحلیل می‌شود (LP-5)؛ قبلاً تا مرزِ
+      بعدیِ همان تایم‌فریم تلاشی نبود و کندلِ 1h/4h/1d با یک خطای گذرا برای همیشه گم می‌شد.
+    * کندلِ قبلی (تحلیلِ کهنه — کشِ سردِ درست پیش از مرز، یا صرافیِ دیررس) ⇒ تحلیلِ کش‌شده دور انداخته و
+      همین حالا یک‌بار از نو ساخته می‌شود؛ اگر باز کهنه بود **ثبت نمی‌شود** و دورِ بعد دوباره (LP-4).
+      اگر BTC کهنه بود، آلت‌های همان تایم‌فریم هم از نو ساخته می‌شوند (btc_z از همان تحلیل می‌آید).
+    خروجی: ``(تصمیم‌های قابلِ ثبت، تعدادِ کهنه‌ها)``.
+    """
+    def split(ds):
+        good, stale = [], []
+        for d in ds:
+            key = (d.get("sym"), d.get("tf"))
+            exp = _expected_bar(key[1], boundary)
+            try:
+                ts = int(d.get("candle_ts"))
+            except (TypeError, ValueError):
+                ts = None
+            if d.get("error") or ts is None:
+                retry[key] = exp
+            elif ts < exp:
+                retry[key] = exp
+                stale.append(key)
+            else:
+                retry.pop(key, None)
+                good.append(d)
+        return good, stale
+
+    good, stale = split(decisions)
+    if not stale:
+        return good, 0
+    redo = set(stale)
+    redo |= {(s, tf) for b, tf in stale if b == "BTCUSDT" for s in decision.SYMBOLS}
+    _drop_analysis(redo)
+    good = [d for d in good if (d.get("sym"), d.get("tf")) not in redo]
+    again, _still = split(_collect_cells(sorted(redo)))
+    return good + again, len(stale)
+
+
 def _decision_cycle(now=None, tfs=None):
     """یک دورِ پس‌زمینه: تصمیم‌ها → ثبت در دفترِ رو-به-جلو → داوریِ ردیف‌های باز → کارنامه (بی‌انتظار).
 
-    فقط تایم‌فریم‌هایی که کندلشان تازه بسته شده دوباره تحلیل و ثبت می‌شوند (``tfs`` برای تست/اجبار)؛
-    داوریِ ردیف‌های باز هر دور برای همه انجام می‌شود. هر گام جدا خطاگیری می‌شود تا خرابیِ یکی بقیه
-    را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
+    فقط تایم‌فریم‌هایی که کندلشان تازه بسته شده دوباره تحلیل و ثبت می‌شوند (``tfs`` برای تست/اجبار)،
+    به‌علاوهٔ خانه‌هایی که کندلِ آخرشان هنوز دیده نشده (خطا/تحلیلِ کهنه در دورهای قبل — ``_screen_decisions``).
+    داوریِ ردیف‌های باز (دفترِ تصمیم و دفترِ کاندیدها) هر دور برای همه انجام می‌شود. هر گام جدا
+    خطاگیری می‌شود تا خرابیِ یکی بقیه را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
     now = time.time() if now is None else now
     boundary = _decision_boundary(now)
+    # کپی و جایگزینی (نه جهشِ درجا): یک دورِ نیمه‌کاره یا patchِ تست حالتِ مشترک را آلوده نمی‌کند
+    retry = {k: exp for k, exp in (_decision_state.get("retry") or {}).items()
+             if exp == _expected_bar(k[1], boundary)}      # کندلِ تازه‌تری بسته شده ⇒ از راهِ tfs می‌آید
     if tfs is None:
         tfs = _due_tfs(boundary, _decision_state["last_boundary"])
     tfs = tuple(tfs)
-    out = {"decisions": 0, "tfs": list(tfs), "recorded": None, "resolved": None}
-    decisions = []
-    if tfs:
-        decisions = decision.collect(_decision_lookup(tfs=tfs), tfs=tfs)
+    cells = [(s, tf) for tf in tfs for s in decision.SYMBOLS]
+    extra = sorted(k for k in retry if k not in set(cells))
+    out = {"decisions": 0, "tfs": list(tfs), "retried": len(extra), "stale": 0,
+           "recorded": None, "resolved": None, "candidates_resolved": None}
+    collected = _collect_cells(cells + extra)
+    decisions, out["stale"] = _screen_decisions(collected, boundary, retry)
     _decision_state["last_boundary"] = boundary
-    out["decisions"] = len(decisions or [])
+    _decision_state["retry"] = retry
+    out["decisions"] = len(collected)
+    out["pending_retry"] = len(retry)
     if decisions:
         try:
             out["recorded"] = decision.record(decisions)
@@ -1301,6 +1379,12 @@ def _decision_cycle(now=None, tfs=None):
         out["resolved"] = decision.resolve(market.get_klines)
     except Exception:  # noqa: BLE001
         log.exc("decision ledger resolve")
+    try:
+        # دفترِ کاندیدها هم در پس‌زمینه داوری می‌شود، نه فقط وقتی UI ‎/api/live-stats را صدا می‌زند؛
+        # وگرنه با UIِ بسته پنجرهٔ ۴۲۰ کندلی از کندلِ ورود می‌گذشت (LP-7: حالا «no_data» می‌شود).
+        out["candidates_resolved"] = candidates.resolve(market.get_klines, limit=CANDIDATE_RESOLVE_LIMIT)
+    except Exception:  # noqa: BLE001
+        log.exc("candidates resolve")
     try:
         decision.scorecards(wait=False)             # حداکثر روزی یک‌بار، در نخِ جدا
     except Exception:  # noqa: BLE001
@@ -1314,6 +1398,15 @@ def _next_decision_run(now):
     return base + DECISION_PERIOD + DECISION_LAG
 
 
+def _decision_wait(now):
+    """ثانیه تا دورِ بعد. اگر مرزی که مهلتش گذشته هنوز پردازش نشده (دورِ قبل بیش از ۵ دقیقه طول کشید)
+    صفر — وگرنه ``_next_decision_run`` آن مرز را جا می‌انداخت و کندلِ 5mِ آن هرگز دیده نمی‌شد (LP-5)."""
+    last = _decision_state.get("last_boundary")
+    if last is not None and _decision_boundary(now) > last:
+        return 0.0
+    return max(1.0, _next_decision_run(now) - now)
+
+
 def _decision_loop():
     """دفترِ میزِ تصمیم باید حتی وقتی کسی صفحه را باز نکرده ثبت و داوری شود."""
     time.sleep(DECISION_WARM_DELAY)
@@ -1323,7 +1416,7 @@ def _decision_loop():
         log.exc("decision scorecard warm-up")
     while True:
         try:
-            time.sleep(max(1.0, _next_decision_run(time.time()) - time.time()))
+            time.sleep(_decision_wait(time.time()))
             info = _decision_cycle()
             log.info("decision cycle", **info)
         except Exception:  # noqa: BLE001
