@@ -358,6 +358,45 @@ class ReportFilesTests(unittest.TestCase):
         self.assertIn("v21=-0.001", lines[1])
 
 
+class ErratumTests(unittest.TestCase):
+    """اِراتای اعتبارسنجیِ v2.1: فایلی تازه؛ گزارش، سنجاق و پیش‌ثبت دست نخورده‌اند."""
+    PATH = os.path.join(ROOT, "bot", "data", "research", "core2_1_validation_erratum.json")
+
+    def test_erratum_is_complete_and_changes_no_verdict(self):
+        with open(self.PATH, encoding="utf-8") as f:
+            er = json.load(f)
+        self.assertEqual(er["report"], "core2_1_validation_20260924_135542.json")
+        self.assertEqual(er["adopted_before"], [])
+        self.assertEqual(er["adopted_after"], [])
+        self.assertFalse(er["any_verdict_changes"])
+        self.assertIn("holdout_touched", er["holdout_touched_claim"]["field"])
+        for tf in ("1d", "4h", "1h", "15m", "5m"):
+            self.assertIn(tf, er["holdout_bars_used_by_validation"]["table"])
+            self.assertIn(tf, er["corrected_numbers_cut_at_2026_01_01"])
+            cut = er["corrected_numbers_cut_at_2026_01_01"][tf]["cut"]["v21"]
+            self.assertTrue(cut["mean"] is None or cut["mean"] <= 0)             # هیچ نتیجه‌ای مثبت نمی‌شود
+        self.assertEqual(er["holdout_bars_used_by_validation"]["max_days_of_2026_used"]["labels"], 28)
+        self.assertEqual(er["holdout_bars_used_by_validation"]["max_days_of_2026_used"]["trades"], 14)
+        ids = [d["id"] for d in er["deferred_to_next_spec"]]
+        for key in ("DATA-1", "DATA-2", "DATA-4", "feat_ind-1", "feat_flow-2", "feat_flow-3", "feat_flow-5",
+                    "feat_ind-2", "feat_ind-3", "labels-2/model-2"):
+            self.assertIn(key, ids)
+        for key in ("kucoin_funding_regime_break_2023_10_18", "kucoin_schedule_change_2025_06_17",
+                    "zero_volume_halt_bars", "btc_identity_channel"):
+            self.assertIn(key, er["data_caveats"])
+        self.assertIn("2025-06-17", er["min_to_fund_1d_drop_reason"]["correction"])
+        self.assertIn("holdout_guard", er["holdout_guard_after_this_fix"])
+        with open(os.path.join(ROOT, "bot", "data", "research", "core2_1_validation_pin.json"), encoding="utf-8") as f:
+            self.assertEqual(er["report_sha256_lf"], json.load(f)["report_sha256_lf"])
+
+    def test_the_pinned_report_still_matches_its_pin(self):
+        with open(os.path.join(ROOT, "bot", "data", "research", "core2_1_validation_pin.json"), encoding="utf-8") as f:
+            pin = json.load(f)
+        rpath = os.path.join(ROOT, "bot", "data", "research", pin["report"])
+        self.assertEqual(core2_1.sha256_lf(rpath), pin["report_sha256_lf"])
+        self.assertEqual(core2_1.sha256_lf(PREREG), pin["prereg_sha256_lf"])
+
+
 def _git(d, *args):
     subprocess.run(["git", "-C", d, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false",
                     *args], check=True, capture_output=True)
