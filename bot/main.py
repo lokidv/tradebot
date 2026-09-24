@@ -75,8 +75,8 @@ def _basket_klines(tf, tk):
     """کندل‌های سبدِ مرجع که کندلِ ``tk`` را دارند — با get_klines، نه کشِ خام.
 
     قبلاً ``get_klines_cached`` هر چه آخرین‌بار در کش بود را می‌داد: درونِ تحلیلِ BTC، کندل‌های
-    BTC تازه و بقیه یک کندل کهنه بودند (نخ‌هایشان پشتِ همان تحلیلِ BTC منتظر بودند). اگر مهلتِ
-    ۴۵ثانیه‌ایِ کش هنوز کندلِ قبلی را بدهد، یک‌بار مستقیم تازه می‌شود.
+    BTC تازه و بقیه یک کندل کهنه بودند (نخ‌هایشان پشتِ همان تحلیلِ BTC منتظر بودند). اگر صرافی
+    کندلِ ``tk`` را هنوز منتشر نکرده بود (کش دریافتِ بی آن را تا KLINE_TTL نگه می‌دارد)، یک‌بار مستقیم تازه می‌شود.
     """
     out = {}
     for s in calib.MARKET_BASKET:
@@ -91,7 +91,7 @@ def _basket_klines(tf, tk):
 
 def _klines_at(symbol, tf, tk):
     """کندل‌های بستهٔ ``symbol`` که کندلِ ``tk`` را دارند، وگرنه None.
-    اگر مهلتِ ۴۵ثانیه‌ایِ کش هنوز کندلِ قبلی را بدهد، یک‌بار مستقیم تازه می‌شود."""
+    اگر صرافی کندلِ ``tk`` را هنوز منتشر نکرده بود و کش همان دریافتِ بی آن را بدهد، یک‌بار مستقیم تازه می‌شود."""
     kl = market.get_klines(symbol, tf)
     if kl and kl["t"] and int(kl["t"][-1]) < tk:
         kl = market._fetch_klines(symbol, tf, 420)
@@ -618,6 +618,21 @@ def _compute_analysis(symbol, tf):
 _rebuild_proc = {"p": None, "started": None}
 
 
+def _rebuild_running():
+    p = _rebuild_proc.get("p")
+    return p is not None and p.poll() is None
+
+
+def _calib_status():
+    """``calib.status()`` + بازآموزیِ پروسهٔ جدا. ``_state``ِ calib در همین پروسه از rebuild_models.py خبر ندارد،
+    پس بی این، در تمامِ مدتِ بازآموزی «building: false» گزارش می‌شد و UI مدلِ کهنه را جاری نشان می‌داد."""
+    st = calib.status()
+    if not st.get("building") and _rebuild_running():
+        st.update(building=True, progress=st.get("progress") or "بازآموزی در پروسهٔ جدا (rebuild_models.py)…",
+                  rebuild_started=_rebuild_proc.get("started"))
+    return st
+
+
 def _calib_builder():
     """بازآموزی در **پروسهٔ جدا** (rebuild_models.py)، نه داخلِ پروسهٔ معامله.
 
@@ -719,7 +734,7 @@ def bot_config(req: BotCfgReq):
 
 @app.get("/api/calib/status")
 def calib_status():
-    return calib.status()
+    return _calib_status()
 
 
 @app.get("/api/gates")
@@ -960,7 +975,7 @@ def health():
     if g["live_effective"]:
         warnings.append("معاملهٔ واقعی فعال است")
 
-    cs = calib.status()
+    cs = _calib_status()
     age_h = cs.get("age_hours")
     out["model"] = {"version": cs.get("version"), "required": cs.get("required_version"),
                     "age_hours": age_h, "stale": cs.get("stale"), "building": cs.get("building"),
@@ -1035,7 +1050,7 @@ def health():
 @app.get("/api/version")
 def version_info():
     """شناسهٔ دقیق کد و مدلِ در حال اجرا برای راستی‌آزمایی انتشار."""
-    cs = calib.status()
+    cs = _calib_status()
     return {
         "app_version": APP_VERSION,
         "ai_core_version": AI_CORE_VERSION,
@@ -1050,8 +1065,7 @@ def version_info():
 
 @app.post("/api/calib/rebuild")
 def calib_rebuild():
-    p = _rebuild_proc.get("p")
-    if calib.status().get("building") or (p is not None and p.poll() is None):
+    if calib.status().get("building") or _rebuild_running():
         return {"ok": False, "msg": "در حال ساخت است"}
     threading.Thread(target=_calib_builder, daemon=True).start()
     return {"ok": True}
@@ -1276,7 +1290,7 @@ def overview(tf: str = "1h"):
         sc = btc_a["score"]
         btc_state = {"score": sc, "z": btc_a.get("z"),
                      "dir": "صعودی" if sc >= 0.15 else "نزولی" if sc <= -0.15 else "خنثی"}
-    cs = calib.status()
+    cs = _calib_status()
     mtf = (cs.get("models") or {}).get(tf, {})
     dir_lift = mtf.get("dir_lift")
     setup_lift = mtf.get("oos_lift")
@@ -1373,9 +1387,11 @@ def _due_tfs(boundary, last_boundary=None):
 
 
 def _expected_bar(tf, boundary):
-    """openِ (ms) آخرین کندلِ بسته‌شدهٔ ``tf`` در مرزِ ``boundary`` (ثانیهٔ UTC)."""
-    bar = tf_spec.bar_ms(tf)
-    return (int(boundary) * 1000 // bar) * bar - bar
+    """openِ (ms) آخرین کندلِ بسته‌شدهٔ ``tf`` در مرزِ ``boundary`` (ثانیهٔ UTC).
+
+    همان ``_last_closed_open`` (کلیدِ کشِ حالتِ بازار/طلا)؛ یک تعریف تا چکِ کهنگیِ زمان‌بند و آن کلید از هم جدا نشوند.
+    """
+    return _last_closed_open(tf, int(boundary))
 
 
 def _collect_cells(cells):
@@ -1593,7 +1609,9 @@ def open_pos(req: OpenReq):
             elif pw is not None and pw < 45:
                 weak.append(f"احتمال بردِ مدل فقط {pw:.0f}٪ است")
         else:
-            p_up = a.get("p_up")
+            # فقط p_upِ مدلِ جهت‌یابِ کالیبره «اطمینان» است و آستانهٔ ۵۸٪ دارد؛ امتیازِ اکتشافی
+            # (p_up_kind="heuristic") احتمال نیست و نباید با «٪» و «آمار علیه» به کاربر نشان داده شود
+            p_up = advisor.model_p_up(a)
             conf = None if p_up is None else (p_up if side == "long" else 100 - p_up)
             if conf is not None and conf < 58:
                 weak.append(f"اطمینانِ جهت‌یاب برای این سمت فقط {conf:.0f}٪ است (آستانهٔ اطمینان ۵۸٪)")

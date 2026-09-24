@@ -366,9 +366,10 @@ class VariantStatsAndJudgementTests(_Ledgers):
 
     def test_d1_variant_is_inconclusive_without_enough_differing_bars(self):
         self._build(weeks=53, per_week=1, v_mean=0.3, r_mean=-0.3, tf="1d", variant="d1_no_short_rsi30")
-        skips = [{"kind": "skip", "id": f"d1_no_short_rsi30|BTCUSDT|1d|{T0 + k * D_MS}|wait",
+        t_start = int(self.START * 1000)             # کندلِ پیش از t0 در دورهٔ مقایسه نیست (گاردِ کهنگی هم نمی‌گذارد)
+        skips = [{"kind": "skip", "id": f"d1_no_short_rsi30|BTCUSDT|1d|{t_start + k * D_MS}|wait",
                   "variant": "d1_no_short_rsi30", "sym": "BTCUSDT", "tf": "1d", "side": "wait",
-                  "candle_ts": T0 + k * D_MS, "rule_side": "short", "recorded_at": self.START}
+                  "candle_ts": t_start + k * D_MS, "rule_side": "short", "recorded_at": self.START}
                  for k in range(9)]
         self.write(self.var, skips)
         self.assertEqual(decision.judge_variants(now=self.START + 51 * 7 * 86400), [])
@@ -379,9 +380,10 @@ class VariantStatsAndJudgementTests(_Ledgers):
 
     def test_d1_variant_is_tested_with_ten_differing_bars(self):
         self._build(weeks=53, per_week=1, v_mean=0.3, r_mean=-0.3, tf="1d", variant="d1_no_short_rsi30")
-        skips = [{"kind": "skip", "id": f"d1_no_short_rsi30|BTCUSDT|1d|{T0 + k * D_MS}|wait",
+        t_start = int(self.START * 1000)             # کندلِ پیش از t0 در دورهٔ مقایسه نیست (گاردِ کهنگی هم نمی‌گذارد)
+        skips = [{"kind": "skip", "id": f"d1_no_short_rsi30|BTCUSDT|1d|{t_start + k * D_MS}|wait",
                   "variant": "d1_no_short_rsi30", "sym": "BTCUSDT", "tf": "1d", "side": "wait",
-                  "candle_ts": T0 + k * D_MS, "rule_side": "short", "recorded_at": self.START}
+                  "candle_ts": t_start + k * D_MS, "rule_side": "short", "recorded_at": self.START}
                  for k in range(10)]
         self.write(self.var, skips + skips[:2])                             # تکرار شمرده نمی‌شود
         out = decision.judge_variants(now=self.START + 53 * 7 * 86400)
@@ -389,6 +391,35 @@ class VariantStatsAndJudgementTests(_Ledgers):
         self.assertEqual(out[0]["differs"], 10)
         self.assertIn(out[0]["result"], ("pass", "fail"))
         self.assertIsNotNone(out[0]["p"])
+
+    def test_t0_boundary_candle_is_out_of_both_streams(self):
+        """کندلِ c پیش از t0 بسته شده: دفترِ اصلی آن را پیش از t0 ثبت کرده و دورِ اولِ گونه‌ها در t0.
+
+        V2 در هر کندل عیناً قاعده است؛ پس مقایسه باید تفاوتِ صفر بدهد — نه معاملهٔ c فقط در جریانِ گونه
+        (که c+1 را هم پشتِ خودش نگه می‌دارد) و c+1 فقط در جریانِ قاعده.
+        """
+        v, t_start = "d1_no_short_rsi30", int(self.START * 1000)
+        c = t_start - 28 * H_MS                     # بسته‌شدن: t0 − ۴ ساعت
+        vr, mr = [{"kind": "start", "at": self.START, "prereg": decision.VARIANTS_PREREG}], []
+        _open(mr, None, "BTCUSDT", "1d", c, "long", 1.8, self.START - 3 * 3600, exit_ts=c + 3 * D_MS)
+        _open(vr, v, "BTCUSDT", "1d", c, "long", 1.8, self.START, exit_ts=c + 3 * D_MS)
+        _open(mr, None, "BTCUSDT", "1d", c + D_MS, "long", -1.0, self.START + 86400)
+        _open(vr, v, "BTCUSDT", "1d", c + D_MS, "long", -1.0, self.START + 86400)
+        _open(vr, "z_only", "BTCUSDT", "1d", c, "long", 1.8, self.START, exit_ts=c + 3 * D_MS)
+        vr.append({"kind": "skip", "id": f"{v}|BTCUSDT|1d|{c}|wait", "variant": v, "sym": "BTCUSDT",
+                   "tf": "1d", "side": "wait", "candle_ts": c, "rule_side": "short", "recorded_at": self.START})
+        self.write(self.var, vr)
+        self.write(self.main, mr)
+        st = decision.variant_stats(now=self.START + 5 * 86400)
+        items = {i["key"]: i for i in st["items"]}
+        cell = items[v]["tfs"]["1d"]
+        self.assertEqual((cell["variant"]["n"], cell["rule"]["n"], cell["diff"]), (1, 1, 0.0))
+        self.assertEqual((cell["variant"]["open"], cell["rule"]["open"]), (0, 0))
+        self.assertEqual(items[v]["pooled"]["diff"], 0.0)
+        self.assertEqual(items["z_only"]["tfs"]["1d"]["variant"]["n"], 0)    # c فقط در دفترِ گونه ⇒ بیرون
+        self.assertEqual(items[v]["differs"], 0)                             # ردیفِ skipِ مرزی هم شمرده نمی‌شود
+        self.assertEqual(sorted(decision._in_period(r, self.START) for r in vr if r.get("kind") == "open"),
+                         [False, False, True])
 
 
 class BootstrapTests(unittest.TestCase):

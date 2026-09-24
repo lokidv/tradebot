@@ -687,7 +687,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         # بدونِ ستاپِ رویدادی، setup خالی است (None) — قبلاً «zx» برچسب می‌خورد و UI «کراس z»
         # نشان می‌داد در حالی که فقط قاعدهٔ سطحیِ z/رأی جهت داده بود. ویژگی‌ها عوض نمی‌شوند:
         # event_features برای zx و None هر چهار پرچمِ ستاپ را صفر می‌گذارد. دفترِ کاندید/سایه
-        # مقدارِ خالی را مثل قبل «zx» ثبت می‌کنند (candidates.py / shadow.py: setup or "zx").
+        # مقدارِ خالی را «rule» ثبت می‌کنند، نه «zx» (candidates.RULE_SETUP / shadow.RULE_SETUP).
         setup_used = "ap" if action_used else live_setup if (live_sig != 0 and live_sig == d) else None
         policy_applicable = bool(action_used or (live_sig != 0 and live_sig == d and live_setup is not None))
         btc_align = True if btc_z is None else (btc_z * d > -0.3)   # همان آستانه آموزش
@@ -788,8 +788,9 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             tr["authority"] = None
             pst = (stats or {}).get("policy_test") or tr.get("policy_test") or {}
             if ex.get("toxic_tf"):
-                tr["status"] = ("مشاهده — تایم‌فریم روزانه در کارنامهٔ زنده زیان‌ده است؛ "
-                                "ورود فقط با سیاست نهاییِ دادگاه‌قبول مجاز است")
+                # پرچمِ ثابتِ کد (main: tf == "1d")، نه آمارِ زنده — دفترِ زنده برای 1d هنوز داوری ندارد
+                tr["status"] = ("مشاهده — تایم‌فریم روزانه فقط با سیاست نهاییِ دادگاه‌قبول مجوزِ ورود دارد "
+                                "(محدودیتِ ثابتِ کد، نه نتیجهٔ کارنامهٔ زنده)")
             elif stats and src == "policy" and not stats.get("policy_trusted"):
                 avg = pst.get("avg_net_r")
                 pf = pst.get("profit_factor")

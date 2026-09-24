@@ -10,6 +10,8 @@
 """
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -317,6 +319,73 @@ class KnnLabelTests(unittest.TestCase):
         self.assertNotIn("هوش مصنوعی", texts)
 
 
+# ───────────────────────── پرچمِ ثابتِ روزانه (toxic_tf) ─────────────────────────
+class DailyStaticFlagTests(_GatesTmp):
+    """main برای هر خانهٔ 1d ``toxic_tf=True`` می‌گذارد (ثابتِ کد)؛ متنش نباید آن را «کارنامهٔ زنده» بنامد
+    و «هشدارِ موتور» شود، وقتی دفترِ زنده برای 1d هنوز داوری ندارد."""
+
+    def test_status_does_not_claim_a_live_scorecard(self):
+        res, _ = _analyze(1, predict_fn=_predict("model", 40.0), extras={"toxic_tf": True})
+        st = res["trade"]["status"]
+        self.assertIn("تایم‌فریم روزانه", st)                       # همان شاخه
+        self.assertNotIn("کارنامهٔ زنده زیان‌ده", st)
+        self.assertFalse(decision._status_is_caution(st))
+        d = decision.from_analysis(dict(res, symbol="BTCUSDT", tf="1d"))
+        self.assertFalse(any("روزانه" in w for w in d["warnings"]), d["warnings"])
+        self.assertEqual(d["action"], res["trade"]["side"])              # تصمیم دست‌نخورده
+
+
+# ───────────────────────── سپرِ آمارِ ورودِ دستی (‎/api/positions) ─────────────────────────
+class ManualOpenWeakGateTests(unittest.TestCase):
+    """«اطمینانِ جهت‌یاب … ٪ (آستانهٔ ۵۸٪)» فقط برای p_upِ مدلِ کالیبره؛ امتیازِ اکتشافی احتمال نیست."""
+
+    @staticmethod
+    def _an(p_up, kind, trade_side=None):
+        return {"symbol": "SOLUSDT", "tf": "1h", "price": 100.0, "p_up": p_up, "p_up_kind": kind,
+                "p_calibrated": kind == "model",
+                "trade": {"side": trade_side, "entry": None, "sl": None, "tp": None, "reasons": []}}
+
+    def _open(self, a, side):
+        import main
+        from fastapi import HTTPException
+        opened = []
+
+        def fake_open(*args, **kw):
+            opened.append(args)
+            return {"id": 1, "side": args[2]}
+        with mock.patch.object(main, "get_analysis", return_value=a), \
+                mock.patch.object(main.market, "last_price", side_effect=RuntimeError("stub: بی‌شبکه")), \
+                mock.patch.object(main.broker, "load_cfg", return_value={}), \
+                mock.patch.object(main.broker, "make_broker", return_value=None), \
+                mock.patch.object(main, "_portfolio_guard", return_value=None), \
+                mock.patch.object(main, "_symbol_cost", return_value=0.1), \
+                mock.patch.object(main.paper, "open_position", fake_open):
+            try:
+                return main.open_pos(main.OpenReq(symbol="SOLUSDT", tf="1h", side=side)), opened
+            except HTTPException as e:
+                return e, opened
+
+    def test_heuristic_score_is_not_reported_as_direction_model_confidence(self):
+        for side in ("long", "short"):
+            out, opened = self._open(self._an(54.4, "heuristic"), side)
+            self.assertIsInstance(out, dict, getattr(out, "detail", out))
+            self.assertEqual(len(opened), 1)
+            self.assertEqual(opened[0][2], side)
+
+    def test_calibrated_model_still_gets_the_58_percent_gate(self):
+        out, opened = self._open(self._an(54.4, "model"), "long")
+        self.assertEqual(getattr(out, "status_code", None), 409)
+        self.assertIn("اطمینانِ جهت‌یاب برای این سمت فقط 54٪", out.detail)
+        self.assertEqual(opened, [])
+
+    def test_opposite_to_setup_warning_is_kept_for_the_heuristic(self):
+        out, opened = self._open(self._an(70.8, "heuristic", trade_side="long"), "short")
+        self.assertEqual(getattr(out, "status_code", None), 409)
+        self.assertIn("خلافِ ستاپِ پیشنهادیِ فعلی", out.detail)
+        self.assertNotIn("اطمینانِ جهت‌یاب", out.detail)
+        self.assertNotIn("۵۸٪", out.detail)
+        self.assertEqual(opened, [])
+
 # ───────────────────────── UI: برچسب‌ها ─────────────────────────
 class UiLabelTests(unittest.TestCase):
     @classmethod
@@ -337,6 +406,142 @@ class UiLabelTests(unittest.TestCase):
     def test_matrix_notes_do_not_call_knn_ai(self):
         self.assertNotIn("اندیکاتورها و هوش مصنوعی", self.html)
 
+
+
+def _js_function(html, head):
+    """متنِ یک تابعِ سطحِ بالای index.html از امضا تا آکولادِ بستهٔ متناظر."""
+    i = html.index(head)
+    j = html.index("{", i + len(head) - 1)
+    depth = 0
+    for k in range(j, len(html)):
+        depth += {"{": 1, "}": -1}.get(html[k], 0)
+        if depth == 0:
+            return html[i:k + 1]
+    raise ValueError(head)
+
+
+@unittest.skipUnless(shutil.which("node"), "node نصب نیست")
+class LedgerLiveLineTests(unittest.TestCase):
+    """خطِ «عملکردِ زنده» و کاشیِ آمار از window.DEC‌اند: با رسیدنِ /api/decisions دوباره کشیده می‌شوند و
+    پیش از رسیدن یا با خطا، ادعای «هنوز معاملهٔ داوری‌شده‌ای ندارد» نمی‌کنند."""
+
+    HARNESS = r"""
+const window = {};
+let DEC_ERR = null, DEC_CTL = null, TF = "1h", STATS = 0, NEXT = null;
+const els = {};
+const $ = s => (els[s] = els[s] || {innerHTML: "", textContent: ""});
+const esc = s => String(s == null ? "" : s);
+const faN = (x, d) => String(x);
+const n100 = v => v;
+const bR = v => v + "R";
+const ABORTED = "__aborted__";
+const errMsg = (r, d) => "HTTP " + r.status;
+function renderStats(d){ STATS++; }
+function renderMatrix(){}
+function renderTable(){}
+async function jfetch(){ return NEXT(); }
+%s
+%s
+(async () => {
+  const out = {};
+  LS_FB = {note_fa: ""}; window.OV = {coins: []}; window.OV_TF = "1h";
+  renderLedgerLive(); out.loading = $("#liveStats").innerHTML;
+  NEXT = async () => ({r: {ok: true, status: 200}, d: {cells: {}, live_overall: {n: 3, win_rate: 0, avg_r: -1.56}}});
+  const s0 = STATS; await loadDecisions(); out.loaded = $("#liveStats").innerHTML; out.stats = STATS - s0;
+  window.DEC = null; NEXT = async () => { throw new Error("boom"); };
+  await loadDecisions(); out.failed = $("#liveStats").innerHTML;
+  console.log(JSON.stringify(out));
+})();
+"""
+
+    def test_live_line_follows_the_decision_ledger(self):
+        with open(os.path.join(ROOT, "bot", "static", "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        head = html[html.index("function ledgerLine(){"):html.index("async function loadLiveStats(){")]
+        js = self.HARNESS % (head, _js_function(html, "async function loadDecisions(force){"))
+        r = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        never = "هنوز معاملهٔ داوری‌شده‌ای ندارد"
+        self.assertIn("در حالِ بارگذاری", out["loading"])
+        self.assertNotIn(never, out["loading"])
+        self.assertIn("برد از 3 معامله", out["loaded"])             # همان لحظهٔ رسیدنِ DEC، نه رفرشِ ۶۰ثانیه‌ای
+        self.assertGreaterEqual(out["stats"], 1)                      # کاشیِ «عملکرد زنده (دفترِ تصمیم)» هم
+        self.assertIn("خوانده نشد (boom)", out["failed"])
+        self.assertNotIn(never, out["failed"])
+
+
+@unittest.skipUnless(shutil.which("node"), "node نصب نیست")
+class VenueNoteTests(unittest.TestCase):
+    """«حجمِ دو بازار فرق دارد» فقط وقتی کارنامه واقعاً روی بازارِ دیگری (فیوچرز) ساخته شده است."""
+
+    HARNESS = r"""
+const esc = s => String(s == null ? "" : s), faN = x => String(x), n100 = v => v, bR = v => v + "R";
+const tsFa = () => "", ymdFa = s => String(s);
+%s
+const base = {scorecard_meta: {window_from: "a", window_to: "b", cost_pct: 0.14}, live_venue: "binance-spot"};
+const out = {};
+for (const [k, v] of [["spot", "binance-spot"], ["fut", "binance-usdm-futures"], ["mix", "binance-spot، binance-usdm-futures"]])
+  out[k] = scMetaHtml(Object.assign({}, base, {scorecard_meta: Object.assign({}, base.scorecard_meta, {venue: v})}));
+console.log(JSON.stringify(out));
+"""
+
+    def test_markets_differ_note_only_for_a_different_venue(self):
+        with open(os.path.join(ROOT, "bot", "static", "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        src = _js_function(html, "function srcFa(s){") + "\n" + _js_function(html, "function scMetaHtml(D){")
+        r = subprocess.run(["node", "-e", self.HARNESS % src], capture_output=True, text=True, encoding="utf-8",
+                           timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        note = "حجمِ دو بازار فرق دارد"
+        self.assertIn("کارنامهٔ بک‌تست = کندل‌های اسپاتِ بایننس", out["spot"])
+        self.assertNotIn(note, out["spot"])
+        self.assertIn(note, out["fut"])
+        self.assertIn(note, out["mix"])
+
+
+@unittest.skipUnless(shutil.which("node"), "node نصب نیست")
+class CalibSettingsStateTests(unittest.TestCase):
+    """پنلِ تنظیمات مدلِ ناهم‌نسخه یا کهنه را «✅ آخرین ساخت» و جدولِ جاری نشان نمی‌دهد."""
+
+    HARNESS = r"""
+const els = {};
+const $ = s => (els[s] = els[s] || {innerHTML: "", textContent: ""});
+const esc = s => String(s == null ? "" : s), fmt = x => String(x);
+let D = null;
+async function fetch(){ return {json: async () => D}; }
+%s
+(async () => {
+  const out = {};
+  const base = {built_at: 1, age_hours: 2.5, events: {"1h": 10},
+                models: {"1h": {kind: "logit", n_train: 5, oos_lift: 6.5, oos_brier: 0.2, by_setup: {}}}};
+  for (const [k, extra] of [["ok", {version: 23, required_version: 23, stale: false}],
+                            ["mismatch", {version: 22, required_version: 23, stale: true}],
+                            ["old", {version: 23, required_version: 23, stale: true}],
+                            ["building", {version: 22, required_version: 23, stale: true, building: true,
+                                          progress: "بازآموزی در پروسهٔ جدا"}]]) {
+    D = Object.assign({}, base, extra); await loadCalib(); out[k] = $("#calStatus").innerHTML;
+  }
+  console.log(JSON.stringify(out));
+})();
+"""
+
+    def test_stale_or_mismatched_model_is_not_shown_as_current(self):
+        with open(os.path.join(ROOT, "bot", "static", "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        js = self.HARNESS % _js_function(html, "async function loadCalib(){")
+        r = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertIn("✅ آخرین ساخت", out["ok"])
+        for k in ("mismatch", "old", "building"):
+            self.assertNotIn("✅", out[k], k)
+        self.assertIn("v22", out["mismatch"])
+        self.assertIn("استفاده نمی‌شود", out["mismatch"])
+        self.assertIn("کهنه", out["old"])
+        self.assertIn("در حال ساخت", out["building"])
+        self.assertNotIn("undefined", out["building"])
 
 if __name__ == "__main__":
     unittest.main()

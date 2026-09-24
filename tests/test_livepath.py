@@ -308,6 +308,19 @@ class EdgeBookOrderTests(_Shadow, unittest.TestCase):
         self.assertIn("rule", shadow.stats("1h")["by_setup"])
         self.assertNotIn("zx", shadow.stats("1h")["by_setup"])
 
+    def test_rule_trades_never_form_a_pocket(self):
+        # انتخابِ صریح (نه اثرِ جانبیِ تغییرِ کلید): سری‌ای یکسان زیرِ «zx» جیب می‌شود و زیرِ «rule» نه
+        now = int(time.time() * 1000)
+        rows = [self._resolved(now - (60 - i) * 11 * H, 0.5, setup=s)           # ~۲۷ روز ⇒ بلوک‌های کافی
+                for s in (None, "zx") for i in range(60)]
+        for i, r in enumerate(rows):
+            r["id"] = f"r{i}"
+        shadow._save({"pending": [], "resolved": rows})
+        self.assertNotIn("rule", edge_book.ALLOWED_SETUPS)
+        pockets, _susp, _h = edge_book.refresh(force=True)
+        self.assertIn("1h|zx|long", pockets)
+        self.assertNotIn("1h|rule|long", pockets)
+
 
 class ShadowDedupTests(_Shadow, unittest.TestCase):
     def test_dedup_looks_at_the_newest_resolved_rows(self):
@@ -581,6 +594,12 @@ class DecisionSchedulerTests(unittest.TestCase):
         self.assertEqual(main._expected_bar("1d", self.B5), (self.DAY - 86400) * 1000)
         self.assertEqual(main._expected_bar("5m", self.B5), (self.B5 - 300) * 1000)
 
+    def test_scheduler_bar_and_market_state_key_are_one_definition(self):
+        # چکِ کهنگیِ زمان‌بند و کلیدِ کشِ حالتِ بازار/طلا (``_last_closed_open``) باید یک کندل را بگویند
+        for tf in ("5m", "15m", "1h", "4h", "1d"):
+            for t in (self.B5, self.B5 + 20, self.B5 + 299, self.DAY, self.DAY - 1, self.DAY + 86399):
+                self.assertEqual(main._expected_bar(tf, t), main._last_closed_open(tf, t), (tf, t))
+
 
 # ───────────────────────── LP-1: بازخوردِ زندهٔ بی‌منبع صریحاً «غیرفعال» ─────────────────────────
 class LiveFeedbackIsHonestTests(_Shadow, unittest.TestCase):
@@ -599,6 +618,13 @@ class LiveFeedbackIsHonestTests(_Shadow, unittest.TestCase):
         self.assertEqual(main._suspended_setups(), {})
         self.assertEqual(main._suspended_tfs(), {})
         self.assertEqual(main._live_edge_book(), ({}, {}))
+
+    def test_matrix_note_matches_the_feedback_switch(self):
+        # یادداشتِ ماتریس نباید از «پیشنهادهای ستاپِ معلق‌شده» بگوید وقتی تعلیق خاموش است؛
+        # روشن‌کردنِ دوبارهٔ بازخورد این تست را می‌شکند تا متن هم‌زمان اصلاح شود
+        off = "تعلیقِ خودکارِ ستاپ‌ها غیرفعال است" in decision.NOTE_FA
+        self.assertEqual(off, not main.LIVE_FEEDBACK_ACTIVE)
+        self.assertNotIn("ستاپِ معلق‌شده می‌آیند", decision.NOTE_FA)
 
     def test_live_stats_says_inactive_and_never_claims_a_halt(self):
         with mock.patch.object(shadow, "resolve", return_value=0), \

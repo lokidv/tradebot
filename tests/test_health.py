@@ -38,6 +38,28 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(h["status"], "red")
         self.assertTrue(any("نسخهٔ مدل" in p for p in h["problems"]))
 
+    def test_rebuild_subprocess_is_reported_as_building(self):
+        # بازآموزی در پروسهٔ جداست؛ calib._state همین پروسه «building: false» می‌گوید
+        class _Proc:
+            def __init__(self, rc):
+                self.rc = rc
+
+            def poll(self):
+                return self.rc
+        stale = dict(self.OK_CALIB, version=22, required_version=23, stale=True)
+        for rc, want in ((None, True), (0, False)):
+            with mock.patch.dict(main._rebuild_proc, {"p": _Proc(rc), "started": 1.0}), \
+                    mock.patch.object(main.calib, "status", return_value=dict(stale)):
+                st = main.calib_status()
+                self.assertIs(st["building"], want)
+                self.assertEqual(main.version_info()["model_building"], want)
+            if want:
+                self.assertTrue(st["progress"])
+                self.assertEqual(st["rebuild_started"], 1.0)
+        with mock.patch.dict(main._rebuild_proc, {"p": _Proc(None), "started": 1.0}), \
+                mock.patch.object(main.calib, "status", return_value=dict(stale)):
+            self.assertEqual(main.calib_rebuild()["ok"], False)                # دومی شروع نمی‌شود
+
     def test_stalled_candidate_logging_is_red(self):
         stale = main.time.time() - 10 * 86400
         h = self._health(counts={"candidates": 3, "resolved": 3, "open": 0,

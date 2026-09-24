@@ -34,6 +34,9 @@ MIN_LCB_B = -0.25
 MIN_RECENT_B = 0.0
 MIN_HALF1_B = -0.35
 SIZE_HINT = {"A": 1.0, "B": 0.65}
+# فقط ستاپ‌های رویدادیِ تمیز جیب می‌شوند. معاملهٔ قاعدهٔ z/رأی (کلیدِ «rule»، shadow.RULE_SETUP) عمداً بیرون است:
+# قبلاً به‌اشتباه «zx» ثبت می‌شد و جیبِ zx را آلوده می‌کرد. پیش از روشن‌کردنِ دوبارهٔ main.LIVE_FEEDBACK_ACTIVE
+# آگاهانه تصمیم بگیرید که «rule» جیب بشود یا نه (تستِ test_livepath این انتخاب را سنجاق کرده است).
 ALLOWED_SETUPS = ("zx", "sq")
 ALLOWED_TFS = ("15m", "1h", "4h")
 BLOCKED_TFS = ("1d",)

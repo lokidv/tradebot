@@ -93,8 +93,9 @@ SIDE_FA = {"long": "لانگ (خرید)", "short": "شورت (فروش)"}
 NOTE_FA = ("این‌ها تحلیلِ موتورِ چندشاخصه + رأیِ الگوی مشابه (kNN) هستند، نه لبهٔ تأییدشده. بازپخشِ دوسالهٔ همین قاعده "
            "پس از هزینهٔ رفت‌وبرگشتِ ۰٫۱۴٪ در 15m و 1h روی هر پنج ارز زیان‌ده است، در 4h حدوداً سربه‌سر است، "
            "و در 1d تعدادِ معامله‌ها برای قضاوت کافی نیست. در 5m حدضرر از همه کوچک‌تر است، پس همین هزینه سهمِ "
-           "بزرگ‌تری از هر R را می‌خورد. پیشنهادهای زنده‌ای که از ستاپِ معلق‌شده می‌آیند در این بازپخش پوشش "
-           "داده نشده‌اند؛ «سیاستِ انتخابِ عمل» هرگز جای تصمیمِ قاعده را نمی‌گیرد و فقط جدا نشان داده می‌شود. "
+           "بزرگ‌تری از هر R را می‌خورد. تعلیقِ خودکارِ ستاپ‌ها غیرفعال است، پس پیشنهادِ زنده از همان دو لایهٔ "
+           "این بازپخش (ستاپِ رویدادی، وگرنه z/رأی) می‌آید؛ «سیاستِ انتخابِ عمل» هرگز جای تصمیمِ قاعده را نمی‌گیرد "
+           "و فقط جدا نشان داده می‌شود. "
            "گونهٔ «ورودِ میکر» (۰٫۱۰٪) فقط برای "
            "مقایسه است و پرشدنِ سفارشِ محدود را تضمین نمی‌کند. هر پیشنهاد در دفترِ رو به جلو ثبت "
            "و داوری می‌شود؛ مجوزِ معامله فقط از gates.json می‌آید.")
@@ -296,7 +297,7 @@ def _warnings(a, tr, side, basis):
     """هشدارها و مسدودیت‌های موتور که جدول نباید پنهان کند — فارسی، بی‌تکرار، حداکثر ۴ تا.
 
     ``analyze`` برای هر پیشنهاد یک ``trade.status`` می‌گذارد؛ فقط وضعیت‌های مسدود/معلق/رد و
-    احتیاط‌های مشخص (روزانهٔ زیان‌ده، سیاستِ مردود، چاقوی سقوط، جهت‌یابِ مخالف) گزارش می‌شوند.
+    احتیاط‌های مشخص (سیاستِ مردود، چاقوی سقوط، جهت‌یابِ مخالف) گزارش می‌شوند.
     """
     out = []
 
@@ -1353,6 +1354,18 @@ def _taken_by_cell(by, results):
     return cells
 
 
+def _in_period(r, start):
+    """دورهٔ مقایسه با کندلِ سیگنال تعریف می‌شود، برای گونه و قاعده یکسان: فقط کندلی که در t0 یا پس از آن بسته شده.
+
+    نخستین دورِ ثبتِ گونه‌ها کندل‌هایی را هم می‌نویسد که دفترِ اصلی پیش از t0 ثبت کرده بود (گاردِ کهنگی تا ۳ کندل)؛
+    اگر فقط ``recorded_at`` ملاک باشد آن معامله‌ها در جریانِ گونه می‌آیند و در جریانِ قاعده نه، و «یک معامله در هر
+    لحظه» سیگنال‌های بعدی را هم در دو جریان متفاوت می‌کند. کندلی که پس از t0 بسته شود فقط پس از t0 ثبت می‌شود،
+    پس این همان «ثبت‌شده از t0 به بعد»ِ پیش‌ثبت است — بی‌مرزِ نامتقارن.
+    """
+    ts, tf = _int(r.get("candle_ts")), r.get("tf")
+    return ts is not None and tf in TF_MINUTES and ts + TF_MINUTES[tf] * 60000 >= start * 1000
+
+
 def _variant_streams(vrows, mrows, start):
     """معامله‌های شمرده‌شدهٔ هر گونه و قاعده (یک معامله در هر لحظه، هر ارز × تایم‌فریم جدا) از t0 به بعد."""
     v_opens, v_results = _index(vrows)
@@ -1361,13 +1374,13 @@ def _variant_streams(vrows, mrows, start):
     for v in VARIANTS:
         by = {}
         for op in v_opens.values():
-            if op.get("variant") == v:
+            if op.get("variant") == v and _in_period(op, start):
                 by.setdefault((op["sym"], op["tf"]), []).append(op)
         out[v] = _taken_by_cell(by, v_results)
     rule_by = {}
     for op in m_opens.values():
         rec = _num(op.get("recorded_at"))
-        if _basis_of(op) != "policy" and rec is not None and rec >= start:
+        if _basis_of(op) != "policy" and rec is not None and rec >= start and _in_period(op, start):
             rule_by.setdefault((op["sym"], op["tf"]), []).append(op)
     out["rule"] = _taken_by_cell(rule_by, m_results)
     return out
@@ -1383,11 +1396,11 @@ def _pool(cells, tfs):
     return trades, open_n
 
 
-def _differs(vrows, variant):
-    """کندل‌های متفاوت با قاعده: گونه معامله و قاعده جهتِ دیگر/صبر، یا گونه صبر و قاعده معامله."""
+def _differs(vrows, variant, start):
+    """کندل‌های متفاوت با قاعده در همان دورهٔ مقایسه: گونه معامله و قاعده جهتِ دیگر/صبر، یا گونه صبر و قاعده معامله."""
     out = set()
     for r in vrows:
-        if r.get("variant") != variant:
+        if r.get("variant") != variant or not _in_period(r, start):
             continue
         if r.get("kind") == "skip" or (r.get("kind") == "open" and r.get("side") != r.get("rule_side")):
             out.add((r.get("sym"), r.get("tf"), _int(r.get("candle_ts"))))
@@ -1428,7 +1441,7 @@ def judge_variants(now=None):
         rt, _ = _pool(st["rule"], rule["tfs"])
         if len(vt) < rule.get("min_trades", 0):
             continue                                # z_only: تا ۳۰۰ معامله جمع شود
-        differs = len(_differs(vrows, v))
+        differs = len(_differs(vrows, v, start))
         row = {"kind": "judgement", "variant": v, "at": round(now, 3), "t0": start, "weeks": round(weeks, 2),
                "tfs": list(rule["tfs"]), "differs": differs, "prereg": VARIANTS_PREREG,
                "n_boot": BOOT_N, "seed": BOOT_SEED, "alpha": BOOT_ALPHA}
@@ -1478,7 +1491,7 @@ def variant_stats(now=None):
             "key": v, "fa": VARIANT_FA[v], "judge_tfs": list(rule["tfs"]),
             "pooled": {"variant": dict(a, open=vo), "rule": b, "diff": _mean_diff(a, b)},
             "tfs": per_tf,
-            "differs": len(_differs(vrows, v)),
+            "differs": len(_differs(vrows, v, start)) if start is not None else 0,
             "progress": {"weeks": round(weeks, 2) if weeks is not None else None,
                          "min_weeks": rule["min_weeks"], "trades": a["n"],
                          "min_trades": rule.get("min_trades"), "min_differs": rule.get("min_differs")},
