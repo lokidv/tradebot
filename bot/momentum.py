@@ -288,6 +288,12 @@ def snapshot(force=False, fetch=None, now_ms=None):
         try:
             k = fetch(sym)
             assets[sym] = state(k["t"], k["c"], now_ms)
+            assets[sym]["closes"] = [[int(a), float(b)] for a, b in zip(k["t"][-70:], k["c"][-70:])]
+            try:
+                bar = market.current_bar(sym, "1d")
+                assets[sym]["live"] = {"price": float(bar["c"]), "day_open": float(bar["o"]), "t": int(bar["t"])}
+            except Exception:  # noqa: BLE001, silent-ok — بی‌قیمتِ زنده، آخرین بسته نمایش داده می‌شود
+                assets[sym]["live"] = None
             try:
                 record(sym, k["t"], k["c"])
             except OSError:

@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>میز تصمیم — BTC و ETH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lalezar&family=Vazirmatn:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0F1720; --slate:#172431; --slate2:#1E2F3F; --rule:#2A3E51;
+    --chart:#8FA6B8; --paper:#E8EEF2;
+    --kelp:#43C59E; --kelp-t:rgba(67,197,158,.14);
+    --buoy:#F2A541; --buoy-t:rgba(242,165,65,.14);
+    --flare:#E5616E;
+    --display:"Lalezar","Vazirmatn",Tahoma,sans-serif;
+    --body:"Vazirmatn",Tahoma,sans-serif;
+    --mono:"IBM Plex Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--ink);color:var(--paper);font-family:var(--body);font-size:15px;line-height:1.7}
+  a{color:inherit}
+  button{font-family:var(--body);cursor:pointer}
+  :focus-visible{outline:2px solid var(--buoy);outline-offset:2px}
+  .n{font-family:var(--mono);direction:ltr;unicode-bidi:embed;font-feature-settings:"tnum"}
+  .dim{color:var(--chart)}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+
+  header{border-bottom:1px solid var(--rule);position:sticky;top:0;background:rgba(15,23,32,.94);backdrop-filter:blur(6px);z-index:5}
+  .bar{display:flex;align-items:center;gap:18px;justify-content:space-between;padding:12px 0;flex-wrap:wrap}
+  .brand{font-weight:700;letter-spacing:-.01em}
+  .brand small{display:block;font-weight:400;color:var(--chart);font-size:12px}
+  nav{display:flex;gap:4px;flex-wrap:wrap}
+  nav button,nav a{background:none;border:0;color:var(--chart);padding:6px 12px;border-radius:8px;font-size:14px;text-decoration:none}
+  nav button[aria-selected="true"]{color:var(--paper);background:var(--slate2)}
+  nav a{border:1px dashed var(--rule)}
+
+  main{padding:26px 0 60px}
+  .page[hidden]{display:none!important}
+  h2{font-size:15px;font-weight:700;margin:34px 0 12px;color:var(--chart);letter-spacing:.02em}
+  .lede{max-width:760px;color:var(--chart);margin:0 0 22px}
+  .lede b{color:var(--paper);font-weight:500}
+
+  /* ── کارتِ تصمیم ── */
+  .decks{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .deck{background:var(--slate);border:1px solid var(--rule);border-radius:14px;padding:20px 22px 18px;position:relative;overflow:hidden}
+  .deck.in{border-top:3px solid var(--kelp)} .deck.out{border-top:3px solid var(--buoy)}
+  .deck .asset{display:flex;justify-content:space-between;align-items:baseline}
+  .deck .asset b{font-size:18px}
+  .deck .price{font-size:17px}
+  .verdict{font-family:var(--display);font-size:64px;line-height:1.05;margin:10px 0 2px;letter-spacing:0}
+  .in .verdict{color:var(--kelp)} .out .verdict{color:var(--buoy)}
+  .since{color:var(--chart);font-size:13px}
+  .chart{margin:14px -4px 6px;width:calc(100% + 8px);height:150px;display:block}
+  .legend{display:flex;justify-content:space-between;font-size:12px;color:var(--chart);gap:10px;flex-wrap:wrap}
+  .next{margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--ink);border:1px solid var(--rule);font-size:14px}
+  .next b.k{color:var(--kelp)} .next b.o{color:var(--buoy)}
+  .facts{display:grid;grid-template-columns:1fr 1fr;gap:6px 18px;margin-top:14px;font-size:13px}
+  .facts div span{display:block;color:var(--chart);font-size:12px}
+  .act{display:flex;align-items:center;gap:10px;margin-top:16px;flex-wrap:wrap}
+  .btn{border:0;border-radius:9px;padding:9px 16px;font-size:14px;font-weight:700}
+  .btn.go{background:var(--kelp);color:#08231a}
+  .btn.ghost{background:none;border:1px solid var(--rule);color:var(--paper);font-weight:500}
+  .btn:disabled{opacity:.5;cursor:default}
+  .tag{font-size:12px;color:var(--chart);border:1px solid var(--rule);border-radius:20px;padding:2px 10px}
+
+  .strip{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .cell{background:var(--slate);border:1px solid var(--rule);border-radius:12px;padding:14px 16px;font-size:14px}
+  .cell .h{font-size:12px;color:var(--chart);margin-bottom:4px}
+  .cell .v{font-size:17px}
+  .ok{color:var(--kelp)} .warn{color:var(--buoy)} .bad{color:var(--flare)}
+
+  .note{border-inline-start:3px solid var(--buoy);background:var(--slate);border-radius:0 10px 10px 0;padding:12px 16px;font-size:13.5px;color:var(--chart);max-width:900px}
+  .note b{color:var(--paper);font-weight:500}
+
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{font-weight:500;color:var(--chart);font-size:12px;text-align:start;padding:8px 10px;border-bottom:1px solid var(--rule)}
+  td{padding:10px;border-bottom:1px solid var(--rule);vertical-align:middle}
+  .scroll{overflow-x:auto;background:var(--slate);border:1px solid var(--rule);border-radius:12px}
+  input{background:var(--ink);border:1px solid var(--rule);color:var(--paper);border-radius:8px;padding:6px 10px;font-family:var(--body);font-size:14px}
+  input.n{width:90px}
+  label{font-size:13px;color:var(--chart)}
+  .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:10px 0}
+  .empty{padding:26px;text-align:center;color:var(--chart)}
+  #toast{position:fixed;bottom:18px;inset-inline-start:18px;background:var(--slate2);border:1px solid var(--rule);padding:10px 16px;border-radius:10px;max-width:420px;opacity:0;transition:opacity .2s;pointer-events:none}
+  #toast.on{opacity:1}
+
+  @media (max-width:780px){
+    .decks,.strip{grid-template-columns:1fr}
+    .verdict{font-size:52px}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header><div class="wrap bar">
+  <div class="brand">میز تصمیم <small>BTC و ETH · هفته‌ای یک تصمیم</small></div>
+  <nav role="tablist">
+    <button role="tab" aria-selected="true" data-p="week">این هفته</button>
+    <button role="tab" aria-selected="false" data-p="daily">سیگنال‌های روزانه</button>
+    <button role="tab" aria-selected="false" data-p="demo">دمو و کارنامه</button>
+    <button role="tab" aria-selected="false" data-p="settings">تنظیمات</button>
+    <a href="/lab" title="ابزارهای پژوهش و جدول ۲۰۰ ارز">آزمایشگاه ↗</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <!-- ═══ این هفته ═══ -->
+  <section class="page" id="p-week">
+    <p class="lede">قاعده یک جمله است: <b>هر دوشنبه ساعتِ ۳:۳۰ بامدادِ تهران، اگر قیمتِ بسته‌شدنِ یکشنبه بالاتر از ۲۸ روز قبلش باشد، آن هفته نگه دار؛ وگرنه نقد بمان.</b>
+      بی‌اهرم، بی‌حدضرر، بی‌نگاهِ روزانه. نمودار دقیقاً همین را نشان می‌دهد: خطِ افقی قیمتِ ۲۸ روز پیش است.</p>
+    <div class="decks" id="decks"><div class="empty">در حالِ خواندنِ قیمت‌ها…</div></div>
+
+    <h2>کارنامهٔ زنده (از دوشنبه ۶ مهر)</h2>
+    <div class="strip" id="forward"></div>
+
+    <h2>زمینهٔ بازار — فقط برای اطلاع، در تصمیم دخالت ندارد</h2>
+    <div class="strip" id="context"></div>
+
+    <h2>کارمزدِ صرافیِ شما چقدر از سود کم می‌کند</h2>
+    <div class="cell" style="max-width:760px">
+      <div class="row"><label for="fee">کارمزدِ هر خرید یا فروش (٪)</label>
+        <input id="fee" class="n" type="number" step="0.05" min="0" value="0.2" inputmode="decimal"></div>
+      <div id="feeOut" class="dim"></div>
+    </div>
+
+    <h2>چه چیزی را باید بدانید</h2>
+    <div class="note" id="caveat"></div>
+  </section>
+
+  <!-- ═══ سیگنال‌های روزانه ═══ -->
+  <section class="page" id="p-daily" hidden>
+    <p class="lede">شکستِ سقفِ ۲۰روزه روی ۵۰ ارزِ بزرگ. <b id="dailyVerdict"></b></p>
+    <div class="scroll"><table><thead><tr><th>ارز</th><th>وضعیت</th><th>قیمتِ فعلی</th><th>حدضرر</th><th></th></tr></thead>
+      <tbody id="dailyRows"><tr><td colspan="5" class="empty">در حالِ خواندنِ قیمتِ ۵۰ ارز — بارِ اول تا یک دقیقه طول می‌کشد…</td></tr></tbody></table></div>
+  </section>
+
+  <!-- ═══ دمو و کارنامه ═══ -->
+  <section class="page" id="p-demo" hidden>
+    <div class="strip" id="wallet"></div>
+    <h2>پوزیشن‌های باز</h2>
+    <div class="scroll"><table><thead><tr><th>ارز</th><th>روش</th><th>ورود</th><th>قیمتِ فعلی</th><th>سود/زیان</th><th></th></tr></thead>
+      <tbody id="openRows"></tbody></table></div>
+    <h2>معامله‌های بسته</h2>
+    <div class="scroll"><table><thead><tr><th>ارز</th><th>روش</th><th>ورود → خروج</th><th>سود/زیان</th><th>دلیل</th></tr></thead>
+      <tbody id="closedRows"></tbody></table></div>
+  </section>
+
+  <!-- ═══ تنظیمات ═══ -->
+  <section class="page" id="p-settings" hidden>
+    <h2>سهمِ هر ارز در دمو</h2>
+    <div class="row"><label for="alloc">درصدی از موجودیِ دمو که با «خرید در دمو» وارد می‌شود</label>
+      <input id="alloc" class="n" type="number" min="5" max="50" step="5" value="20"> ٪</div>
+    <h2>اعلانِ تلگرام (اختیاری)</h2>
+    <p class="lede">هر دوشنبه پس از تصمیم، یک پیام: «در بازار» یا «نقد» برای BTC و ETH. توکن را از <b>@BotFather</b> بگیرید و شناسهٔ چتِ خودتان را وارد کنید. توکن فقط روی همین سیستم می‌ماند.</p>
+    <div class="row"><label for="tgToken">توکنِ ربات</label><input id="tgToken" style="width:320px" placeholder="123456:ABC…" autocomplete="off"></div>
+    <div class="row"><label for="tgChat">شناسهٔ چت</label><input id="tgChat" class="n" style="width:160px"></div>
+    <div class="row"><label><input id="tgOn" type="checkbox"> ارسال روشن باشد</label></div>
+    <div class="row"><button class="btn go" id="tgSave">ذخیرهٔ تنظیماتِ اعلان</button>
+      <button class="btn ghost" id="tgTest">فرستادنِ پیامِ آزمایشی</button> <span id="tgState" class="dim"></span></div>
+  </section>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const coin = s => s.replace("USDT", "");
+const fa = (x, d = 0) => x == null || isNaN(x) ? "—" : Number(x).toLocaleString("fa-IR", {maximumFractionDigits: d});
+const px = x => x == null ? "—" : Number(x).toLocaleString("en-US", {maximumFractionDigits: x >= 100 ? 2 : x >= 1 ? 4 : 6});
+const pct = (x, d = 1) => x == null ? "—" : (x > 0 ? "+" : "") + Number(x).toFixed(d) + "٪";
+const day = ms => new Date(ms).toLocaleDateString("fa-IR", {timeZone: "Asia/Tehran", day: "numeric", month: "long"});
+function toast(msg){ const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 4200); }
+function store(k, v){ try{ if(v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); }catch(e){ return null; } }
+async function getJSON(u, opt){ const r = await fetch(u, opt); const j = await r.json().catch(() => ({})); if(!r.ok) throw new Error(j.detail || "خطا"); return j; }
+
+/* ── تب‌ها ── */
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.setAttribute("aria-selected", x === b));
+  document.querySelectorAll(".page").forEach(p => p.hidden = p.id !== "p-" + b.dataset.p);
+  ({week: loadWeek, daily: loadDaily, demo: loadDemo, settings: loadSettings})[b.dataset.p]();
+});
+
+/* ── نمودارِ امضا: قیمت در برابرِ خطِ ۲۸ روز پیش ── */
+function chartSVG(closes, live, threshold, id){
+  const pts = closes.slice(-60).map(([t, c]) => [t, c]);
+  if(live) pts.push([live.t + 86400000, live.price]);
+  if(pts.length < 2) return "";
+  const W = 520, H = 150, P = 6;
+  const ys = pts.map(p => p[1]).concat([threshold]);
+  const lo = Math.min(...ys), hi = Math.max(...ys), span = hi - lo || 1;
+  const X = i => P + i / (pts.length - 1) * (W - 2 * P);
+  const Y = v => H - P - (v - lo) / span * (H - 2 * P);
+  const line = pts.map((p, i) => `${X(i).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(" ");
+  const area = `${X(0)},${Y(threshold)} ${line} ${X(pts.length - 1)},${Y(threshold)}`;
+  const ty = Y(threshold).toFixed(1);
+  const ref = pts.length - 29 >= 0 ? pts.length - 29 : null;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="قیمتِ ۶۰ روزِ اخیر در برابرِ قیمتِ ۲۸ روز پیش">
+    <defs>
+      <clipPath id="up${id}"><rect x="0" y="0" width="${W}" height="${ty}"/></clipPath>
+      <clipPath id="dn${id}"><rect x="0" y="${ty}" width="${W}" height="${H}"/></clipPath>
+    </defs>
+    <polygon points="${area}" fill="var(--kelp-t)" clip-path="url(#up${id})"/>
+    <polygon points="${area}" fill="var(--buoy-t)" clip-path="url(#dn${id})"/>
+    <line x1="0" x2="${W}" y1="${ty}" y2="${ty}" stroke="var(--chart)" stroke-dasharray="5 5" stroke-width="1" vector-effect="non-scaling-stroke"/>
+    <polyline points="${line}" fill="none" stroke="var(--paper)" stroke-width="1.8" vector-effect="non-scaling-stroke"/>
+    ${ref !== null ? `<circle cx="${X(ref)}" cy="${Y(pts[ref][1])}" r="3.5" fill="var(--chart)"/>` : ""}
+    <circle cx="${X(pts.length - 1)}" cy="${Y(pts[pts.length - 1][1])}" r="4" fill="${pts[pts.length - 1][1] > threshold ? "var(--kelp)" : "var(--buoy)"}"/>
+  </svg>`;
+}
+
+function until(ms){
+  const s = Math.max(0, (ms - Date.now()) / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
+  return d ? `${fa(d)} روز و ${fa(h)} ساعت دیگر` : `${fa(h)} ساعت دیگر`;
+}
+
+/* ── این هفته ── */
+let MOM = null;
+async function loadWeek(){
+  try{ MOM = await getJSON("/api/momentum"); }catch(e){ $("#decks").innerHTML = `<div class="empty">قیمت‌ها خوانده نشد: ${e.message}. اتصالِ اینترنت را بررسی کنید و صفحه را تازه کنید.</div>`; return; }
+  const d = MOM, ev = d.evidence || {};
+  $("#decks").innerHTML = ["BTCUSDT", "ETHUSDT"].map((sym, k) => {
+    const a = (d.assets || {})[sym];
+    if(!a || !a.current) return `<div class="deck"><div class="empty">دادهٔ ${coin(sym)} نرسید.</div></div>`;
+    const cur = a.current, pv = a.provisional_next || {}, live = a.live;
+    const inm = cur.in_market, open = (d.demo_open || []).includes(sym);
+    const price = live ? live.price : cur.sunday_close;
+    const thr = pv.threshold || cur.ref_close;
+    const conf = (ev[sym] || {}).confirmation || {}, s = conf.strategy || {}, b = conf.buy_and_hold || {};
+    const gap = price && thr ? (price / thr - 1) * 100 : null;
+    return `<article class="deck ${inm ? "in" : "out"}" aria-label="${coin(sym)}">
+      <div class="asset"><b>${coin(sym)}</b><span class="price n">${px(price)}</span></div>
+      <div class="verdict">${inm ? "در بازار" : "نقد"}</div>
+      <div class="since">${inm ? "نگه‌داری" : "بیرون"} از دوشنبه ${a.in_market_since_ms ? day(a.in_market_since_ms) : "—"} ·
+        بستهٔ یکشنبه <span class="n">${px(cur.sunday_close)}</span> در برابرِ <span class="n">${px(cur.ref_close)}</span> (${pct(cur.change_pct)})</div>
+      ${chartSVG(a.closes || [], live, thr, k)}
+      <div class="legend"><span>— — قیمتِ ۲۸ روز پیش: <span class="n">${px(thr)}</span></span><span>قیمتِ الان ${pct(gap)} نسبت به آن</span></div>
+      <div class="next">دوشنبهٔ بعد (${until(a.next_decision_ms)}): اگر هفته همین الان بسته شود →
+        <b class="${pv.in_market ? "k" : "o"}">${pv.in_market ? "در بازار" : "نقد"}</b></div>
+      <div class="facts">
+        <div><span>این قاعده، نیمهٔ ۲۰۲۳ تا ۲۰۲۶</span>${fa(s.cagr_pct)}٪ در سال · افتِ ${fa(s.max_drawdown_pct)}٪</div>
+        <div><span>فقط نگه‌داری، همان دوره</span>${fa(b.cagr_pct)}٪ در سال · افتِ ${fa(b.max_drawdown_pct)}٪</div>
+      </div>
+      <div class="act">
+        ${!inm ? `<span class="tag">این هفته خریدی در کار نیست</span>`
+          : open ? `<span class="tag">در دمو باز است — خروج با تصمیمِ دوشنبه</span>`
+          : `<button class="btn go" onclick="buyMom('${sym}')">خرید در دمو</button><span class="dim" style="font-size:12px">${fa(+store("momAlloc") || 20)}٪ موجودیِ دمو</span>`}
+      </div>
+    </article>`;
+  }).join("");
+  renderForward(); renderContext(); renderFee();
+  $("#caveat").innerHTML = `<b>این روش اثبات‌نشده است.</b> در هر دو نیمهٔ داده (۲۰۲۱–۲۰۲۳ و ۲۰۲۳–۲۰۲۶) روی BTC و ETH مثبت بود، ولی آستانهٔ آماریِ
+    ازپیش‌ثبت‌شده را نگذراند (BTC p=${fa((ev.BTCUSDT || {}).p_adj, 2)}). یک مدلِ ترکیبیِ ازپیش‌تعریف‌شده هم از آن ضعیف‌تر بود — پس بخشی از نتیجه ممکن است شانس باشد.
+    <b>مزیتش دوری از بازارِ نزولی است</b> (کلِ ۲۰۲۲ بیرون ماند)، نه سودِ بیشتر در بازارِ صعودی؛ در بازارِ بی‌جهت چند ورود و خروجِ بی‌حاصل دارد و در بازارِ نزولی فقط نقد می‌ماند.
+    پیش از پولِ واقعی: ۱۲ هفته کارنامهٔ زنده. بی‌اهرم، و فقط با مبلغی که از دست دادنش زندگی‌تان را مختل نکند. این توصیهٔ سرمایه‌گذاری نیست.`;
+}
+
+function renderForward(){
+  const f = MOM.forward || {};
+  const lab = {IN_PROGRESS: ["در جریان", "warn"], GO_SMALL: ["مجاز — فقط با مبلغِ کم", "ok"], NO_GO: ["رد — برای پولِ واقعی نه", "bad"], BRAKE: ["ترمز — نمایش متوقف", "bad"]};
+  $("#forward").innerHTML = ["BTCUSDT", "ETHUSDT"].map(sym => {
+    const x = f[sym] || {}, [t, c] = lab[x.verdict] || ["—", "dim"];
+    return `<div class="cell"><div class="h">${coin(sym)} · ${fa(x.weeks)} از ۱۲ هفته</div>
+      <div class="v ${c}">${t}</div>
+      <div class="dim" style="font-size:13px">قاعده ${pct(x.model_return_pct)} · نگه‌داری ${pct(x.buy_hold_return_pct)} · افت ${fa(x.model_max_dd_pct, 1)}٪ در برابرِ ${fa(x.buy_hold_max_dd_pct, 1)}٪</div></div>`;
+  }).join("") + `<div class="cell"><div class="h">معیارِ ازپیش‌ثبت‌شده برای پولِ واقعی</div>
+    <div style="font-size:13px">پس از ۱۲ هفته: بازده حداکثر ۵ واحد کمتر از نگه‌داری <b>و</b> افتِ کمتر از نگه‌داری. اگر افتِ زنده از ۱٫۵ برابرِ بدترین افتِ آزمون بگذرد، ترمز.</div></div>`;
+}
+
+function renderContext(){
+  const c = MOM.context || {};
+  const sc = c.stablecoin, dx = c.dollar;
+  $("#context").innerHTML =
+    `<div class="cell"><div class="h">عرضهٔ استیبل‌کوین‌ها (۳۰ روز)</div>
+      <div class="v ${sc ? (sc.growing ? "ok" : "warn") : "dim"}">${sc ? (sc.growing ? "رو به رشد" : "رو به کاهش") + " " + pct(sc.change_30d_pct) : "—"}</div>
+      <div class="dim" style="font-size:12px">${sc ? fa(sc.supply_bn) + " میلیارد دلار" : "داده نرسید"}</div></div>
+    <div class="cell"><div class="h">شاخصِ دلار در برابرِ میانگینِ ۱۰۰ روزه</div>
+      <div class="v ${dx ? (dx.weak ? "ok" : "warn") : "dim"}">${dx ? (dx.weak ? "دلار ضعیف" : "دلار قوی") : "—"}</div>
+      <div class="dim" style="font-size:12px">${dx ? `<span class="n">${dx.value.toFixed(2)}</span> در برابرِ <span class="n">${dx.avg100}</span> · با یک هفته تأخیرِ انتشار` : "داده نرسید"}</div></div>
+    <div class="cell"><div class="h">چرا در تصمیم نیستند</div>
+      <div style="font-size:13px">هر دو در آزمونِ ۲۰۲۱–۲۰۲۶ «سازگار» بودند (دلارِ ضعیف افتِ BTC را از ۵۳٪ به ۳۵٪ رسانده بود) ولی از آستانهٔ آماری نگذشتند. فقط زمینه‌اند.</div></div>`;
+}
+
+function renderFee(){
+  const t = (MOM && MOM.costs && MOM.costs.assets) || {};
+  const fee = Math.max(0, parseFloat($("#fee").value) || 0);
+  const interp = (rows) => {
+    const ks = Object.keys(rows).filter(k => !isNaN(parseFloat(k))).map(parseFloat).sort((a, b) => a - b);
+    let lo = ks[0], hi = ks[ks.length - 1];
+    for(const k of ks){ if(k <= fee) lo = k; if(k >= fee){ hi = k; break; } }
+    const a = rows[String(lo)].cagr_pct, b = rows[String(hi)].cagr_pct;
+    return hi === lo ? a : a + (b - a) * (fee - lo) / (hi - lo);
+  };
+  $("#feeOut").innerHTML = ["BTCUSDT", "ETHUSDT"].map(sym => {
+    const r = t[sym]; if(!r) return "";
+    return `<div>${coin(sym)}: حدودِ ${fa(r.switches_per_year)} خرید یا فروش در سال · بازدهِ ۲۰۲۱ تا ۲۰۲۶ با این کارمزد ≈ <b class="n">${interp(r).toFixed(1)}٪</b> در سال
+      (نگه‌داری <span class="n">${r.buy_and_hold.cagr_pct.toFixed(1)}٪</span>)</div>`;
+  }).join("") + `<div style="margin-top:6px">با سفارشِ محدود (limit) نزدیکِ قیمتِ بازشدنِ دوشنبه، کارمزد و اسپرد معمولاً کمتر از سفارشِ بازار است.</div>`;
+}
+$("#fee").addEventListener("input", () => MOM && renderFee());
+
+async function buyMom(sym){
+  try{
+    const j = await getJSON("/api/momentum/demo", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({symbol: sym, alloc_pct: +store("momAlloc") || 20})});
+    toast(`${coin(sym)} در دمو خریده شد — ${fa(j.size_usdt)} دلار. خروج با تصمیمِ دوشنبه.`);
+    loadWeek();
+  }catch(e){ toast(e.message); }
+}
+
+/* ── سیگنال‌های روزانه ── */
+async function loadDaily(){
+  let d;
+  try{ d = await getJSON("/api/trend"); }catch(e){ $("#dailyRows").innerHTML = `<tr><td colspan="5" class="empty">${e.message}</td></tr>`; return; }
+  const failed = (((d.evidence || {}).oos) || {}).verdict === "FAIL";
+  $("#dailyVerdict").textContent = failed ? "این روش در آزمونِ خارج از نمونه (۲۰۲۴–۲۰۲۶) رد شد — فقط برای دمو، نه پولِ واقعی." : "اثبات‌نشده.";
+  const rows = (d.now || []).filter(x => (x.category === "new" || x.category === "join"));
+  if(!rows.length){ $("#dailyRows").innerHTML = `<tr><td colspan="5" class="empty">امروز سیگنالی نیست. قاعده منتظرِ شکستِ سقفِ ۲۰روزه است.</td></tr>`; return; }
+  $("#dailyRows").innerHTML = rows.map(x => {
+    const dead = x.valid === false, open = (d.demo_open || []).includes(x.sym);
+    const lab = dead ? `<span class="bad">باطل — کفِ امروز به حدضرر رسید</span>` : x.category === "new" ? "ورودِ تازه" : `پیوستن، روزِ ${fa(x.days_in)}`;
+    return `<tr><td><b>${coin(x.sym)}</b></td><td>${lab}${x.tight ? ` <span class="warn">· حدضررِ نزدیک</span>` : ""}</td>
+      <td class="n">${px(x.live != null ? x.live : x.last)}</td>
+      <td><span class="n">${px(x.stop)}</span> <span class="dim">(${fa(x.live_stop_distance_pct ?? x.stop_distance_pct, 1)}٪ پایین‌تر)</span></td>
+      <td>${dead ? "" : open ? `<span class="tag">در دمو</span>` : `<button class="btn ghost" onclick="buyTrend('${x.sym}')">خرید در دمو</button>`}</td></tr>`;
+  }).join("");
+}
+async function buyTrend(sym){
+  try{
+    const j = await getJSON("/api/trend/demo", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({symbol: sym, risk_pct: 0.5})});
+    toast(`${coin(sym)} در دمو خریده شد — ${fa(j.size_usdt)} دلار، حدضرر ${px(j.sl)}.`);
+    loadDaily();
+  }catch(e){ toast(e.message); }
+}
+
+/* ── دمو ── */
+const METHOD = {tsmom28: "مومنتومِ هفتگی", trend20: "روندِ روزانه"};
+async function loadDemo(){
+  let d;
+  try{ d = await getJSON("/api/positions"); }catch(e){ $("#openRows").innerHTML = `<tr><td colspan="6" class="empty">${e.message}</td></tr>`; return; }
+  const w = d.wallet || {};
+  $("#wallet").innerHTML = `<div class="cell"><div class="h">موجودیِ دمو</div><div class="v n">${px(w.equity ?? w.balance)} $</div></div>
+    <div class="cell"><div class="h">بازده از شروع</div><div class="v ${w.return_pct >= 0 ? "ok" : "bad"}">${pct(w.return_pct)}</div></div>
+    <div class="cell"><div class="h">معامله‌های بسته</div><div class="v">${fa(w.trades)} · برد ${fa(w.win_rate)}٪</div></div>`;
+  const open = d.open || [];
+  $("#openRows").innerHTML = open.length ? open.map(p => `<tr><td><b>${coin(p.symbol)}</b></td><td class="dim">${METHOD[p.strategy] || "دستی"}</td>
+      <td class="n">${px(p.entry)}</td><td class="n">${px(p.last_price)}</td>
+      <td class="${p.pnl_usdt >= 0 ? "ok" : "bad"}"><span class="n">${pct(p.pnl_pct)}</span> <span class="dim">(${fa(p.pnl_usdt, 1)}$)</span></td>
+      <td><button class="btn ghost" onclick="closePos('${p.id}', '${p.strategy || ""}')">بستن</button></td></tr>`).join("")
+    : `<tr><td colspan="6" class="empty">پوزیشنِ بازی نیست. از تبِ «این هفته» می‌توانید در دمو بخرید.</td></tr>`;
+  const closed = (d.closed || []).slice(0, 30);
+  $("#closedRows").innerHTML = closed.length ? closed.map(p => `<tr><td><b>${coin(p.symbol)}</b></td><td class="dim">${METHOD[p.strategy] || "دستی"}</td>
+      <td class="n">${px(p.entry)} → ${px(p.exit_price)}</td>
+      <td class="${p.pnl_usdt >= 0 ? "ok" : "bad"}"><span class="n">${pct(p.pnl_pct)}</span> <span class="dim">(${fa(p.pnl_usdt, 1)}$)</span></td>
+      <td class="dim">${p.close_reason || ""}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="empty">هنوز معامله‌ای بسته نشده.</td></tr>`;
+}
+async function closePos(id, strategy){
+  if(strategy && !confirm("قاعده هنوز در این پوزیشن است. بستنِ دستی یعنی کنار گذاشتنِ قاعده — در پژوهش، بستنِ زودِ برنده‌ها سودِ کل را کم کرد. بسته شود؟")) return;
+  try{ await getJSON(`/api/positions/${id}/close`, {method: "POST"}); toast("پوزیشن بسته شد."); loadDemo(); }catch(e){ toast(e.message); }
+}
+
+/* ── تنظیمات ── */
+async function loadSettings(){
+  $("#alloc").value = +store("momAlloc") || 20;
+  try{ const n = await getJSON("/api/notify"); $("#tgOn").checked = n.enabled; $("#tgChat").value = n.chat_id || "";
+    $("#tgState").textContent = n.has_token ? "توکن ذخیره شده است." : "هنوز توکنی وارد نشده."; }catch(e){}
+}
+$("#alloc").addEventListener("change", () => { const v = Math.min(50, Math.max(5, +$("#alloc").value || 20)); $("#alloc").value = v; store("momAlloc", String(v)); toast(`سهمِ هر ارز در دمو: ${fa(v)}٪`); });
+$("#tgSave").onclick = async () => {
+  try{ await getJSON("/api/notify", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({enabled: $("#tgOn").checked, token: $("#tgToken").value, chat_id: $("#tgChat").value})});
+    $("#tgToken").value = ""; toast("تنظیماتِ اعلان ذخیره شد."); loadSettings(); }catch(e){ toast(e.message); }
+};
+$("#tgTest").onclick = async () => { try{ await getJSON("/api/notify/test", {method: "POST"}); toast("پیامِ آزمایشی فرستاده شد."); }catch(e){ toast(e.message); } };
+
+loadWeek();
+setInterval(() => { if(!$("#p-week").hidden) loadWeek(); }, 120000);
+</script>
+</body>
+</html>

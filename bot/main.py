@@ -1356,6 +1356,13 @@ STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 @app.get("/")
 def index():
+    """صفحهٔ اصلی: میزِ تصمیمِ BTC/ETH (ساده، یک تصمیم در هفته)."""
+    return FileResponse(os.path.join(STATIC, "app.html"))
+
+
+@app.get("/lab")
+def lab():
+    """آزمایشگاه: صفحهٔ کاملِ قبلی — جدولِ ۲۰۰ ارز، مدل‌ها، قفلِ ایمنی، پژوهش."""
     return FileResponse(os.path.join(STATIC, "index.html"))
 
 
