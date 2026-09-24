@@ -319,6 +319,22 @@ class KnnLabelTests(unittest.TestCase):
         self.assertNotIn("هوش مصنوعی", texts)
 
 
+# ───────────────────────── پرچمِ ثابتِ روزانه (toxic_tf) ─────────────────────────
+class DailyStaticFlagTests(_GatesTmp):
+    """main برای هر خانهٔ 1d ``toxic_tf=True`` می‌گذارد (ثابتِ کد)؛ متنش نباید آن را «کارنامهٔ زنده» بنامد
+    و «هشدارِ موتور» شود، وقتی دفترِ زنده برای 1d هنوز داوری ندارد."""
+
+    def test_status_does_not_claim_a_live_scorecard(self):
+        res, _ = _analyze(1, predict_fn=_predict("model", 40.0), extras={"toxic_tf": True})
+        st = res["trade"]["status"]
+        self.assertIn("تایم‌فریم روزانه", st)                       # همان شاخه
+        self.assertNotIn("کارنامهٔ زنده زیان‌ده", st)
+        self.assertFalse(decision._status_is_caution(st))
+        d = decision.from_analysis(dict(res, symbol="BTCUSDT", tf="1d"))
+        self.assertFalse(any("روزانه" in w for w in d["warnings"]), d["warnings"])
+        self.assertEqual(d["action"], res["trade"]["side"])              # تصمیم دست‌نخورده
+
+
 # ───────────────────────── سپرِ آمارِ ورودِ دستی (‎/api/positions) ─────────────────────────
 class ManualOpenWeakGateTests(unittest.TestCase):
     """«اطمینانِ جهت‌یاب … ٪ (آستانهٔ ۵۸٪)» فقط برای p_upِ مدلِ کالیبره؛ امتیازِ اکتشافی احتمال نیست."""

@@ -788,8 +788,9 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             tr["authority"] = None
             pst = (stats or {}).get("policy_test") or tr.get("policy_test") or {}
             if ex.get("toxic_tf"):
-                tr["status"] = ("مشاهده — تایم‌فریم روزانه در کارنامهٔ زنده زیان‌ده است؛ "
-                                "ورود فقط با سیاست نهاییِ دادگاه‌قبول مجاز است")
+                # پرچمِ ثابتِ کد (main: tf == "1d")، نه آمارِ زنده — دفترِ زنده برای 1d هنوز داوری ندارد
+                tr["status"] = ("مشاهده — تایم‌فریم روزانه فقط با سیاست نهاییِ دادگاه‌قبول مجوزِ ورود دارد "
+                                "(محدودیتِ ثابتِ کد، نه نتیجهٔ کارنامهٔ زنده)")
             elif stats and src == "policy" and not stats.get("policy_trusted"):
                 avg = pst.get("avg_net_r")
                 pf = pst.get("profit_factor")
