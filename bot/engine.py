@@ -665,7 +665,8 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         # مشاهدهٔ ستاپ ≠ مجوز معامله. side/grade فقط «چه ستاپی دیده شد» را نگه می‌دارند.
         tr["setup_observed"] = bool(policy_applicable and live_setup)
         if stats:
-            # «کالیبره ✓» فقط وقتی مرجعِ احتمال واقعاً برای تصمیم فعال است — نه سیاستِ مردود دادگاه
+            # p_win «کالیبره» فقط وقتی مرجعِ احتمال واقعاً برای تصمیم فعال است — نه سیاستِ مردود دادگاه
+            # (این پرچمِ p_win است، نه p_calibrated؛ آن فقط از مدلِ جهت‌یاب می‌آید — پایینِ analyze)
             calibrated = bool(
                 not stats.get("diagnostic_only")
                 and (
@@ -917,16 +918,20 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
     regime = {"volatile": "پرنوسان", "trend": "رونددار",
               "range": "رنج", "transition": "انتقالی"}[regime_code]
 
+    # p_up فقط «احتمالِ بالارفتن تا افقِ H» است: یا از مدلِ جهت‌یابِ معتبر (کالیبره، تأییدشده OOS)،
+    # یا امتیازِ اکتشافیِ forecast() که احتمالِ کالیبره نیست (روی تاریخِ پیش از ۲۰۲۶ مهارتی نداشت).
     p_up = fc["p_up"]
+    p_up_kind = "heuristic"
     if dir_stats:
-        # اولویت با مدل جهت‌یاب همیشه‌روشن (آموزش‌دیده روی ده‌ها هزار نمونه، تأییدشده OOS)
         p_up = dir_stats["p_up"]
-        calibrated = True
-    elif calibrated and tr.get("p_win") is not None:
-        # احتمال از فراوانی واقعی ستاپ‌های مشابه تاریخی (کالیبره)
-        p_up = tr["p_win"] if tr["side"] == "long" else 100 - tr["p_win"]
-    # ترکیبِ win_rateِ بک‌تست حذف شد: آن نرخِ بردِ معامله‌های براکتیِ ستاپ‌ها در **هر دو جهت**
-    # است، نه احتمالِ بالارفتن؛ آمیختنش با p_up عدد را بی‌دلیل به ۶۵/۳۵ می‌کشید.
+        p_up_kind = "model"
+    # p_win (احتمالِ بردِ براکتِ 1R/1.8R) هرگز به p_up نگاشته نمی‌شود: نرخِ پایه‌اش ~۳۶٪ است نه ۵۰٪،
+    # پس «p_up = p_win» لانگِ عادی را نزولی و شورت را صعودی نشان می‌داد و مشاور پوزیشنِ سالم را می‌بست.
+    # p_win جدا می‌ماند و فقط با پایهٔ براکت (سربه‌سرِ ۱/۲٫۸) مقایسه می‌شود.
+    # ترکیبِ win_rateِ بک‌تست هم به همین دلیل حذف شد: نرخِ بردِ براکت در **هر دو جهت** است، نه احتمالِ بالارفتن.
+    if tr.get("p_win") is not None:
+        tr["p_win_base"] = round(bracket.breakeven_win_rate() * 100, 1)
+        tr["p_win_calibrated"] = calibrated      # مرجعِ p_win مدلِ ستاپ یا سیاستِ دادگاه‌قبول است
 
     return {
         "tf": tf,
@@ -946,7 +951,8 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         },
         "regime": regime, "adx": round(adx_l, 1), "chop": round(chop_l, 1), "atr_pct": round(atr_pct, 0),
         "p_up": round(p_up, 1),
-        "p_calibrated": calibrated,
+        "p_calibrated": p_up_kind == "model",     # فقط مدلِ جهت‌یابِ معتبر؛ نه p_win و نه سیاست
+        "p_up_kind": p_up_kind,                    # "model" | "heuristic" (امتیازِ اکتشافی، نه احتمال)
         "forecast": {k: (sig_round(vv) if isinstance(vv, float) else vv)
                      for k, vv in fc.items() if k not in ("path_log", "trend_w", "conf", "sig1")},
         "trade": {k: (sig_round(vv) if isinstance(vv, float) else vv) for k, vv in tr.items()},
