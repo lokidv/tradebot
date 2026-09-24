@@ -1612,6 +1612,19 @@ def _htf_sign(zmap, ts, htf):
     return 1 if z > 0.3 else -1 if z < -0.3 else 0
 
 
+def _dense_slot(ts, bar_ms):
+    """آیا کندلِ ``ts`` نمونهٔ متراکم است — تابعی فقط از زمان، پس برای همهٔ ارزها یکسان (calib-F14).
+
+    هر ``DENSE_STRIDE`` کندل یکی؛ روی تایم‌فریم‌های درون‌روزی با چرخشِ روزانه (شمارهٔ روز به
+    شمارهٔ کندل افزوده می‌شود) تا همهٔ ساعت‌های روز نمونه داشته باشند — باقی‌ماندهٔ ثابت روی 1h
+    فقط ۶ ساعت از ۲۴ و روی 4h فقط ۰۰/۰۸/۱۶ را می‌دید و hour_sin/cos زنده بیرون از آموزش بود.
+    """
+    k = int(ts) // bar_ms
+    if bar_ms < 86_400_000:
+        k += int(ts) // 86_400_000
+    return k % DENSE_STRIDE == 0
+
+
 # ───────────────────── استخراج رویدادها + نمونه‌های جهت‌یاب ─────────────────────
 def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=None,
                    breadth_map=None, dom_map=None, ethbtc_map=None, funding_rows=None):
@@ -1639,15 +1652,15 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
     # ── شبکهٔ نمونه‌ها ──
     # * سراسری، نه اندیسِ هر ارز (calib-F14): ارزی که وسطِ پنجره لیست شده بود از اندیسِ خودش
     #   هر ۴ کندل نمونه می‌گرفت و با بقیه هیچ مهرِ زمانیِ مشترکی نداشت؛ گروه‌های مقطعیِ
-    #   سیاستِ عمل (رتبه در هر لحظه) به ۴ زیرگروه می‌شکست. حالا فقط کندل‌هایی با
-    #   (ts / طولِ کندل) بخش‌پذیر بر ۴ — برای همهٔ ارزها یکسان.
+    #   سیاستِ عمل (رتبه در هر لحظه) به ۴ زیرگروه می‌شکست. حالا ``_dense_slot`` — تابعی فقط از
+    #   زمان، برای همهٔ ارزها یکسان.
     # * پایان: براکتِ کاملِ ۴۰ کندلی باید جا شود (calib-F13)؛ قبلاً نمونه‌های آخر پس از
     #   H+1..۳۹ کندل روی c[n-1] «تایم‌اوت» می‌خوردند (همان چیزی که core2.replay_sides دور می‌ریزد).
     bar_ms = TF_MS[tf]
     dense_end = min(n - H - 1, n - bracket.MAX_BARS)
     for i in range(260, dense_end):
         ts = ts_arr[i]
-        if (int(ts) // bar_ms) % DENSE_STRIDE:
+        if not _dense_slot(ts, bar_ms):
             continue
         entry = o[i + 1]
         ret = c[i + H] / entry - 1

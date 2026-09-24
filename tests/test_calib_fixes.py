@@ -174,10 +174,22 @@ class DenseGridTests(unittest.TestCase):
                 f"C{k}USDT", _klines(1200 - offset, seed=3 + k, start_bar=offset), "1h",
                 [], {}, None, None)
             ts = {t for t, _y in dy}
-            self.assertTrue(all((t // calib.TF_MS["1h"]) % calib.DENSE_STRIDE == 0 for t in ts))
+            self.assertTrue(all(calib._dense_slot(t, calib.TF_MS["1h"]) for t in ts))
             stamps.append(ts)
         common = set.intersection(*stamps)
         self.assertGreater(len(common), 150)          # قبلاً ۰: هر ارز در ردهٔ باقی‌ماندهٔ خودش
+        # چرخشِ روزانه: همهٔ ساعت‌های روز نمونه دارند (باقی‌ماندهٔ ثابت فقط ۶ ساعت از ۲۴ بود)
+        self.assertEqual({(t // 3_600_000) % 24 for t in stamps[0]}, set(range(24)))
+        self.assertAlmostEqual(len(stamps[0]) / (1200 - 40 - 260), 1 / calib.DENSE_STRIDE, delta=0.02)
+
+    def test_grid_rotation_covers_every_4h_slot_and_keeps_daily_density(self):
+        bar4, day = calib.TF_MS["4h"], 86_400_000
+        picked = [k * bar4 for k in range(6 * 400) if calib._dense_slot(k * bar4, bar4)]
+        self.assertEqual({(t % day) // bar4 for t in picked}, set(range(6)))
+        self.assertAlmostEqual(len(picked) / (6 * 400), 0.25, delta=0.01)
+        days = [d * day for d in range(400) if calib._dense_slot(d * day, day)]
+        self.assertEqual({(t // day + 4) % 7 for t in days}, set(range(7)))   # همهٔ روزهای هفته
+        self.assertAlmostEqual(len(days) / 400, 0.25, delta=0.01)
 
     def test_every_dense_bracket_has_the_full_forty_bars(self):
         n = 1000
