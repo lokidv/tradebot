@@ -83,8 +83,9 @@ SIDE_FA = {"long": "لانگ (خرید)", "short": "شورت (فروش)"}
 NOTE_FA = ("این‌ها تحلیلِ موتورِ چندشاخصه + هوش مصنوعی (kNN) هستند، نه لبهٔ تأییدشده. بازپخشِ دوسالهٔ همین قاعده "
            "پس از هزینهٔ رفت‌وبرگشتِ ۰٫۱۴٪ در 15m و 1h روی هر پنج ارز زیان‌ده است، در 4h حدوداً سربه‌سر است، "
            "و در 1d تعدادِ معامله‌ها برای قضاوت کافی نیست. در 5m حدضرر از همه کوچک‌تر است، پس همین هزینه سهمِ "
-           "بزرگ‌تری از هر R را می‌خورد. پیشنهادهای زنده‌ای که از ستاپِ معلق‌شده یا از مسیرِ "
-           "«سیاستِ انتخابِ عمل» می‌آیند در این بازپخش پوشش داده نشده‌اند. گونهٔ «ورودِ میکر» (۰٫۱۰٪) فقط برای "
+           "بزرگ‌تری از هر R را می‌خورد. پیشنهادهای زنده‌ای که از ستاپِ معلق‌شده می‌آیند در این بازپخش پوشش "
+           "داده نشده‌اند؛ «سیاستِ انتخابِ عمل» هرگز جای تصمیمِ قاعده را نمی‌گیرد و فقط جدا نشان داده می‌شود. "
+           "گونهٔ «ورودِ میکر» (۰٫۱۰٪) فقط برای "
            "مقایسه است و پرشدنِ سفارشِ محدود را تضمین نمی‌کند. هر پیشنهاد در دفترِ رو به جلو ثبت "
            "و داوری می‌شود؛ مجوزِ معامله فقط از gates.json می‌آید.")
 METHOD_FA = ("بازپخشِ علّیِ قاعدهٔ زنده روی آرشیوِ بومیِ فیوچرزِ بایننسِ همان تایم‌فریم (5m، 15m، 1h، 4h، 1d): ستاپِ رویدادیِ "
@@ -265,7 +266,7 @@ def _empty(sym, tf):
             "basis": None, "setup": None, "setup_fa": None,
             "entry": None, "sl": None, "tp": None, "rr": None, "risk_pct": None, "atr": None,
             "components": [], "votes_bull": 0, "votes_bear": 0, "z": None, "regime": None,
-            "reasons": [], "warnings": [], "scorecard_applies": True}
+            "reasons": [], "warnings": [], "scorecard_applies": True, "policy_opinion": None}
 
 
 # وضعیتِ موتور که هشدار است (مسدود/معلق/رد/قفل، یا احتیاطِ مشخص) — نه متن‌های عمومیِ «منتظر…» /
@@ -333,12 +334,34 @@ def _fa(x, d=2, signed=False):
     return (f"{x:+.{d}f}" if signed else f"{x:.{d}f}").translate(_FA_DIGITS)
 
 
+POLICY_NOTE_FA = ("نظرِ «سیاستِ انتخابِ عمل» (مدل) — فقط برای اطلاع؛ جای تصمیمِ قاعده را نمی‌گیرد و در دفتر "
+                  "ثبت نمی‌شود. این سیاست با رتبهٔ مقطعی میانِ دست‌کم ۸ ارز آزموده شده و این‌جا بی‌آن رتبه است، "
+                  "پس هیچ کارنامه‌ای آن را پوشش نمی‌دهد.")
+
+
+def _policy_opinion(tr, rule_side):
+    """جهتی که سیاستِ انتخابِ عمل تحمیل کرده بود، جدا از تصمیمِ قاعده (calib-F6 / LP-3)."""
+    side = tr.get("side") if tr.get("side") in ("long", "short") else None
+    return {"side": side, "same_as_rule": side == rule_side,
+            "entry": _num(tr.get("entry")), "sl": _num(tr.get("sl")), "tp": _num(tr.get("tp")),
+            "rr": _num(tr.get("rr")), "risk_pct": _num(tr.get("risk_pct")),
+            "policy_score": _num(tr.get("policy_score")), "policy_margin": _num(tr.get("policy_margin")),
+            "policy_trusted": bool(tr.get("policy_trusted")),
+            "market_rank_required": bool(tr.get("market_rank_required")),
+            "select_quantile": _num(tr.get("select_quantile")),
+            "tradeable": bool(tr.get("tradeable")), "note": POLICY_NOTE_FA}
+
+
 def from_analysis(a):
     """یک خروجیِ ``engine.analyze``/``main.get_analysis`` → یک تصمیم.
 
     ``action`` دقیقاً ``a["trade"]["side"]`` است (ستاپ، وگرنه قاعدهٔ z/رأی)؛ هیچ فیلترِ تازه‌ای
     اضافه نمی‌شود. ``setup`` فقط وقتی پر است که موتور واقعاً ستاپی دیده باشد (``setup_observed``)؛
     «zx» ای که analyze برای قاعدهٔ z پر می‌کند ستاپ حساب نمی‌شود.
+
+    استثنا: اگر «سیاستِ انتخابِ عمل» جهت را تحمیل کرده باشد (``setup == "ap"``)، جدول و دفتر روی
+    **قاعده** می‌مانند — تصمیم از ``a["rule_trade"]`` (خروجیِ بی‌تحمیلِ همان analyze) ساخته می‌شود و نظرِ
+    سیاست فقط در ``policy_opinion`` می‌آید. بی ``rule_trade`` تصمیمِ قاعده معلوم نیست ⇒ «صبر».
     """
     a = a or {}
     sym, tf = a.get("symbol") or a.get("sym"), a.get("tf")
@@ -349,6 +372,14 @@ def from_analysis(a):
         d["reasons"] = [str(err)]
         return d
     tr = a.get("trade") if isinstance(a.get("trade"), dict) else {}
+    rule_missing = False
+    if tr.get("setup") == "ap":
+        rt = a.get("rule_trade") if isinstance(a.get("rule_trade"), dict) else None
+        rule_missing = rt is None
+        tr_rule = rt if rt is not None else {}
+        rule_side = tr_rule.get("side") if tr_rule.get("side") in ("long", "short") else None
+        d["policy_opinion"] = _policy_opinion(tr, rule_side)
+        tr = tr_rule
     z = _num(a.get("z"))
     comp_in = a.get("components") if isinstance(a.get("components"), dict) else {}
     comps, vb, vs = _component_votes(comp_in, _int(a.get("votes_bull")), _int(a.get("votes_bear")))
@@ -375,7 +406,9 @@ def from_analysis(a):
         d.update(readiness=readiness, strength=readiness, lean=lean)
     d["reasons"] = _reasons(d)
     d["warnings"] = _warnings(a, tr, side, d["basis"])
-    d["scorecard_applies"] = d["basis"] != "policy"    # مسیرِ سیاست در بازپخش نیست
+    if rule_missing:
+        d["warnings"] = (["تصمیمِ خودِ قاعده از موتور نیامد — تا تحلیلِ بعدی «صبر»"] + d["warnings"])[:MAX_WARNINGS]
+    d["scorecard_applies"] = d["basis"] != "policy"    # مسیرِ سیاست در بازپخش نیست (دیگر هرگز تصمیمِ جدول نیست)
     return d
 
 
@@ -852,8 +885,8 @@ def record(decisions, now=None):
             if not isinstance(d, dict):
                 continue
             side = d.get("action")
-            if side not in ("long", "short"):
-                continue
+            if side not in ("long", "short") or d.get("basis") == "policy":
+                continue                            # دفتر فقط تصمیمِ قاعده را ثبت می‌کند، هرگز سیاست را
             sym, tf, ts = d.get("sym"), d.get("tf"), _int(d.get("candle_ts"))
             entry, sl, atr = _num(d.get("entry")), _num(d.get("sl")), _num(d.get("atr"))
             if not (sym and tf in TF_MINUTES and ts is not None and entry and sl is not None and atr):
@@ -966,8 +999,11 @@ def resolve(get_klines, now=None):
     return added
 
 
-def _cell_stats(opens, results):
-    """یک معامله در هر لحظه، مثلِ کارنامه: سیگنالی که پیش از خروجِ معاملهٔ قبلی آمده شمرده نمی‌شود."""
+def _cell_taken(opens, results):
+    """یک معامله در هر لحظه، مثلِ کارنامه: سیگنالی که پیش از خروجِ معاملهٔ قبلی آمده شمرده نمی‌شود.
+
+    خروجی: ``([(ردیفِ open، R خالص)…], تعدادِ باز، تعدادِ هم‌پوشان)``.
+    """
     taken, open_n, overlap = [], 0, 0
     blocked_until = -math.inf
     for op in sorted(opens, key=lambda r: _int(r["candle_ts"])):
@@ -983,12 +1019,19 @@ def _cell_stats(opens, results):
         net = _num(res.get("net_r"))
         if res.get("skipped") or net is None:
             continue
-        taken.append(net)
+        taken.append((op, net))
         ex = _int(res.get("exit_ts"))
         blocked_until = ex if ex is not None else ts
-    st = _stats(taken)
+    return taken, open_n, overlap
+
+
+def _cell_stats(opens, results):
+    """آمارِ یک خانه (یک معامله در هر لحظه) + فهرستِ R خالصِ معامله‌های شمرده‌شده."""
+    taken, open_n, overlap = _cell_taken(opens, results)
+    rs = [net for _, net in taken]
+    st = _stats(rs)
     st.update(open=open_n, signals=len(opens), overlapping=overlap)
-    return st, taken
+    return st, rs
 
 
 def _empty_live():
@@ -997,39 +1040,75 @@ def _empty_live():
     return st
 
 
-def live_stats():
-    """کارنامهٔ زندهٔ دفتر (بی‌تکرار بر اساسِ id) برای هر ارز × تایم‌فریم و کل.
+RULE_BASES = ("rule", "setup")
 
-    ردیفِ ناقص/خراب نادیده گرفته می‌شود؛ هیچ‌وقت استثنا بیرون نمی‌آید.
-    """
+
+def _basis_of(op):
+    """پایهٔ ردیف: ``policy`` (ردیف‌های قدیمیِ پیش از جداسازی) جدا؛ ردیفِ بی‌پایه قاعده حساب می‌شود."""
+    b = op.get("basis")
+    return b if b in ("setup", "policy") else "rule"
+
+
+def _ledger_rows(path, where):
     try:
-        rows = _read_jsonl(LEDGER_PATH)
+        return _read_jsonl(path)
     except Exception:  # noqa: BLE001
-        log.exc("decision.live_stats read")
-        rows = []
+        log.exc(where)
+        return []
+
+
+def _index(rows):
+    """ردیف‌های open (معتبر، بی‌تکرار) و result بر اساسِ id."""
     opens, results = {}, {}
     for r in rows:
         if _open_ok(r):
             opens.setdefault(r["id"], r)
         elif r.get("kind") == "result" and isinstance(r.get("id"), str):
             results.setdefault(r["id"], r)
-    by = {}
-    for op in opens.values():
-        by.setdefault((op["sym"], op["tf"]), []).append(op)
-    cells, all_r, all_open, all_sig = {}, [], 0, 0
-    for (sym, tf), ops in by.items():
+    return opens, results
+
+
+def _stream_stats(ops_by_cell, results, split_basis=False):
+    """کارنامهٔ هر خانه و کل برای یک جریانِ یک‌معامله‌در‌لحظه؛ ``split_basis`` سهمِ قاعده/ستاپ را هم می‌دهد."""
+    cells, all_taken, all_open, all_sig = {}, [], 0, 0
+    for (sym, tf), ops in ops_by_cell.items():
         try:
-            st, taken = _cell_stats(ops, results)
+            taken, open_n, overlap = _cell_taken(ops, results)
         except Exception:  # noqa: BLE001 — یک خانهٔ خراب نباید کلِ کارنامه را بیندازد
             log.exc("decision.live_stats cell", sym=sym, tf=tf)
             continue
+        st = _stats([net for _, net in taken])
+        st.update(open=open_n, signals=len(ops), overlapping=overlap)
+        if split_basis:
+            st["by_basis"] = {b: _stats([net for op, net in taken if _basis_of(op) == b]) for b in RULE_BASES}
         cells.setdefault(sym, {})[tf] = st
-        all_r += taken
-        all_open += st["open"]
-        all_sig += st["signals"]
-    overall = _stats(all_r)
+        all_taken += taken
+        all_open += open_n
+        all_sig += len(ops)
+    overall = _stats([net for _, net in all_taken])
     overall.update(open=all_open, signals=all_sig)
-    return {"cells": cells, "overall": overall}
+    if split_basis:
+        overall["by_basis"] = {b: _stats([net for op, net in all_taken if _basis_of(op) == b])
+                               for b in RULE_BASES}
+    return cells, overall
+
+
+def live_stats():
+    """کارنامهٔ زندهٔ دفتر (بی‌تکرار بر اساسِ id) برای هر ارز × تایم‌فریم و کل.
+
+    ``cells``/``overall`` فقط تصمیم‌های **قاعده** (پایهٔ rule/setup؛ همان چیزی که کارنامهٔ بازپخش
+    می‌سنجد) با ``by_basis`` برای سهمِ هرکدام. ردیف‌های قدیمیِ پایهٔ ``policy`` (پیش از آن‌که سیاست از
+    جدول جدا شود) هرگز با آن‌ها آمیخته نمی‌شوند و جریانِ جدای خودشان را در ``policy`` دارند.
+    ردیفِ ناقص/خراب نادیده گرفته می‌شود؛ هیچ‌وقت استثنا بیرون نمی‌آید.
+    """
+    opens, results = _index(_ledger_rows(LEDGER_PATH, "decision.live_stats read"))
+    rule_by, pol_by = {}, {}
+    for op in opens.values():
+        (pol_by if _basis_of(op) == "policy" else rule_by).setdefault((op["sym"], op["tf"]), []).append(op)
+    cells, overall = _stream_stats(rule_by, results, split_basis=True)
+    pcells, poverall = _stream_stats(pol_by, results)
+    return {"cells": cells, "overall": overall, "basis": "rule",
+            "policy": {"cells": pcells, "overall": poverall}}
 
 
 # ───────────────────────── ۴) خروجیِ endpoint ─────────────────────────
@@ -1041,6 +1120,7 @@ def payload(decisions, scorecard=None, live=None):
     lv = lv if isinstance(lv, dict) else {}
     sc_cells = sc.get("cells") or {}
     lv_cells = lv.get("cells") or {}
+    lv_pol = (lv.get("policy") or {}).get("cells") or {}
     cells = {sym: {} for sym in SYMBOLS}
     for d in decisions or []:
         sym, tf = d.get("sym"), d.get("tf")
@@ -1049,6 +1129,7 @@ def payload(decisions, scorecard=None, live=None):
         cell = dict(d)
         cell["scorecard"] = (sc_cells.get(sym) or {}).get(tf)
         cell["live"] = (lv_cells.get(sym) or {}).get(tf) or _empty_live()
+        cell["live_policy"] = (lv_pol.get(sym) or {}).get(tf)     # فقط ردیف‌های قدیمیِ سیاست، جدا
         cells.setdefault(sym, {})[tf] = cell
     meta = {k: sc.get(k) for k in ("built_at", "window_from", "window_to", "window_days_actual",
                                     "window_days_min", "source", "window_days", "knn_window", "method")}
@@ -1062,6 +1143,8 @@ def payload(decisions, scorecard=None, live=None):
         "cells": cells,
         "scorecard_meta": meta,
         "live_overall": lv.get("overall"),
+        "live_basis": "rule",                  # کارنامهٔ زنده فقط تصمیم‌های قاعده است
+        "live_policy_overall": (lv.get("policy") or {}).get("overall"),
         "note": NOTE_FA,
     }
 

@@ -628,6 +628,19 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         (action_stats.get("side") if action_stats and action_stats.get("policy_pass") else None)
     action_used = bool(live_sig == 0 and force and action_stats and action_stats.get("policy_pass"))
     tr = trade_suggestion(c, cs, fc, tf, vb, vs, s_ml, force_side=force)
+    # ── تصمیمِ خودِ قاعده، بی‌تحمیلِ «سیاستِ انتخابِ عمل» (فقط خروجیِ افزوده؛ هیچ خروجیِ دیگری عوض نمی‌شود) ──
+    # جدولِ تصمیم و دفترِ رو-به-جلو روی همین می‌مانند. دو لایه‌اش هم جدا گفته می‌شود — ستاپ و z/رأیِ خالص —
+    # به‌علاوهٔ RSI14 همان کندل، تا گونه‌های پیش‌ثبت‌شده (prereg_rule_variants_forward.json) از همین پنجره ساخته شوند.
+    zr = trade_suggestion(c, cs, fc, tf, vb, vs, s_ml)
+    setup_side = ("long" if live_sig == 1 else "short") if live_sig != 0 else None
+    rule_tr = (trade_suggestion(c, cs, fc, tf, vb, vs, s_ml, force_side=setup_side) if setup_side
+               else dict(zr))
+    rule_tr.update(setup=live_setup if setup_side else None, setup_observed=bool(setup_side),
+                   entry=float(c[-1]), atr14=float(cs["a14"][-1]),
+                   setup_side=setup_side, zrule_side=zr.get("side"), policy_forced=bool(action_used))
+    rule_trade = {k: (sig_round(vv) if isinstance(vv, float) else vv) for k, vv in rule_tr.items()}
+    _r14 = float(cs["rsi"][-1])
+    rule_trade["rsi14"] = _r14 if math.isfinite(_r14) else None   # گرد نمی‌شود: مرزِ ۳۰ باید دقیق بماند
     bt = quick_backtest(o, h, l, c, cs, tf, cost_pct=ex.get("cost", 0.15))
 
     # ── ویژگی‌سازی زنده + احتمال از متا-مدل ──
@@ -950,5 +963,6 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         "forecast": {k: (sig_round(vv) if isinstance(vv, float) else vv)
                      for k, vv in fc.items() if k not in ("path_log", "trend_w", "conf", "sig1")},
         "trade": {k: (sig_round(vv) if isinstance(vv, float) else vv) for k, vv in tr.items()},
+        "rule_trade": rule_trade,
         "backtest": bt,
     }
