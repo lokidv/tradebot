@@ -316,5 +316,27 @@ class KnnLabelTests(unittest.TestCase):
         texts = " ".join(d["reasons"]) + decision.NOTE_FA + " ".join(c[1] for c in decision.COMPONENTS)
         self.assertNotIn("هوش مصنوعی", texts)
 
+
+# ───────────────────────── UI: برچسب‌ها ─────────────────────────
+class UiLabelTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(ROOT, "bot", "static", "index.html"), encoding="utf-8") as f:
+            cls.html = f.read()
+
+    def test_heuristic_p_up_is_labelled_a_score(self):
+        self.assertIn("function pUpModel(c)", self.html)
+        self.assertIn("(اکتشافی — احتمال نیست)", self.html)
+        self.assertNotIn("(برآورد مدل)", self.html)              # برچسبِ قدیمی: «احتمالِ رشد (برآورد مدل)»
+
+    def test_p_win_is_compared_with_the_bracket_base_and_backtest_is_low_sample(self):
+        self.assertIn("const PWIN_BASE = 100/2.8;", self.html)
+        self.assertIn("function btText(bt)", self.html)
+        self.assertNotIn('"٪ از "+a.backtest.n+" سیگنال"', self.html)
+
+    def test_matrix_notes_do_not_call_knn_ai(self):
+        self.assertNotIn("اندیکاتورها و هوش مصنوعی", self.html)
+
+
 if __name__ == "__main__":
     unittest.main()
