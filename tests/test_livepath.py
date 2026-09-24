@@ -11,6 +11,7 @@ import time
 import unittest
 from unittest import mock
 
+import httpx
 import numpy as np
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,6 +22,7 @@ import bracket  # noqa: E402
 import candidates  # noqa: E402
 import edge_book  # noqa: E402
 import engine  # noqa: E402
+import market  # noqa: E402
 import meta_gate  # noqa: E402
 import report  # noqa: E402
 import shadow  # noqa: E402
@@ -308,6 +310,153 @@ class ShadowDedupTests(_Shadow, unittest.TestCase):
         shadow._save({"pending": [], "resolved": [newest] + older})
         ok = shadow.log_signal("BTCUSDT", "1h", "long", 100.0, 99.0, 101.8, "zx", 55, 0.4, candle, 60)
         self.assertFalse(ok)                                       # قبلاً ۲۰۰تای قدیمی را می‌دید ⇒ تکرار
+
+
+# ───────────────────────── LP-4: کشِ کندل پس از مرز، دادهٔ پیش از مرز را تازه نمی‌شمارد ─────────────────────────
+class _Clock:
+    def __init__(self, t):
+        self.t = float(t)
+
+    def time(self):
+        return self.t
+
+
+def _binance_rows(now_s, step, n=421):
+    """بایننسِ ساختگی: n کندلِ step تا کندلِ باز در لحظهٔ now_s."""
+    last = int(now_s * 1000) // step * step
+    return [[t, "1", "2", "0.5", "1.5", "10", t + step - 1, "15", "7", "4", "6", "0"]
+            for t in range(last - (n - 1) * step, last + 1, step)]
+
+
+class _MarketBase:
+    SYM = "ZZLPUSDT"
+
+    def setUp(self):
+        market._host_dead.clear()
+        market._neg_until.clear()
+        with market._lock:
+            market._kfund_cache.clear()
+
+    def tearDown(self):
+        self.setUp()
+        with market._lock:
+            for k in [k for k in market._kline_cache if k[0].startswith("ZZ")]:
+                market._kline_cache.pop(k, None)
+
+
+class KlineCacheBoundaryTests(_MarketBase, unittest.TestCase):
+    B = 1_790_280_000.0                     # یک مرزِ ساعتیِ UTC
+
+    def test_pre_boundary_fetch_is_not_served_after_the_boundary(self):
+        clock, calls = _Clock(self.B - 10), []
+
+        def binance(_path, params=None):
+            calls.append(clock.t)
+            return _binance_rows(clock.t, H)
+
+        with mock.patch.object(market, "time", clock), \
+                mock.patch.object(market, "_binance_json", side_effect=binance):
+            first = market.get_klines(self.SYM, "1h")
+            self.assertEqual(first["t"][-1], int(self.B * 1000) - 2 * H)
+            clock.t = self.B + 20                        # دورِ زمان‌بند: کندلِ B−1h تازه بسته شده
+            kl = market.get_klines(self.SYM, "1h")
+            clock.t = self.B + 1800
+            again = market.get_klines(self.SYM, "1h")    # همان کندل: از کش
+        self.assertEqual(kl["t"][-1], int(self.B * 1000) - H)   # مهلتِ ۴۵ثانیه‌ای این را کهنه می‌داد
+        self.assertIs(again, kl)
+        self.assertEqual(len(calls), 2)
+
+    def test_lagging_exchange_is_retried_within_the_bar_not_cached_for_it(self):
+        step = 4 * H
+        B = self.B - (self.B % (step / 1000))
+        hit = (B + 20, {"t": [int(B * 1000) - 2 * step]})       # پس از مرز گرفته شد ولی کندلِ تازه نیامده
+        self.assertTrue(market._kl_fresh(hit, "4h", B + 60))
+        self.assertFalse(market._kl_fresh(hit, "4h", B + 20 + market.KLINE_TTL["4h"]))
+        ok = (B + 20, {"t": [int(B * 1000) - step]})
+        self.assertTrue(market._kl_fresh(ok, "4h", B + 3 * 3600))
+        self.assertFalse(market._kl_fresh(ok, "4h", B + 4 * 3600 + 1))
+
+
+# ───────────────────────── LP-11: پشتیبانِ OKX ─────────────────────────
+class _Okx:
+    """OKXِ ساختگی: /market/candles جدیدترین-اول، حداکثر ۳۰۰، با after؛ کندلِ باز confirm=0."""
+
+    def __init__(self, now_s, step, n_total=2000):
+        self.step, self.calls = step, []
+        self.last = int(now_s * 1000) // step * step
+        self.first = self.last - (n_total - 1) * step
+
+    def __call__(self, url, params=None):
+        assert "okx.com/api/v5/market/candles" in url, url
+        self.calls.append(dict(params))
+        top = self.last if "after" not in params else int(params["after"]) - self.step
+        lim = min(int(params["limit"]), 300)
+        ts = [t for t in range(top, self.first - 1, -self.step)][:lim]
+        return {"data": [[str(t), "1", "2", "0.5", "1.5", "10", "10", "15", "0" if t == self.last else "1"]
+                         for t in ts]}
+
+
+class OkxFallbackTests(_MarketBase, unittest.TestCase):
+    def _fallback(self, tf, step, limit=420):
+        now = time.time()
+        okx = _Okx(now, step)
+        with mock.patch.object(market, "_binance_json", side_effect=httpx.ConnectError("down")), \
+                mock.patch.object(market, "_get_json", side_effect=okx):
+            kl = market.get_klines(self.SYM + tf, tf, limit)
+        return kl, okx, now
+
+    def test_fallback_pages_to_the_420_bars_the_live_engine_assumes(self):
+        kl, okx, now = self._fallback("1h", H)
+        self.assertEqual(kl["src"], "okx")
+        self.assertEqual(len(kl["t"]), 420)
+        self.assertTrue(all(b - a == H for a, b in zip(kl["t"], kl["t"][1:])))
+        self.assertEqual(kl["t"][-1], int(now * 1000) // H * H - H)           # آخرین کندلِ بسته
+        self.assertEqual(len(okx.calls), 2)
+        self.assertEqual(okx.calls[1]["after"], str(okx.last - 299 * H))
+
+    def test_daily_fallback_asks_for_utc_candles(self):
+        _kl, okx, _now = self._fallback("1d", 24 * H)
+        self.assertEqual({c["bar"] for c in okx.calls}, {"1Dutc"})
+        self.assertEqual(market.TF_OKX["1d"], "1Dutc")
+
+
+# ───────────────────────── feat_flow-1: کشِ فاندینگِ کوکوین و موعدِ تسویه ─────────────────────────
+class KucoinFundingSettlementTests(_MarketBase, unittest.TestCase):
+    T = 1_790_265_600_000                               # یک تسویهٔ ۸ساعته (۱۶:۰۰ UTC)
+
+    def _hit(self, fetched_s, last_ms, rows=181):
+        t = np.array([last_ms - 8 * H * i for i in range(rows)][::-1], dtype=np.int64)
+        return (fetched_s, {"t": t, "rate": np.zeros(rows), "interval_h": np.full(rows, 8.0)}, rows)
+
+    def test_cache_filled_before_a_settlement_is_stale_right_after_it(self):
+        hit = self._hit(self.T / 1000 - 300, self.T - 8 * H)            # پر شده ۵ دقیقه پیش از T
+        self.assertTrue(market._kfund_fresh(hit, 181, now=self.T / 1000 - 60))
+        self.assertFalse(market._kfund_fresh(hit, 181, now=self.T / 1000 + 30))   # قبلاً تا T+۵ دقیقه تازه
+
+    def test_venue_lag_is_retried_briefly_then_the_normal_ttl_applies(self):
+        lag = self._hit(self.T / 1000 + 10, self.T - 8 * H)            # پس از T گرفته شد، ردیفِ T هنوز نیست
+        self.assertTrue(market._kfund_fresh(lag, 181, now=self.T / 1000 + 20))
+        self.assertFalse(market._kfund_fresh(lag, 181, now=self.T / 1000 + 10 + market.KFUND_RETRY_SEC))
+        late = self._hit(self.T / 1000 + 900, self.T - 8 * H)          # ۱۵ دقیقه پس از موعد: برنامه عوض شده؟
+        self.assertTrue(market._kfund_fresh(late, 181, now=self.T / 1000 + 900 + 120))
+        ok = self._hit(self.T / 1000 + 60, self.T)
+        self.assertTrue(market._kfund_fresh(ok, 181, now=self.T / 1000 + 500))
+
+    def test_live_fetch_after_the_settlement_picks_up_the_record_at_the_close(self):
+        listed = [self.T - 8 * H * i for i in range(400)][::-1]
+        clock = _Clock(self.T / 1000 - 300)
+
+        def venue(url, params=None):
+            vis = [t for t in listed if t <= clock.t * 1000 and params["from"] <= t <= params["to"]]
+            vis = sorted(vis, reverse=True)[:100]
+            return {"code": "200000", "data": [{"timepoint": t, "fundingRate": 1e-4} for t in vis]}
+
+        with mock.patch.object(market, "time", clock), mock.patch.object(market, "_get_json", side_effect=venue):
+            before = market.get_kucoin_funding("ZZBTCUSDT")
+            self.assertEqual(int(before["t"][-1]), self.T - 8 * H)
+            clock.t = self.T / 1000 + 30                                   # کندلِ بسته‌شده روی T
+            after = market.get_kucoin_funding("ZZBTCUSDT")
+        self.assertEqual(int(after["t"][-1]), self.T)
 
 
 if __name__ == "__main__":

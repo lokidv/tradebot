@@ -527,6 +527,8 @@ def _compute_analysis(symbol, tf):
             # analyze این دو را فقط در مسیرِ مجوزدار به status می‌برد؛ ماتریسِ تصمیم باید همیشه ببیندشان
             res["tf_suspended"] = extras["tf_suspended"]
             res["btc_z"] = btc_z
+            # منبعِ کندل‌ها: «okx» یعنی پشتیبان (حجمِ OKX، بی‌qv/n/tbv) — کارنامه روی بایننس است
+            res["data_src"] = kl.get("src")
         res["symbol"] = symbol
     except Exception as e:  # noqa: BLE001
         res = {"symbol": symbol, "tf": tf, "error": str(e)}

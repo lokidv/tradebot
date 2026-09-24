@@ -35,7 +35,9 @@ def _is_pegged(last, high, low):
         return False
 
 TF_BINANCE = {"5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
-TF_OKX = {"5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
+# «1D»ِ OKX کندلِ ساعتِ هنگ‌کنگ است (باز ۱۶:۰۰ UTC؛ سنجیده ۲۰۲۶-۰۹-۲۴)؛ «1Dutc» مثلِ بایننس نیمه‌شبِ UTC
+TF_OKX = {"5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1Dutc"}
+OKX_PAGE = 300                   # سقفِ هر درخواستِ /api/v5/market/candles (بیشتر را خودِ API نمی‌دهد)
 TF_MINUTES = {"5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
 KLINE_TTL = {"5m": 30, "15m": 60, "1h": 120, "4h": 300, "1d": 900}
 # دورهٔ OI در rubikِ OKX (هر پنج تایم‌فریم را مستقیم دارد؛ سنجیده ۲۰۲۶-۰۹-۲۴)
@@ -270,19 +272,35 @@ def get_klines_cached(symbol, tf):
         return hit[1] if hit else None
 
 
+def _kl_fresh(hit, tf, now):
+    """کشِ کندل تازه است اگر آخرین کندلِ بسته‌اش همان آخرین کندلی باشد که تا ``now`` بسته شده.
+
+    مهلتِ ۴۵ثانیه‌ایِ قبلی (از لحظهٔ دریافت) دادهٔ گرفته‌شده در B−۴۵..B را پس از مرزِ B هم تازه می‌شمرد:
+    زمان‌بندِ تصمیم در B+۲۰ کندلِ تازه‌بسته را نمی‌دید و تحلیلِ ساخته‌شده از آن (با مهرِ پس از مرز) برای
+    کلِ کندل کش می‌شد (LP-4). دادهٔ گرفته‌شده پس از مرز که هنوز کندلِ تازه را ندارد (تأخیرِ صرافی،
+    فیدِ مرده) فقط تا ``KLINE_TTL`` نگه داشته می‌شود، نه تا مرزِ بعد.
+    """
+    if not hit:
+        return False
+    step = TF_MINUTES[tf] * 60
+    t = hit[1].get("t") or ()
+    if len(t) and int(t[-1]) + 2 * step * 1000 > now * 1000:
+        return True                                # آخرین کندلِ بسته‌شده را دارد
+    return hit[0] >= now - (now % step) and now - hit[0] < KLINE_TTL[tf]
+
+
 def get_klines(symbol, tf, limit=420):
     """کندل‌های بسته‌شده. کش تا پایان کندل جاری معتبر است (تحلیل فقط با کندل جدید عوض می‌شود)."""
     key = (symbol, tf)
     now = time.time()
-    boundary = now - (now % (TF_MINUTES[tf] * 60))
     with _lock:
         hit = _kline_cache.get(key)
-        if hit and (hit[0] >= boundary or now - hit[0] < 45):
+        if _kl_fresh(hit, tf, now):
             return hit[1]
     with _flight_lock(("kl", symbol, tf)):         # هم‌زمان‌ها منتظرِ همین یک دریافت می‌مانند
         with _lock:
             hit = _kline_cache.get(key)
-            if hit and (hit[0] >= boundary or now - hit[0] < 45):
+            if _kl_fresh(hit, tf, time.time()):
                 return hit[1]
         return _fetch_klines(symbol, tf, limit)
 
@@ -306,14 +324,7 @@ def _fetch_klines(symbol, tf, limit):
         data = rows[-limit:]
     except Exception:
         src = "okx"                                # بی‌جریانِ خرید/فروش: qv و n و tbv = NaN
-        inst = symbol[:-4] + "-USDT"
-        raw = _get_json(OKX + "/api/v5/market/candles", {"instId": inst, "bar": TF_OKX[tf], "limit": str(min(limit + 1, 300))})["data"]
-        rows = []
-        for r in reversed(raw):                    # OKX جدیدترین اول است
-            if len(r) >= 9 and r[8] == "0":
-                continue                           # کندل تأییدنشده
-            rows.append((int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), NAN, NAN, NAN))
-        data = rows[-limit:]
+        data = _okx_klines(symbol, tf, limit)
     if not data or len(data) < 220:
         raise RuntimeError(f"داده کافی برای {symbol} {tf} دریافت نشد ({len(data or [])} کندل)")
     out = {k: [r[i] for r in data] for i, k in enumerate(KLINE_KEYS)}
@@ -321,6 +332,35 @@ def _fetch_klines(symbol, tf, limit):
     with _lock:
         _kline_cache[key] = (now, out)
     return out
+
+
+def _okx_klines(symbol, tf, limit):
+    """پشتیبانِ OKX: ``limit`` کندلِ **تأییدشدهٔ** اسپات، صعودی.
+
+    هر صفحه حداکثر ``OKX_PAGE`` (۳۰۰) کندل است و موتورِ زنده و کارنامه ۴۲۰ کندل فرض می‌کنند
+    (``decision.LIVE_BARS``)؛ پس با ``after`` (قدیمی‌تر از این ts) رو به عقب صفحه‌بندی می‌شود.
+    قبلاً فقط ۲۹۹ کندل می‌آمد و kNN/z روی پنجرهٔ کوتاه‌تری از کارنامه اجرا می‌شد.
+    """
+    inst = symbol[:-4] + "-USDT"
+    per = min(limit + 1, OKX_PAGE)
+    rows, after = {}, None
+    for _ in range(-(-(limit + 1) // OKX_PAGE) + 1):      # +۱ برای کندلِ تأییدنشده/حاشیه
+        params = {"instId": inst, "bar": TF_OKX[tf], "limit": str(per)}
+        if after is not None:
+            params["after"] = str(after)
+        raw = _get_json(OKX + "/api/v5/market/candles", params)["data"]
+        if not raw:
+            break
+        before = len(rows)
+        for r in raw:                              # OKX جدیدترین اول است
+            if len(r) >= 9 and r[8] == "0":
+                continue                           # کندل تأییدنشده
+            rows[int(r[0])] = (int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]),
+                               float(r[5]), NAN, NAN, NAN)
+        after = min(int(r[0]) for r in raw)
+        if len(rows) >= limit or len(raw) < per or len(rows) == before:
+            break                                  # کافی، ابتدای تاریخچه، یا صفحهٔ تکراری
+    return [rows[t] for t in sorted(rows)][-limit:]
 
 
 # ── کندلِ بلندِ اسپات برای گرم‌شدنِ پنجره‌های هستهٔ v2 (z تا ۲۰۱۶ کندل در ۵m) ──
@@ -490,9 +530,32 @@ def kfund_arrays(rows):
     return {"t": t, "rate": np.array([r[1] for r in rows], dtype=float), "interval_h": infer_interval_h(t)}
 
 
-def _kfund_fresh(hit, rows):
-    """کش تازه است و درخواستِ قبلی دست‌کم همین‌قدر ردیف خواسته بود (یا همین‌قدر دارد)."""
-    return bool(hit) and time.time() - hit[0] < KFUND_TTL and (rows <= hit[2] or len(hit[1]["t"]) >= rows)
+KFUND_RETRY_SEC = 30.0           # موعدِ تسویه گذشته ولی ونیو هنوز ردیفش را نداده: هر ۳۰ ثانیه دوباره…
+KFUND_RETRY_WINDOW_MS = 600_000  # …فقط تا ۱۰ دقیقه پس از موعد؛ بعدش همان TTL (مثلاً تغییرِ برنامهٔ تسویه)
+
+
+def _kfund_fresh(hit, rows, now=None):
+    """کش تازه است، درخواستِ قبلی دست‌کم همین‌قدر ردیف خواسته بود (یا همین‌قدر دارد)، و از زمانِ
+    گرفتنش هیچ تسویه‌ای سررسید نشده که در کش نباشد.
+
+    تاریخچه (``core_feats._kfund``) تسویه‌ای را که دقیقاً روی بسته‌شدنِ کندل است می‌شمارد (kt ≤ close)؛
+    کشِ ۱۰دقیقه‌ایِ بی‌خبر از موعدِ تسویه، ویژگیِ کندلی را که روی ۰۰/۰۸/۱۶ UTC بسته می‌شود از تسویهٔ
+    قبلی می‌ساخت (feat_flow-1). موعدِ بعدی = آخرین تسویهٔ کش + ``interval_h`` همان ردیف.
+    """
+    now = time.time() if now is None else now
+    if not hit or now - hit[0] >= KFUND_TTL or not (rows <= hit[2] or len(hit[1]["t"]) >= rows):
+        return False
+    t, iv = hit[1]["t"], hit[1]["interval_h"]
+    if not len(t):
+        return True
+    due = int(t[-1]) + float(iv[-1]) * 3_600_000        # موعدِ تسویهٔ پس از آخرین ردیفِ کش (ms)
+    if due > now * 1000:
+        return True                                     # هنوز تسویهٔ تازه‌ای سررسید نشده
+    fetched = hit[0] * 1000
+    if fetched < due:
+        return False                                    # پیش از موعد گرفته شده ⇒ آن تسویه در کش نیست
+    # پس از موعد گرفته شد ولی ونیو هنوز ردیفش را منتشر نکرده بود: کوتاه صبر، نه ۱۰ دقیقه
+    return now - hit[0] < (KFUND_RETRY_SEC if fetched - due < KFUND_RETRY_WINDOW_MS else KFUND_TTL)
 
 
 def get_kucoin_funding(symbol, rows=KFUND_ROWS):
