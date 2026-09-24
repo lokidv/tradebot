@@ -10,6 +10,8 @@
 """
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -388,6 +390,69 @@ class UiLabelTests(unittest.TestCase):
     def test_matrix_notes_do_not_call_knn_ai(self):
         self.assertNotIn("اندیکاتورها و هوش مصنوعی", self.html)
 
+
+
+def _js_function(html, head):
+    """متنِ یک تابعِ سطحِ بالای index.html از امضا تا آکولادِ بستهٔ متناظر."""
+    i = html.index(head)
+    j = html.index("{", i + len(head) - 1)
+    depth = 0
+    for k in range(j, len(html)):
+        depth += {"{": 1, "}": -1}.get(html[k], 0)
+        if depth == 0:
+            return html[i:k + 1]
+    raise ValueError(head)
+
+
+@unittest.skipUnless(shutil.which("node"), "node نصب نیست")
+class LedgerLiveLineTests(unittest.TestCase):
+    """خطِ «عملکردِ زنده» و کاشیِ آمار از window.DEC‌اند: با رسیدنِ /api/decisions دوباره کشیده می‌شوند و
+    پیش از رسیدن یا با خطا، ادعای «هنوز معاملهٔ داوری‌شده‌ای ندارد» نمی‌کنند."""
+
+    HARNESS = r"""
+const window = {};
+let DEC_ERR = null, DEC_CTL = null, TF = "1h", STATS = 0, NEXT = null;
+const els = {};
+const $ = s => (els[s] = els[s] || {innerHTML: "", textContent: ""});
+const esc = s => String(s == null ? "" : s);
+const faN = (x, d) => String(x);
+const n100 = v => v;
+const bR = v => v + "R";
+const ABORTED = "__aborted__";
+const errMsg = (r, d) => "HTTP " + r.status;
+function renderStats(d){ STATS++; }
+function renderMatrix(){}
+function renderTable(){}
+async function jfetch(){ return NEXT(); }
+%s
+%s
+(async () => {
+  const out = {};
+  LS_FB = {note_fa: ""}; window.OV = {coins: []}; window.OV_TF = "1h";
+  renderLedgerLive(); out.loading = $("#liveStats").innerHTML;
+  NEXT = async () => ({r: {ok: true, status: 200}, d: {cells: {}, live_overall: {n: 3, win_rate: 0, avg_r: -1.56}}});
+  const s0 = STATS; await loadDecisions(); out.loaded = $("#liveStats").innerHTML; out.stats = STATS - s0;
+  window.DEC = null; NEXT = async () => { throw new Error("boom"); };
+  await loadDecisions(); out.failed = $("#liveStats").innerHTML;
+  console.log(JSON.stringify(out));
+})();
+"""
+
+    def test_live_line_follows_the_decision_ledger(self):
+        with open(os.path.join(ROOT, "bot", "static", "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        head = html[html.index("function ledgerLine(){"):html.index("async function loadLiveStats(){")]
+        js = self.HARNESS % (head, _js_function(html, "async function loadDecisions(force){"))
+        r = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        never = "هنوز معاملهٔ داوری‌شده‌ای ندارد"
+        self.assertIn("در حالِ بارگذاری", out["loading"])
+        self.assertNotIn(never, out["loading"])
+        self.assertIn("برد از 3 معامله", out["loaded"])             # همان لحظهٔ رسیدنِ DEC، نه رفرشِ ۶۰ثانیه‌ای
+        self.assertGreaterEqual(out["stats"], 1)                      # کاشیِ «عملکرد زنده (دفترِ تصمیم)» هم
+        self.assertIn("خوانده نشد (boom)", out["failed"])
+        self.assertNotIn(never, out["failed"])
 
 if __name__ == "__main__":
     unittest.main()

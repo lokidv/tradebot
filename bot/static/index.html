@@ -1525,10 +1525,18 @@ async function loadOverview(force){
 // عملکردِ زندهٔ «دفترِ رو-به-جلوی میزِ تصمیم» (فقط نمایش؛ روی هیچ تصمیمی اثر ندارد)
 function ledgerLine(){
   const D = window.DEC, lo = D && D.live_overall, cp = D && D.scorecard_meta && D.scorecard_meta.cost_pct;
+  // دفتر هنوز نرسیده یا نیامد: «هنوز معامله‌ای ندارد» ادعای نادرست است
+  if(!D) return DEC_ERR ? `دفترِ رو-به-جلوی میزِ تصمیم خوانده نشد (${esc(DEC_ERR)})` : "دفترِ رو-به-جلوی میزِ تصمیم: در حالِ بارگذاری…";
   const basis = cp!=null ? `، پس از کارمزدِ ثابتِ ${faN(cp,2)}٪` : "";
   return lo && lo.n > 0
     ? `دفترِ رو-به-جلوی میزِ تصمیم (همهٔ خانه‌ها${basis}): <b>${faN(n100(lo.win_rate),0)}٪</b> برد از ${faN(lo.n)} معامله · میانگین ${bR(lo.avg_r)}${lo.open ? ` · ${faN(lo.open)} در انتظارِ داوری` : ""}`
     : "دفترِ رو-به-جلوی میزِ تصمیم هنوز معاملهٔ داوری‌شده‌ای ندارد";
+}
+let LS_FB = null;                                   // بازخوردِ غیرفعال: خطِ زنده از دفترِ تصمیم (window.DEC) ساخته می‌شود
+// خطِ «عملکردِ زنده» و کاشیِ آمار از window.DEC‌اند؛ هر بار که DEC می‌رسد دوباره کشیده می‌شوند
+function renderLedgerLive(){
+  if(LS_FB) $("#liveStats").innerHTML = `📡 عملکردِ زنده — ${ledgerLine()} · <span class="mid" title="${esc(LS_FB.note_fa||"")}">⏸ تعلیقِ خودکار، جیبِ لبه و هشدارِ افت: <b>غیرفعال</b> — تصمیم‌ها همان قاعدهٔ کارنامه‌اند</span>`;
+  if(window.OV && window.OV_TF === TF) renderStats(window.OV);
 }
 async function loadLiveStats(){
   try{
@@ -1536,11 +1544,11 @@ async function loadLiveStats(){
     const fb = d.feedback || {};
     if(fb.active === false){
       // دفترِ سایه از ژوئیه تغذیه نمی‌شود: آمارِ ۳۰روزه‌اش همیشه صفر بود و «ترمزِ خودکار» وجود نداشت
-      window.LSTATS = null;
-      $("#liveStats").innerHTML = `📡 عملکردِ زنده — ${ledgerLine()} · <span class="mid" title="${esc(fb.note_fa||"")}">⏸ تعلیقِ خودکار، جیبِ لبه و هشدارِ افت: <b>غیرفعال</b> — تصمیم‌ها همان قاعدهٔ کارنامه‌اند</span>`;
+      window.LSTATS = null; LS_FB = fb;
+      renderLedgerLive();
       return;
     }
-    window.LSTATS = d.all;
+    LS_FB = null; window.LSTATS = d.all;
     const s = d.stats || {}, a = d.all || {};
     const one = (x,l) => x.n ? `${l}: <b>${x.win_rate}٪</b> برد از ${x.n} سیگنال (میانگین ${x.avg_r>=0?"+":""}${x.avg_r}R)` : `${l}: هنوز سیگنال داوری‌شده‌ای نیست`;
     const susp = d.suspended && Object.keys(d.suspended).length
@@ -2260,6 +2268,7 @@ async function loadDecisions(force){
   }
   renderMatrix();
   renderTable();                                    // ستونِ «اقدام» همان تصمیم را نشان می‌دهد
+  renderLedgerLive();                               // خطِ «عملکردِ زنده» و کاشیِ آمار هم از window.DEC‌اند
 }
 
 /* ── پنلِ جزئیاتِ یک خانه ── */
