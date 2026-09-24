@@ -395,20 +395,39 @@ def _walk_forward(X, y, kind, extra=None, ts=None, embargo_ms=0):
     return oos_p
 
 
+def _thirds(pred):
+    """اندیس‌های یک‌سومِ پایین و بالای ``pred``؛ تساوی با ترتیبِ شبه‌تصادفیِ ثابت شکسته می‌شود.
+
+    ``argsort`` روی مقدارهای برابر ترتیبِ اندیس — یعنی **زمان** — را نگه می‌داشت؛ با پیش‌بینیِ
+    ثابت (شیبِ کالیبراسیونِ صفر) «لیفت» همان روندِ زمانیِ پنجرهٔ آزمون می‌شد (4h: ۰٫۵۵R با
+    rank_ic صفر — calib-F11). پیش‌بینیِ (تقریباً) ثابت هیچ رتبه‌ای ندارد ⇒ None.
+    """
+    pred = np.asarray(pred, float)
+    if len(pred) < 2 or float(np.std(pred)) < 1e-12:
+        return None
+    tie_break = np.random.RandomState(len(pred)).random_sample(len(pred))
+    order = np.lexsort((tie_break, pred))          # کلیدِ اصلی pred؛ بی‌تساوی همان argsort است
+    third = max(len(order) // 3, 1)
+    return order[:third], order[-third:]
+
+
 def _lift(oos_p, y):
     mask = ~np.isnan(oos_p)
     if mask.sum() < 80:
         return -99.0, mask
     po, yo = oos_p[mask], y[mask]
-    order = np.argsort(po)
-    third = max(len(order) // 3, 1)
-    return float(yo[order[-third:]].mean() - yo[order[:third]].mean()) * 100, mask
+    th = _thirds(po)
+    if th is None:
+        return 0.0, mask
+    return float(yo[th[1]].mean() - yo[th[0]].mean()) * 100, mask
 
 
 def _lift_on(p, yv):
-    order = np.argsort(p)
-    third = max(len(order) // 3, 1)
-    return float(yv[order[-third:]].mean() - yv[order[:third]].mean()) * 100
+    th = _thirds(p)
+    if th is None:
+        return 0.0
+    yv = np.asarray(yv, float)
+    return float(yv[th[1]].mean() - yv[th[0]].mean()) * 100
 
 
 def _fit_model(X, y, champion=None, ts=None, champion_ts=0.0, embargo_ms=0):
@@ -647,18 +666,29 @@ def _walk_forward_ridge_rolling(X, y, ts, embargo_ms, lookback_groups):
     return oos
 
 
+def _avg_rank(a):
+    """رتبهٔ میانگین (مقدارهای برابر رتبهٔ یکسان می‌گیرند، نه رتبه به ترتیبِ زمان)."""
+    a = np.asarray(a, float)
+    order = np.argsort(a, kind="mergesort")
+    ranks = np.empty(len(a), float)
+    ranks[order] = np.arange(len(a), dtype=float)
+    _, inv, counts = np.unique(a, return_inverse=True, return_counts=True)
+    sums = np.bincount(inv, weights=ranks)
+    return (sums / counts)[inv]
+
+
 def _rank_corr(a, b):
     if len(a) < 3 or np.std(a) < 1e-12 or np.std(b) < 1e-12:
         return 0.0
-    ra = np.argsort(np.argsort(a)).astype(float)
-    rb = np.argsort(np.argsort(b)).astype(float)
-    return float(np.corrcoef(ra, rb)[0, 1])
+    return float(np.corrcoef(_avg_rank(a), _avg_rank(b))[0, 1])
 
 
 def _edge_lift(pred, actual):
-    order = np.argsort(pred)
-    third = max(len(order) // 3, 1)
-    return float(actual[order[-third:]].mean() - actual[order[:third]].mean())
+    th = _thirds(pred)
+    if th is None:
+        return 0.0                                 # پیش‌بینیِ ثابت ⇒ لیفت صفر، نه روندِ زمانیِ آزمون
+    actual = np.asarray(actual, float)
+    return float(actual[th[1]].mean() - actual[th[0]].mean())
 
 
 def _fit_edge_model(events, tf, cost_pct=COST_PCT):
@@ -1598,13 +1628,11 @@ def _fit_logistic(X, y):
         w -= lr * grad
     p_oos = 1 / (1 + np.exp(-np.clip(X1[cut:] @ w, -30, 30)))
     y_oos = y[cut:]
-    order = np.argsort(p_oos)
-    third = max(len(order) // 3, 1)
     return {"w": w.tolist(), "mu": mu.tolist(), "sd": sd.tolist(),
             "n_train": cut, "n_oos": n - cut,
             "oos_brier": round(float(((p_oos - y_oos) ** 2).mean()), 4),
             "oos_base": round(float(y_oos.mean()) * 100, 1),
-            "oos_lift": round(float(y_oos[order[-third:]].mean() - y_oos[order[:third]].mean()) * 100, 1)}
+            "oos_lift": round(_lift_on(p_oos, y_oos), 1)}
 
 
 def _train_dir_model(dir_X, dir_y, dir_R, tf, champion=None, champion_ts=0.0):
