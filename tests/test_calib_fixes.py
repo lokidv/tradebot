@@ -153,5 +153,40 @@ class ActionPolicyEmbargoTests(unittest.TestCase):
         self.assertEqual(seen["purge"], (calib.bracket.MAX_BARS + 1) * calib.TF_MS["1h"])
 
 
+def _klines(n, seed, start_bar=0, bar_ms=3_600_000):
+    from test_bracket_contract import synthetic_klines
+    kl = synthetic_klines(n=n, seed=seed)
+    kl["t"] = [(start_bar + k) * bar_ms for k in range(n)]
+    return kl
+
+
+class DenseGridTests(unittest.TestCase):
+    """calib-F13/F14: نمونه‌های متراکم روی شبکهٔ زمانیِ سراسری و فقط با براکتِ کامل."""
+
+    def test_coins_listed_at_different_offsets_share_the_same_timestamps(self):
+        stamps = []
+        for k, offset in enumerate((0, 7, 14, 21, 29)):
+            _e, _z, _dx, dy, _dr = calib.extract_events(
+                f"C{k}USDT", _klines(1200 - offset, seed=3 + k, start_bar=offset), "1h",
+                [], {}, None, None)
+            ts = {t for t, _y in dy}
+            self.assertTrue(all((t // calib.TF_MS["1h"]) % calib.DENSE_STRIDE == 0 for t in ts))
+            stamps.append(ts)
+        common = set.intersection(*stamps)
+        self.assertGreater(len(common), 150)          # قبلاً ۰: هر ارز در ردهٔ باقی‌ماندهٔ خودش
+
+    def test_every_dense_bracket_has_the_full_forty_bars(self):
+        n = 1000
+        kl = _klines(n, seed=9)
+        _e, _z, _dx, dy, _dr = calib.extract_events("AUSDT", kl, "1h", [], {}, None, None)
+        idx = {t: i for i, t in enumerate(kl["t"])}
+        last_i = max(idx[t] for t, _y in dy)
+        self.assertLessEqual(last_i + calib.bracket.MAX_BARS, n - 1)
+        self.assertLessEqual(last_i + calib.engine.HORIZON["1h"], n - 1)
+
+    def test_model_version_was_bumped(self):
+        self.assertGreaterEqual(calib.CALIB_VERSION, 23)
+
+
 if __name__ == "__main__":
     unittest.main()
