@@ -236,5 +236,54 @@ class QuickBacktestSampleTests(unittest.TestCase):
         self.assertIn("small_n", bt)
         self.assertEqual(bt["small_n"], bt["n"] < engine.BT_MIN_N)
 
+
+# ───────────────────────── display-6: آمادگی ─────────────────────────
+def _wait(z, vb, vs, s_ml=0.0):
+    c = np.array([100.0])
+    cs = {"a14": np.array([1.0]), "z": np.array([float(z)])}
+    return engine.trade_suggestion(c, cs, {"trend_w": 0.5, "target": 100.0}, "1h", vb, vs, s_ml)
+
+
+class ReadinessTests(unittest.TestCase):
+    def test_just_below_threshold_is_not_rounded_up_to_100(self):
+        tr = _wait(1.195, 3, 0)
+        self.assertIsNone(tr["side"])
+        self.assertEqual(tr["readiness"], 99)                    # قبلاً round(99.8)=100
+
+    def test_opposing_votes_count_against_readiness(self):
+        tr = _wait(1.5, 3, 2)                                    # z و ۳ رأی پر، ولی ۲ رأیِ مخالف
+        self.assertIsNone(tr["side"])
+        self.assertEqual(tr["readiness"], 85)                    # یک رأی باید برگردد: 0.55 + 0.45×⅔
+        self.assertEqual(tr["ready_side"], "long")
+
+    def test_unchanged_when_the_opposing_condition_holds(self):
+        for z, vb, vs in ((0.6, 2, 0), (0.9, 1, 1), (-0.8, 0, 2), (0.0, 0, 0)):
+            with self.subTest(z=z, vb=vb, vs=vs):
+                old_l = 0.55 * min(max(z, 0) / 1.2, 1) + 0.45 * min(vb / 3, 1)
+                old_s = 0.55 * min(max(-z, 0) / 1.2, 1) + 0.45 * min(vs / 3, 1)
+                tr = _wait(z, vb, vs)
+                self.assertEqual(tr["readiness"], int(max(old_l, old_s) * 100 + 1e-9))
+
+    def test_readiness_is_display_only_and_never_changes_the_side(self):
+        rng = np.random.RandomState(0)
+        for _ in range(3000):
+            z = float(rng.uniform(-2.5, 2.5))
+            vb = int(rng.randint(0, 5))
+            vs = int(rng.randint(0, 5 - vb))
+            s_ml = float(rng.choice([-0.4, 0.0, 0.4]))
+            bull5 = vb + (1 if s_ml >= 0.2 else 0)
+            bear5 = vs + (1 if s_ml <= -0.2 else 0)
+            rule = ("long" if (z >= 1.2 and bull5 >= 3 and bear5 <= 1)
+                    else "short" if (z <= -1.2 and bear5 >= 3 and bull5 <= 1) else None)
+            tr = _wait(z, vb, vs, s_ml)
+            self.assertEqual(tr["side"], rule)
+            if rule is None:
+                self.assertTrue(0 <= tr["readiness"] <= 99, tr)
+                a = {"symbol": "BTCUSDT", "tf": "1h", "z": z, "votes_bull": bull5, "votes_bear": bear5,
+                     "components": {}, "trade": tr}
+                d = decision.from_analysis(a)
+                self.assertEqual(d["action"], "wait")
+                self.assertLessEqual(d["strength"], 99)
+
 if __name__ == "__main__":
     unittest.main()

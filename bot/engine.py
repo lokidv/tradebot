@@ -490,13 +490,19 @@ def trade_suggestion(c, cs, fc, tf, votes_bull, votes_bear, s_ml, force_side=Non
             reasons.append("دسته‌ها دوپاره‌اند")
         # analyze() فقط کندلِ آخر و یکی قبل‌تر را برای ستاپ می‌گردد (range(0, 2)) — متن همان را بگوید
         reasons.append(f"و هیچ‌یک از ۵ ستاپ رویدادی (کراس z، پولبک، شکست، فید روند، فید رنج) در {SETUP_LOOKBACK_FA} کندل اخیر رخ نداده")
-        # آمادگی: چند درصد شرایطِ نزدیک‌ترین سیگنال پر شده (برای نمایش پیشرفت در UI)
-        long_prog = 0.55 * min(max(z, 0.0) / 1.2, 1.0) + 0.45 * min(bull5 / 3.0, 1.0)
-        short_prog = 0.55 * min(max(-z, 0.0) / 1.2, 1.0) + 0.45 * min(bear5 / 3.0, 1.0)
+        # آمادگی: چند درصد شرایطِ نزدیک‌ترین سیگنال پر شده (فقط نمایشِ پیشرفت در UI — side را عوض نمی‌کند).
+        # شرطِ رأی «≥۳ هم‌جهت و ≤۱ مخالف» است؛ پیشرفتش = ۱ − (کمترین تعدادِ رأیی که باید برگردد)/۳.
+        # با ≤۱ مخالف همان min(هم‌جهت/۳، ۱) قبلی است؛ رأیِ مخالفِ اضافه حالا از آمادگی کم می‌کند.
+        def _vote_prog(same, opp):
+            return max(0.0, 1.0 - max(3 - same, opp - 1, 0) / 3.0)
+        long_prog = 0.55 * min(max(z, 0.0) / 1.2, 1.0) + 0.45 * _vote_prog(bull5, bear5)
+        short_prog = 0.55 * min(max(-z, 0.0) / 1.2, 1.0) + 0.45 * _vote_prog(bear5, bull5)
         ready_side = "long" if long_prog >= short_prog else "short"
+        # گردکردن به پایین، نه round: ۹۹٫۵ با شرطِ پرنشده نباید «۱۰۰٪» شود؛ «صبر» حداکثر ۹۹٪ آماده است
+        readiness = min(int(math.floor(max(long_prog, short_prog) * 100 + 1e-9)), 99)
         return {"side": None, "status": "منتظر ستاپ", "reasons": reasons,
                 "setup": None, "setup_fa": None, "setup_observed": False,
-                "readiness": round(max(long_prog, short_prog) * 100),
+                "readiness": readiness,
                 "ready_side": ready_side}
 
     votes = bull5 if side == "long" else bear5
