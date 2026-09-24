@@ -1373,9 +1373,11 @@ def _due_tfs(boundary, last_boundary=None):
 
 
 def _expected_bar(tf, boundary):
-    """openِ (ms) آخرین کندلِ بسته‌شدهٔ ``tf`` در مرزِ ``boundary`` (ثانیهٔ UTC)."""
-    bar = tf_spec.bar_ms(tf)
-    return (int(boundary) * 1000 // bar) * bar - bar
+    """openِ (ms) آخرین کندلِ بسته‌شدهٔ ``tf`` در مرزِ ``boundary`` (ثانیهٔ UTC).
+
+    همان ``_last_closed_open`` (کلیدِ کشِ حالتِ بازار/طلا)؛ یک تعریف تا چکِ کهنگیِ زمان‌بند و آن کلید از هم جدا نشوند.
+    """
+    return _last_closed_open(tf, int(boundary))
 
 
 def _collect_cells(cells):

@@ -581,6 +581,12 @@ class DecisionSchedulerTests(unittest.TestCase):
         self.assertEqual(main._expected_bar("1d", self.B5), (self.DAY - 86400) * 1000)
         self.assertEqual(main._expected_bar("5m", self.B5), (self.B5 - 300) * 1000)
 
+    def test_scheduler_bar_and_market_state_key_are_one_definition(self):
+        # چکِ کهنگیِ زمان‌بند و کلیدِ کشِ حالتِ بازار/طلا (``_last_closed_open``) باید یک کندل را بگویند
+        for tf in ("5m", "15m", "1h", "4h", "1d"):
+            for t in (self.B5, self.B5 + 20, self.B5 + 299, self.DAY, self.DAY - 1, self.DAY + 86399):
+                self.assertEqual(main._expected_bar(tf, t), main._last_closed_open(tf, t), (tf, t))
+
 
 # ───────────────────────── LP-1: بازخوردِ زندهٔ بی‌منبع صریحاً «غیرفعال» ─────────────────────────
 class LiveFeedbackIsHonestTests(_Shadow, unittest.TestCase):
