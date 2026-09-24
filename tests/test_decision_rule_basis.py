@@ -180,5 +180,53 @@ class LiveStatsByBasisTests(unittest.TestCase):
         json.dumps(p, ensure_ascii=False)
 
 
+class VenueLabelTests(unittest.TestCase):
+    """RULE-3: تصمیم و دفتر روی اسپات، کارنامه روی فیوچرز — هر دو برچسب دارند."""
+
+    def test_ledger_rows_are_labelled_spot(self):
+        d = {"sym": "BTCUSDT", "tf": "1h", "candle_ts": T0, "action": "long", "basis": "rule",
+             "entry": 100.0, "sl": 98.7, "atr": 1.0}
+        t = [T0 + k * H_MS for k in range(-2, 8)]
+        kl = {"t": t, "o": [100.0] * 10, "h": [103.0] * 10, "l": [99.5] * 10, "c": [100.0] * 10, "v": [1.0] * 10}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(decision, "LEDGER_PATH", os.path.join(tmp, "l.jsonl")):
+            decision.record([d], now=(T0 + H_MS) / 1000)
+            decision.resolve(lambda s, tf: kl, now=(T0 + 9 * H_MS) / 1000)
+            rows = decision._read_jsonl(decision.LEDGER_PATH)
+        self.assertEqual([r["kind"] for r in rows], ["open", "result"])
+        self.assertTrue(all(r["venue"] == "binance-spot" for r in rows))
+        self.assertEqual(decision.from_analysis({"symbol": "BTCUSDT", "tf": "1h", "error": "x"})["venue"],
+                         "binance-spot")
+
+    def test_scorecard_is_labelled_futures_and_the_payload_says_both(self):
+        kl = synth(decision.MIN_BARS + 200, seed=5)
+
+        def loader(sym, tf):
+            if sym == "ETHUSDT":
+                return kl, decision.SOURCE_FALLBACK
+            if sym == "SOLUSDT":
+                raise ValueError("no data")
+            return kl, decision.SOURCE_ARCHIVE_FMT.format(tf=tf)
+        sc = decision.build_scorecards(loader, symbols=("BTCUSDT", "ETHUSDT", "SOLUSDT"), tfs=("1h",))
+        cells = sc["cells"]
+        self.assertEqual(cells["BTCUSDT"]["1h"]["venue"], "binance-usdm-futures")
+        self.assertEqual(cells["ETHUSDT"]["1h"]["venue"], "binance-spot")
+        self.assertIsNone(cells["SOLUSDT"]["1h"]["venue"])
+        self.assertEqual(decision.venue_of_source("binance-futures-15m-archive→1h"), "binance-usdm-futures")
+
+        old = {"cells": {"BTCUSDT": {"1h": {"n": 3, "source": "binance-futures-1h-archive"}}}}   # کشِ قدیمی
+        ds = [decision.from_analysis({"symbol": "BTCUSDT", "tf": "1h", "zt": T0, "trade": {"side": None}})]
+        p = decision.payload(ds, scorecard=old, live={"cells": {}, "overall": {"n": 0}})
+        self.assertEqual(p["scorecard_meta"]["venue"], "binance-usdm-futures")
+        self.assertEqual(p["cells"]["BTCUSDT"]["1h"]["scorecard"]["venue"], "binance-usdm-futures")
+        self.assertNotIn("venue", old["cells"]["BTCUSDT"]["1h"])            # کش دست نخورد
+        self.assertEqual(p["live_venue"], "binance-spot")
+        self.assertEqual(p["cells"]["BTCUSDT"]["1h"]["venue"], "binance-spot")
+        self.assertIn("اسپات", p["venue_note"])
+        self.assertIn("فیوچرز", p["venue_note"])
+        empty = decision.payload(ds, scorecard={"cells": {}}, live={"cells": {}, "overall": {"n": 0}})
+        self.assertEqual(empty["scorecard_meta"]["venue"], "binance-usdm-futures")
+
+
 if __name__ == "__main__":
     unittest.main()

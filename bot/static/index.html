@@ -2108,6 +2108,11 @@ function scMetaHtml(D){                              // یک بار زیرِ م�
              `${m.building === true ? ` — <span class="v-pos">کارنامه در حال ساخت…</span>` : m.built_at ? ` · ساخته‌شده ${tsFa(m.built_at, true)}` : ""}`);
   else if(m.building === true || !Object.keys(m).length)
     out.push(`📜 <span class="v-pos">کارنامه در حال ساخت…</span>${m.cost_pct!=null ? ` (کارمزدِ رفت‌وبرگشت ${faN(m.cost_pct,2)}٪)` : ""}`);
+  // RULE-3: منبعِ هر دو کارنامه — زنده روی اسپات، بک‌تست روی فیوچرز
+  const ven = v => v === "binance-spot" ? "اسپاتِ بایننس" : v === "binance-usdm-futures" ? "فیوچرزِ USDⓈ-M بایننس" : (v ? String(v) : "");
+  out.push(`<span title="${esc(D.venue_note || "")}">📍 منبعِ داده: تصمیمِ زنده و دفترِ رو-به-جلو = کندل‌های ${esc(ven(D.live_venue || "binance-spot"))}` +
+           ` · کارنامهٔ بک‌تست = کندل‌های ${esc(String(m.venue || "binance-usdm-futures").split("، ").map(ven).join("، "))}` +
+           ` <small class="mid">(حجمِ دو بازار فرق دارد؛ بخشی از سیگنال‌ها یکی نیست)</small></span>`);
   const lo = D.live_overall;
   if(lo && lo.n > 0)
     out.push(`📡 کارنامهٔ زنده (رو-به-جلو، همهٔ خانه‌ها، پس از کارمزد): n=${faN(lo.n)}` +
@@ -2259,9 +2264,9 @@ function ddHtml(sym, tf, x){
       <div class="tfcard"><h4>${a === "wait" ? "⏳ صبر" : "📍 معامله"}</h4>
         ${levels}
         <div class="divider"></div>
-        <h4 style="margin-bottom:4px">📜 کارنامهٔ بک‌تست</h4>${scHtml}
+        <h4 style="margin-bottom:4px">📜 کارنامهٔ بک‌تست <small class="mid">(کندل‌های ${sc && sc.venue === "binance-spot" ? "اسپات" : "فیوچرز"})</small></h4>${scHtml}
         <div class="divider"></div>
-        <h4 style="margin-bottom:4px">📡 کارنامهٔ زنده</h4>${liveHtml}
+        <h4 style="margin-bottom:4px">📡 کارنامهٔ زنده <small class="mid">(کندل‌های اسپات)</small></h4>${liveHtml}
       </div>
     </div>
     ${trade}`;

@@ -62,6 +62,14 @@ MAX_WARNINGS = 4
 SOURCE_ARCHIVE_FMT = "binance-futures-{tf}-archive"          # آرشیوِ بومیِ همان تایم‌فریم
 SOURCE_RESAMPLED_FMT = "binance-futures-{base}-archive→{tf}"   # فقط از آرشیوِ ریزتر، هرگز درشت‌تر
 SOURCE_FALLBACK = "binance-spot-history"
+# RULE-3: منبعِ هر عدد برچسب دارد — تصمیمِ زنده و دفتر روی کندل‌های اسپات (market.get_klines؛ جایگزینِ
+# نادرِ OKX هم اسپات است)، کارنامهٔ بازپخش روی آرشیوِ فیوچرزِ USDⓈ-M. حجمِ دو بازار فرق دارد.
+LIVE_VENUE = "binance-spot"
+SCORECARD_VENUE = "binance-usdm-futures"
+VENUE_NOTE_FA = ("تصمیم‌های زنده و دفترِ رو-به-جلو روی کندل‌های اسپاتِ بایننس ساخته و داوری می‌شوند (اگر بایننس "
+                 "در دسترس نباشد، اسپاتِ OKX)؛ کارنامهٔ بک‌تست روی کندل‌های فیوچرزِ USDⓈ-M بایننس است. حجمِ این دو "
+                 "بازار فرق دارد، پس حدودِ ۱۰٪ (4h و 1d) تا ۲۰–۳۰٪ (5m) سیگنال‌ها میانِ این دو یکی نیست؛ "
+                 "میانگینِ کل تقریباً یکی است.")
 
 VERDICT_FA = {"small": "نمونهٔ کم", "loss": "زیان‌ده", "positive": "مثبت (تأییدنشده)",
               "unclear": "نامشخص — بازه شامل صفر"}
@@ -266,7 +274,8 @@ def _empty(sym, tf):
             "basis": None, "setup": None, "setup_fa": None,
             "entry": None, "sl": None, "tp": None, "rr": None, "risk_pct": None, "atr": None,
             "components": [], "votes_bull": 0, "votes_bear": 0, "z": None, "regime": None,
-            "reasons": [], "warnings": [], "scorecard_applies": True, "policy_opinion": None}
+            "reasons": [], "warnings": [], "scorecard_applies": True, "policy_opinion": None,
+            "venue": LIVE_VENUE}
 
 
 # وضعیتِ موتور که هشدار است (مسدود/معلق/رد/قفل، یا احتیاطِ مشخص) — نه متن‌های عمومیِ «منتظر…» /
@@ -768,6 +777,7 @@ def build_scorecards(loader=None, symbols=SYMBOLS, tfs=TFS):
                 cell = _stats([])
                 cell.update(error=str(e) or type(e).__name__, cost_pct=COST_PCT, source=src,
                             maker=_empty_maker())
+            cell["venue"] = venue_of_source(src)
             cell["elapsed_s"] = round(time.time() - t1, 2)
             cells[sym][tf] = cell
     out = {"version": SCORECARD_VERSION, "built_at": time.time(),
@@ -777,6 +787,16 @@ def build_scorecards(loader=None, symbols=SYMBOLS, tfs=TFS):
            "cells": cells}
     out.update(_window_meta(cells))
     return out
+
+
+def venue_of_source(src):
+    """برچسبِ بازارِ منبعِ کارنامه: آرشیوِ فیوچرز (بومی یا تجمیع‌شده) یا تاریخچهٔ اسپاتِ جایگزین."""
+    s = str(src or "")
+    if s.startswith("binance-futures"):
+        return SCORECARD_VENUE
+    if s == SOURCE_FALLBACK:
+        return LIVE_VENUE
+    return None
 
 
 def _window_meta(cells):
@@ -903,7 +923,7 @@ def record(decisions, now=None):
                    "basis": d.get("basis"), "setup": d.get("setup"), "grade": d.get("grade"),
                    "strength": d.get("strength"), "z": d.get("z"),
                    "votes_bull": d.get("votes_bull"), "votes_bear": d.get("votes_bear"),
-                   "cost_pct": COST_PCT, "recorded_at": round(now, 3)}
+                   "cost_pct": COST_PCT, "venue": LIVE_VENUE, "recorded_at": round(now, 3)}
             _append(LEDGER_PATH, row)
             seen.add(rid)
             added += 1
@@ -921,7 +941,7 @@ def _resolve_one(op, kl, now):
     ts = int(op["candle_ts"])
     bar_ms = TF_MINUTES[op["tf"]] * 60000
     base = {"kind": "result", "id": op["id"], "sym": op["sym"], "tf": op["tf"], "side": op["side"],
-            "candle_ts": ts, "resolved_at": round(now, 3)}
+            "candle_ts": ts, "venue": LIVE_VENUE, "resolved_at": round(now, 3)}
     atr = _num(op.get("atr"))
     if not atr or atr <= 0:
         base["skipped"] = "bad_row"
@@ -1127,12 +1147,18 @@ def payload(decisions, scorecard=None, live=None):
         if not sym or not tf:
             continue
         cell = dict(d)
-        cell["scorecard"] = (sc_cells.get(sym) or {}).get(tf)
+        scc = (sc_cells.get(sym) or {}).get(tf)
+        if isinstance(scc, dict) and "venue" not in scc:     # کشِ ساخته‌شده پیش از برچسب
+            scc = dict(scc, venue=venue_of_source(scc.get("source")))
+        cell["scorecard"] = scc
         cell["live"] = (lv_cells.get(sym) or {}).get(tf) or _empty_live()
         cell["live_policy"] = (lv_pol.get(sym) or {}).get(tf)     # فقط ردیف‌های قدیمیِ سیاست، جدا
         cells.setdefault(sym, {})[tf] = cell
     meta = {k: sc.get(k) for k in ("built_at", "window_from", "window_to", "window_days_actual",
                                     "window_days_min", "source", "window_days", "knn_window", "method")}
+    venues = sorted({v for row in sc_cells.values() if isinstance(row, dict) for c in row.values()
+                     if isinstance(c, dict) for v in [c.get("venue") or venue_of_source(c.get("source"))] if v})
+    meta["venue"] = "، ".join(venues) if venues else SCORECARD_VENUE     # پیش‌فرض: آرشیوِ فیوچرز
     meta["building"] = bool(sc.get("building"))
     meta["cost_pct"] = sc.get("cost_pct") if sc.get("cost_pct") is not None else COST_PCT
     meta["maker_cost_pct"] = (sc.get("maker_cost_pct") if sc.get("maker_cost_pct") is not None
@@ -1143,6 +1169,8 @@ def payload(decisions, scorecard=None, live=None):
         "cells": cells,
         "scorecard_meta": meta,
         "live_overall": lv.get("overall"),
+        "live_venue": LIVE_VENUE,              # تصمیم و دفتر: اسپات؛ کارنامه: scorecard_meta.venue
+        "venue_note": VENUE_NOTE_FA,
         "live_basis": "rule",                  # کارنامهٔ زنده فقط تصمیم‌های قاعده است
         "live_policy_overall": (lv.get("policy") or {}).get("overall"),
         "note": NOTE_FA,
