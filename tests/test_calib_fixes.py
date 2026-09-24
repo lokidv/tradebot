@@ -200,6 +200,34 @@ class DenseGridTests(unittest.TestCase):
         self.assertLessEqual(last_i + calib.bracket.MAX_BARS, n - 1)
         self.assertLessEqual(last_i + calib.engine.HORIZON["1h"], n - 1)
 
+    def test_thinning_keeps_whole_timestamps_across_the_whole_history(self):
+        # گروه‌های نابرابر، مثلِ ارزهایی که دیرتر لیست شده‌اند
+        ts = sorted(t for t in range(5000) for _ in range(3 + (t * 7) % 11))
+        keep = calib._thin_whole_timestamps(ts, 10_000)
+        self.assertLessEqual(len(keep), 10_000)
+        self.assertGreater(len(keep), 9_000)
+        kept = np.asarray(ts)[keep]
+        full = dict(zip(*np.unique(ts, return_counts=True)))
+        for t, c in zip(*np.unique(kept, return_counts=True)):
+            self.assertEqual(c, full[t])                  # هیچ لحظه‌ای نیمه‌کاره نمی‌ماند
+        self.assertEqual((kept[0], kept[-1]), (0, 4999))  # سراسرِ تاریخ
+        self.assertEqual(list(calib._thin_whole_timestamps(ts[:50], 100)), list(range(50)))
+
+    def test_action_policy_thinning_does_not_split_cross_sections(self):
+        seen = {}
+
+        def wf_edge(X, y, ts, embargo_ms):
+            seen["ts"] = ts[0::2]
+            raise _Stop()
+        dx, dy, dr = ActionPolicyEmbargoTests()._dense(n=3000)
+        with mock.patch.object(calib, "ACTION_MAX_SAMPLES", 1_700), \
+                mock.patch.object(calib, "_walk_forward_edge", side_effect=wf_edge):
+            with self.assertRaises(_Stop):
+                calib._fit_action_policy(dx, dy, dr, "4h", calib.COST_PCT)
+        self.assertLessEqual(len(seen["ts"]), 1_700)
+        _u, counts = np.unique(seen["ts"], return_counts=True)
+        self.assertTrue((counts == 5).all())              # هر لحظه با هر پنج ارزش
+
     def test_model_version_was_bumped(self):
         self.assertGreaterEqual(calib.CALIB_VERSION, 23)
 

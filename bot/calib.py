@@ -1228,7 +1228,13 @@ def _time_partitions(rows, timestamps, purge_ms=0):
 
 
 def _cross_section_mask(score, rows, timestamps, quantile, min_group=8):
-    """انتخاب بهترین درصد در هر لحظه؛ قرارداد آموزش دقیقاً با رتبه‌بندی live یکسان می‌شود."""
+    """انتخاب بهترین درصد در هر لحظه (رتبه فقط بینِ ردیف‌های هم‌زمان، گروهِ زیرِ ``min_group`` هیچ).
+
+    هم‌شکلِ رتبه‌بندیِ زنده است، نه یکسان با آن: زنده بینِ نامزدهای فعالِ همان کندل در میانِ ارزهای
+    overview رتبه می‌گیرد و این‌جا بینِ همهٔ نمونه‌های متراکمِ همان timestamp. شبکهٔ سراسریِ
+    نمونه‌ها (``_dense_slot``) و نازک‌سازیِ لحظه‌به‌لحظه (``_thin_whole_timestamps``) گروه‌های
+    هم‌زمان را کامل نگه می‌دارند (calib-F14).
+    """
     score = np.asarray(score, float)
     rows = np.asarray(rows, dtype=int)
     timestamps = np.asarray(timestamps, dtype=np.int64)
@@ -1240,6 +1246,25 @@ def _cross_section_mask(score, rows, timestamps, quantile, min_group=8):
         cutoff = float(np.quantile(score[pos], quantile))
         chosen[pos] = score[pos] >= cutoff
     return chosen
+
+
+def _thin_whole_timestamps(ts_sorted, cap):
+    """اندیسِ ردیف‌های ماندنی (حداکثر ``cap``): لحظه‌هایی با فاصلهٔ یکنواخت در کلِ تاریخ، هر لحظه
+    با **همهٔ** ردیف‌هایش. نازک‌سازیِ ردیف‌به‌ردیف (linspace روی ردیف‌ها) گروه‌های هم‌زمانِ
+    ``_cross_section_mask`` را تکه می‌کرد و بخشی از آن‌ها زیرِ کفِ ۸ ردیف هرگز انتخاب نمی‌شد
+    (calib-F14). ``ts_sorted`` صعودی است؛ ردیف‌های یک لحظه پشتِ هم‌اند."""
+    ts = np.asarray(ts_sorted, dtype=np.int64)
+    if len(ts) <= cap:
+        return np.arange(len(ts))
+    uniq, start, counts = np.unique(ts, return_index=True, return_counts=True)
+    n_keep = max(1, len(uniq) * cap // len(ts))
+    while True:
+        pick = np.unique(np.linspace(0, len(uniq) - 1, n_keep, dtype=int))
+        total = int(counts[pick].sum())
+        if total <= cap or n_keep <= 1:
+            break
+        n_keep = max(1, min(n_keep - 1, n_keep * cap // total))
+    return np.concatenate([np.arange(start[i], start[i] + counts[i]) for i in pick])
 
 
 def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
@@ -1255,7 +1280,7 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     pairs = sorted(zip(dir_y, dir_X, dir_R), key=lambda p: p[0][0])
     if len(pairs) > ACTION_MAX_SAMPLES:
         # پوشش یکنواختِ کل تاریخ، نه بریدنِ صرفاً ابتدای/انتهای رژیم؛ timestamp در split حفظ می‌شود.
-        keep = np.linspace(0, len(pairs) - 1, ACTION_MAX_SAMPLES, dtype=int)
+        keep = _thin_whole_timestamps([p[0][0] for p in pairs], ACTION_MAX_SAMPLES)
         pairs = [pairs[i] for i in keep]
     if not pairs or not (
         isinstance(pairs[0][1], (list, tuple)) and len(pairs[0][1]) == 2
