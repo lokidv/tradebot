@@ -1526,14 +1526,16 @@ def positions():
     # شبیه‌سازِ واقع‌گرا: ویکِ کندل‌ها + لغزشِ استاپ + فاندینگ (نه فقط قیمتِ نمونه‌برداری‌شده)
     db = paper.refresh(prices, klines_fn=market.get_klines_cached,
                        funding_fn=market.get_funding_history)
-    # 🧭 مشاورِ پوزیشن: برای هر پوزیشنِ باز، توصیهٔ مدیریتِ زنده با مدلِ کالیبره
+    # 🧭 مشاورِ پوزیشن: برای هر پوزیشنِ باز، توصیهٔ مدیریتِ زنده — تیلت فقط با مدلِ جهت‌یابِ کالیبره
+    #    (مثلِ autotrader)؛ امتیازِ اکتشافیِ p_up به مشاور نمی‌رسد و خروجی «فقط هندسه» است
     for pos in db["open"]:
         try:
             a = get_analysis(pos["symbol"], pos["tf"])
             b = get_analysis("BTCUSDT", pos["tf"])
             bz = b.get("z") if "error" not in b else None
-            pos["advice"] = advisor.advise(
-                pos, {"p_up": a.get("p_up")} if "error" not in a else None, btc_z=bz)
+            model = ({"p_up": a.get("p_up"), "p_calibrated": True}
+                     if "error" not in a and a.get("p_calibrated") else None)
+            pos["advice"] = advisor.advise(pos, model, btc_z=bz)
         except Exception:  # noqa: BLE001 — توصیه هرگز نباید نمایشِ پوزیشن را بشکند
             pos["advice"] = None
     total_open = round(sum(p["pnl_usdt"] for p in db["open"]), 2)
