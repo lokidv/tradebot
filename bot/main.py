@@ -1374,6 +1374,21 @@ def lab():
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+
+@app.middleware("http")
+async def _no_stale_pages(request, call_next):
+    """بی‌هدرِ Cache-Control، مرورگر خودش حدس می‌زد صفحه تا کی تازه است؛ صفحهٔ قدیمی که مدت‌ها
+    عوض نشده بود ساعت‌ها از کش نشان داده می‌شد و کاربر «بعضی وقت‌ها» ظاهرِ قدیم را می‌دید.
+    حالا HTML همیشه با سرور تطبیق داده می‌شود (ETag ⇒ اگر عوض نشده، پاسخِ کوچکِ 304) و API
+    اصلاً کش نمی‌شود."""
+    resp = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store"
+    elif path in ("/", "/lab") or path.endswith(".html"):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("TRADERBOT_PORT") or os.environ.get("PORT") or 8787)
