@@ -38,16 +38,67 @@ TF_OKX = {"15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
 TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
 KLINE_TTL = {"15m": 60, "1h": 120, "4h": 300, "1d": 900}
 
-_client = httpx.Client(timeout=12.0, headers={"User-Agent": "ctp-bot/1.0"})
+# مهلتِ اتصال کوتاه‌تر از مهلتِ خواندن: میزبانِ فیلترشده SYN را بی‌پاسخ می‌گذارد و هر
+# تلاش ۱۲ ثانیه می‌سوخت؛ ۴ میزبانِ fapi پشتِ هم یعنی ~۵۰ ثانیه برای یک فاندینگ.
+_client = httpx.Client(timeout=httpx.Timeout(12.0, connect=5.0), headers={"User-Agent": "ctp-bot/1.0"})
 _lock = threading.Lock()
 _kline_cache: dict = {}          # (symbol, tf) -> (ts, data)
 _top_cache = {"ts": 0.0, "symbols": [], "tickers": {}}
+TOP_STORE = 200                  # فهرستِ برترها همیشه با این اندازه گرفته می‌شود (۵۰/۱۰۰/۲۰۰ از یک کش)
+
+# ── کول‌داونِ میزبان: میزبانِ قطع/مسدود (مهلت، ۴۵۱، ۴۰۳، ۵xx، محدودیتِ نرخ) مدتی امتحان نمی‌شود ──
+# قبلاً هر تماس دوباره از اولِ فهرست شروع می‌کرد و هر بار همان مهلت‌ها را می‌سوزاند.
+HOST_COOLDOWN = 60.0
+_host_dead: dict = {}            # host -> زمانِ پایانِ کول‌داون
+_host_lock = threading.Lock()
+
+# ── تک‌پروازی: درخواست‌های هم‌زمانِ یک کلید فقط یک‌بار به شبکه می‌روند ──
+_flight_locks: dict = {}
+_flight_guard = threading.Lock()
+
+
+def _flight_lock(key):
+    with _flight_guard:
+        lk = _flight_locks.get(key)
+        if lk is None:
+            lk = _flight_locks[key] = threading.Lock()
+        return lk
+
+
+def _host_of(url):
+    return url.split("://", 1)[-1].split("/", 1)[0]
+
+
+def _host_failure(e):
+    """خطا مربوط به میزبان است (نه به خودِ درخواست)؟ ۴۰۰/۴۰۴ از همهٔ میزبان‌ها یکسان است."""
+    if isinstance(e, httpx.HTTPStatusError):
+        code = e.response.status_code
+        return code in (403, 418, 429, 451) or code >= 500
+    return True                                    # قطع، مهلت، پاسخِ غیر JSON (صفحهٔ فیلتر)
+
+
+def host_status(now=None):
+    """میزبان‌های در کول‌داون و ثانیه‌های باقی‌مانده — برای پایش."""
+    now = time.time() if now is None else now
+    with _host_lock:
+        return {h: round(t - now, 1) for h, t in _host_dead.items() if t > now}
 
 
 def _get_json(url, params=None):
-    r = _client.get(url, params=params)
-    r.raise_for_status()
-    return r.json()
+    host = _host_of(url)
+    with _host_lock:
+        until = _host_dead.get(host, 0.0)
+    if until > time.time():
+        raise RuntimeError(f"{host} در کول‌داون است (خطای اخیر)")
+    try:
+        r = _client.get(url, params=params)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:  # noqa: BLE001 — ثبتِ خرابیِ میزبان و بالا دادنِ همان خطا
+        if _host_failure(e):
+            with _host_lock:
+                _host_dead[host] = time.time() + HOST_COOLDOWN
+        raise
 
 
 def _binance_json(path, params=None):
@@ -55,16 +106,40 @@ def _binance_json(path, params=None):
     for host in BINANCE_HOSTS:
         try:
             return _get_json(host + path, params)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                raise                              # درخواستِ نامعتبر (مثلاً نمادِ ناموجود) — میزبانِ بعدی هم همین را می‌گوید
+            last_err = e
         except Exception as e:  # noqa: BLE001 — هاست بعدی را امتحان کن
             last_err = e
     raise last_err
 
 
+def _top_fresh(n):
+    """کش تازه است و دست‌کم n نماد دارد — یا بازار کلاً کمتر از اندازهٔ گرفته‌شده نماد داشت."""
+    return (time.time() - _top_cache["ts"] < 600
+            and max(len(_top_cache["symbols"]), _top_cache.get("n_req", 0)) >= n
+            and bool(_top_cache["symbols"]))
+
+
 def get_top_symbols(n=15):
-    """۱۵ جفت USDT برتر بر اساس حجم ۲۴ساعته + دیتای تیکر (قیمت و تغییر ۲۴س)."""
+    """۱۵ جفت USDT برتر بر اساس حجم ۲۴ساعته + دیتای تیکر (قیمت و تغییر ۲۴س).
+
+    همیشه دست‌کم ``TOP_STORE`` ردیف ذخیره می‌شود: قبلاً درخواستِ ۵۰ → ۱۰۰ → ۲۰۰ در یک
+    overview سه بار کلِ تیکرِ بایننس را می‌گرفت (هر اندازهٔ بزرگ‌تر کش را باطل می‌کرد).
+    """
     with _lock:
-        if time.time() - _top_cache["ts"] < 600 and len(_top_cache["symbols"]) >= n:
+        if _top_fresh(n):
             return _top_cache["symbols"][:n], _top_cache["tickers"]
+    with _flight_lock(("top",)):
+        with _lock:                                # نخِ دیگری همین حالا گرفته باشد
+            if _top_fresh(n):
+                return _top_cache["symbols"][:n], _top_cache["tickers"]
+        symbols, tickers = _fetch_top(max(n, TOP_STORE))
+        return symbols[:n], tickers
+
+
+def _fetch_top(n):
     symbols, tickers = [], {}
     try:
         data = _binance_json("/api/v3/ticker/24hr")
@@ -121,7 +196,7 @@ def get_top_symbols(n=15):
                     return _top_cache["symbols"][:n], _top_cache["tickers"]
             raise
     with _lock:
-        _top_cache.update(ts=time.time(), symbols=symbols, tickers=tickers)
+        _top_cache.update(ts=time.time(), symbols=symbols, tickers=tickers, n_req=n)
     return symbols, tickers
 
 
@@ -155,7 +230,8 @@ def cache_stats(now=None):
         row["newest_age_sec"] = round(row["newest_age_sec"], 1)
         row["oldest_age_sec"] = round(row["oldest_age_sec"], 1)
     return {"klines_by_tf": out, "universe_age_sec": round(top_age, 1) if top_age else None,
-            "universe_size": len(_top_cache["symbols"])}
+            "universe_size": len(_top_cache["symbols"]),
+            "hosts_cooling": host_status(now)}      # میزبان‌های قطع/مسدود که فعلاً دور زده می‌شوند
 
 
 def current_bar(symbol, tf):
@@ -193,6 +269,17 @@ def get_klines(symbol, tf, limit=420):
         hit = _kline_cache.get(key)
         if hit and (hit[0] >= boundary or now - hit[0] < 45):
             return hit[1]
+    with _flight_lock(("kl", symbol, tf)):         # هم‌زمان‌ها منتظرِ همین یک دریافت می‌مانند
+        with _lock:
+            hit = _kline_cache.get(key)
+            if hit and (hit[0] >= boundary or now - hit[0] < 45):
+                return hit[1]
+        return _fetch_klines(symbol, tf, limit)
+
+
+def _fetch_klines(symbol, tf, limit):
+    key = (symbol, tf)
+    now = time.time()                              # پس از انتظار برای قفل — مرزِ کندلِ باز دقیق بماند
     data = None
     try:
         raw = _binance_json("/api/v3/klines", {"symbol": symbol, "interval": TF_BINANCE[tf], "limit": limit + 1})
@@ -228,11 +315,16 @@ def get_history(symbol, tf, bars=3000):
     """تاریخچه عمیق (تا چند هزار کندل) برای کالیبراسیون — با صفحه‌بندی و کش دیسک ۲۴ساعته."""
     os.makedirs(HIST_DIR, exist_ok=True)
     path = os.path.join(HIST_DIR, f"{symbol}_{tf}.json")
-    if os.path.exists(path) and time.time() - os.path.getmtime(path) < HIST_TTL:
-        with open(path, "r", encoding="utf-8") as f:
-            cached = json.load(f)
-        if len(cached.get("c", [])) >= bars * 0.7:
-            return cached
+    with _flight_lock(("hist", path)):             # چند تحلیلِ هم‌زمان = یک صفحه‌بندی، نه چند تا
+        if os.path.exists(path) and time.time() - os.path.getmtime(path) < HIST_TTL:
+            with open(path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            if len(cached.get("c", [])) >= bars * 0.7:
+                return cached
+        return _fetch_history(symbol, tf, bars, path)
+
+
+def _fetch_history(symbol, tf, bars, path):
     rows, end = [], None
     try:
         while len(rows) < bars:
@@ -289,32 +381,64 @@ def _fapi_json(path, params=None):
     for host in FAPI_HOSTS:
         try:
             return _get_json(host + path, params)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400:
+                raise                              # نمادِ بی‌قرارداد — میزبانِ بعدی هم همین را می‌گوید
+            last_err = e
         except Exception as e:  # noqa: BLE001
             last_err = e
             continue
     raise RuntimeError(str(last_err) if last_err else "fapi unavailable")
 
 
+NEG_TTL = 600.0             # «منبع در دسترس نبود» این‌قدر در حافظه می‌ماند (نه ۱۲ ساعت روی دیسک)
+_neg_until: dict = {}       # path -> تا این لحظه بدونِ تماسِ شبکه خالی برگردان
+
+
+def _neg_hit(path):
+    return _neg_until.get(path, 0.0) > time.time()
+
+
+def _answered(e):
+    """منبع پاسخ داد ولی داده‌ای نداشت (نمادِ نامعتبر) — برخلافِ قطع/مسدودی/کول‌داون."""
+    return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (400, 404)
+
+
 def get_funding_history(symbol, max_rows=1000):
     """تاریخچه فاندینگ‌ریت فیوچرز (هر ۸ ساعت) — کش دیسک ۱۲ساعته. خالی اگر در دسترس نباشد."""
     os.makedirs(HIST_DIR, exist_ok=True)
     path = os.path.join(HIST_DIR, f"funding_{symbol}.json")
-    if os.path.exists(path) and time.time() - os.path.getmtime(path) < 43200:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+    # تحلیل (live_funding_z) و واکشیِ پس‌زمینه (_fetch_funding) هم‌زمان همین را می‌خواستند
+    with _flight_lock(("funding", path)):
+        if os.path.exists(path) and time.time() - os.path.getmtime(path) < 43200:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        if _neg_hit(path):
+            return []
+        return _fetch_funding_history(symbol, max_rows, path)
+
+
+def _fetch_funding_history(symbol, max_rows, path):
     rows = []
+    answered = True
     try:
         raw = _fapi_json("/fapi/v1/fundingRate", {"symbol": symbol, "limit": max_rows})
         rows = [[int(r["fundingTime"]), float(r["fundingRate"])] for r in raw]
-    except Exception:  # noqa: BLE001
+    except Exception as e1:  # noqa: BLE001
         # پشتیبان OKX
         try:
             inst = symbol.replace("USDT", "") + "-USDT-SWAP"
             raw = _get_json(OKX + "/api/v5/public/funding-rate-history",
                             {"instId": inst, "limit": min(max_rows, 100)})["data"]
             rows = [[int(r["fundingTime"]), float(r["fundingRate"])] for r in reversed(raw)]
-        except Exception:  # noqa: BLE001
+        except Exception as e2:  # noqa: BLE001
             rows = []
+            answered = _answered(e1) or _answered(e2)
+    if not answered:
+        # هیچ منبعی در دسترس نبود: مثل قبل خالی برمی‌گردد، ولی «خالی» به‌جای ۱۲ ساعت روی دیسک
+        # فقط NEG_TTL در حافظه می‌ماند — با برگشتنِ شبکه زودتر درست می‌شود
+        _neg_until[path] = time.time() + NEG_TTL
+        return rows
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(rows, f)
@@ -341,9 +465,16 @@ def get_oi_history(symbol, period="1h", limit=48):
     """تاریخچهٔ Open Interest — اول Binance fapi، بعد OKX. کش ۱ساعته."""
     os.makedirs(HIST_DIR, exist_ok=True)
     path = os.path.join(HIST_DIR, f"oi_{symbol}_{period}.json")
-    if os.path.exists(path) and time.time() - os.path.getmtime(path) < 3600:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+    with _flight_lock(("oi", path)):
+        if os.path.exists(path) and time.time() - os.path.getmtime(path) < 3600:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        if _neg_hit(path):
+            return []
+        return _fetch_oi_history(symbol, period, limit, path)
+
+
+def _fetch_oi_history(symbol, period, limit, path):
     rows = []
     try:
         raw = _fapi_json(
@@ -352,8 +483,10 @@ def get_oi_history(symbol, period="1h", limit=48):
         )
         rows = [[int(r["timestamp"]), float(r["sumOpenInterest"])] for r in raw]
         rows.sort(key=lambda x: x[0])
-    except Exception:  # noqa: BLE001
+        answered = True
+    except Exception as e:  # noqa: BLE001
         rows = []
+        answered = _answered(e)
     if not rows:
         try:
             # OKX: uly مثل BTC-USDT ، period مثل 1H
@@ -371,8 +504,13 @@ def get_oi_history(symbol, period="1h", limit=48):
                     parsed.append([int(r[0]), float(r[1])])
             parsed.sort(key=lambda x: x[0])
             rows = parsed[-limit:]
-        except Exception:  # noqa: BLE001
+            answered = True
+        except Exception as e:  # noqa: BLE001
             rows = []
+            answered = answered or _answered(e)
+    if not answered:
+        _neg_until[path] = time.time() + NEG_TTL   # شبکه قطع بود — «خالی» را روی دیسک کش نکن
+        return rows
     # ⚠️ پشتیبانِ «EMAِ حجمِ اسپات به‌جای OI» حذف شد: متا-گیت آن را اهرم می‌خواند و
     # بلاکِ سخت می‌زد. نبودِ داده = «نامعلوم»، نه عددِ ساختگی.
     tmp = path + ".tmp"

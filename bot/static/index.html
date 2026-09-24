@@ -259,6 +259,95 @@
   .lateBtn{background:var(--brass-dim) !important; color:var(--brass) !important;
            border:1px solid rgba(232,180,76,.4) !important; cursor:pointer !important; font-weight:700 !important}
   #eqCurve svg{vertical-align:middle}
+
+  /* ─── خطِ وضعیتِ فشرده (جای بنرهای بلندِ قبلی؛ جزئیات با یک کلیک) ─── */
+  .sline{display:flex; align-items:center; gap:5px 10px; flex-wrap:wrap; margin-bottom:12px; padding:8px 14px;
+         background:var(--surface); border:1px solid var(--line); border-radius:12px; font-size:12.5px; color:var(--dim)}
+  .sline b{color:var(--ink); font-weight:600}
+  .sline b.up{color:var(--up)} .sline b.dn{color:var(--dn)}
+  .sline .sep{opacity:.35}
+  .sl-more{margin-inline-start:auto; background:var(--surface2); border:1px solid var(--line2); color:var(--ink);
+           border-radius:8px; padding:3px 12px; cursor:pointer; font:600 12px "Vazirmatn"; white-space:nowrap}
+  .sl-more:hover{border-color:var(--brass)}
+  #slDetails{margin-bottom:4px}
+  .ovErr{color:var(--brass); font-size:12.5px; margin:0 2px 8px}
+  .ovErr:empty{display:none}
+
+  /* ─── ماتریسِ تصمیم: ۵ ارز × ۴ تایم‌فریم ─── */
+  .dm{margin-bottom:16px; background:linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
+      border:1px solid var(--line2); border-radius:16px; padding:14px 16px 12px; box-shadow:0 10px 40px rgba(0,0,0,.3)}
+  .dm-head{display:flex; align-items:baseline; gap:6px 12px; flex-wrap:wrap; margin-bottom:10px}
+  .dm-head h2{margin:0}
+  .dm-meta{font-size:11.5px; color:var(--dim); margin-inline-start:auto}
+  .dm-row{display:grid; grid-template-columns:92px repeat(4, minmax(0,1fr)); gap:8px; margin-bottom:8px; align-items:stretch}
+  .dm-row.hd{margin-bottom:4px}
+  .dm-row.hd span{font-size:11.5px; color:var(--dim); text-align:center; font-weight:600}
+  .dm-row.hd span.act{color:var(--brass)}
+  .dm-coin{display:flex; flex-direction:column; justify-content:center; font-weight:800; font-size:15px; min-width:0}
+  .dm-coin small{font-size:10.5px; color:var(--dim); font-weight:400}
+  .dm-cell{display:flex; flex-direction:column; align-items:center; gap:4px; text-align:center; min-width:0;
+           background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:9px 8px 8px;
+           cursor:pointer; color:var(--ink); font:inherit; transition:border-color .13s, transform .08s}
+  .dm-cell:hover{border-color:var(--line2)}
+  .dm-cell:active{transform:translateY(1px)}
+  .dm-cell.act{box-shadow:inset 0 0 0 1px rgba(232,180,76,.45)}
+  .dm-cell.long{background:linear-gradient(180deg, var(--up-dim), var(--surface) 75%); border-color:rgba(43,217,160,.42)}
+  .dm-cell.short{background:linear-gradient(180deg, var(--dn-dim), var(--surface) 75%); border-color:rgba(255,92,122,.42)}
+  .dm-cell.none{cursor:default; opacity:.7}
+  .dm-tf{font-size:10.5px; color:var(--faint); display:none}
+  .dm-call{font-size:18px; font-weight:800; line-height:1.25; white-space:nowrap}
+  .dm-cell.long .dm-call{color:var(--up)} .dm-cell.short .dm-call{color:var(--dn)} .dm-cell.wait .dm-call{color:var(--dim)}
+  .dm-lean{font-size:11.5px; font-weight:700; margin-inline-start:5px; white-space:nowrap}
+  .dm-str{display:block; width:100%; max-width:120px; height:5px; border-radius:3px; background:var(--surface2); overflow:hidden}
+  .dm-str i{display:block; height:100%; border-radius:3px; background:var(--faint)}
+  .dm-cell.long .dm-str i{background:var(--up)} .dm-cell.short .dm-str i{background:var(--dn)}
+  .dm-rec{font-size:10.5px; line-height:1.5; color:var(--dim); direction:rtl; unicode-bidi:isolate;
+          font-family:"Vazirmatn","Segoe UI",Tahoma,sans-serif; letter-spacing:0}
+  /* رنگِ حکمِ کارنامه: زیان‌ده = قرمز، مثبت (تأییدنشده) = کهربایی — هرگز سبز —، نامشخص/نمونهٔ کم = خاکستری */
+  .v-loss{color:var(--dn)} .v-pos{color:var(--brass)} .v-neu{color:var(--dim)}
+  .dm-cell{position:relative}
+  .dm-wb{position:absolute; top:4px; inset-inline-end:6px; font-size:11px; line-height:1; color:var(--brass); font-weight:700}
+  .dm-sl{font-size:10px; color:var(--faint); line-height:1.2}
+  .dm-rd{display:flex; flex-direction:column; align-items:center; gap:3px; width:100%; font-size:10.5px; color:var(--dim); line-height:1.2}
+  .dm-rd > i{display:block; width:100%; max-width:90px; height:2px; border-radius:2px; background:var(--surface2); overflow:hidden}
+  .dm-rd > i > i{display:block; height:100%; background:var(--line2)}
+  .dm-na{font-size:10px; color:var(--faint); line-height:1.4}
+  .dm-rec .na{opacity:.6}
+  .dm-scm{margin-top:6px; font-size:11.5px; color:var(--dim); line-height:1.9}
+  .dd-verdict{margin-top:8px; padding:8px 10px; border-radius:9px; font-size:12.5px; line-height:1.8; color:var(--ink);
+              border:1px solid var(--line2); background:var(--surface2)}
+  .dd-verdict.vb-loss{border-color:var(--dn); background:var(--dn-dim)}
+  .dd-verdict.vb-positive{border-color:var(--brass); background:var(--brass-dim)}
+  .dd-caution{margin-top:8px; padding:8px 10px; border-radius:9px; font-size:12px; line-height:1.8; color:var(--ink);
+              border:1px solid rgba(232,180,76,.45); background:var(--brass-dim)}
+  .dd-caution .dd-reasons{color:var(--ink); margin-top:2px}
+  .dm-honest{margin-top:4px; font-size:12px; color:var(--dim); line-height:1.8; border-top:1px dashed var(--line2); padding-top:8px}
+  .dm-state{padding:18px; text-align:center; color:var(--dim); font-size:13px; line-height:1.9}
+  .dm-state.err{color:var(--dn)}
+  .dmcall{min-width:96px; font-size:14px; font-weight:800; cursor:pointer}
+  .dmcall.l{background:var(--up-dim); color:var(--up); border:1px solid rgba(43,217,160,.45)}
+  .dmcall.s{background:var(--dn-dim); color:var(--dn); border:1px solid rgba(255,92,122,.45)}
+  .dmcall.w{background:var(--surface2); color:var(--dim); border:1px solid var(--line2)}
+  /* پنلِ جزئیاتِ یک خانه */
+  .dd-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px}
+  .comp.v{grid-template-columns:86px 1fr 44px 18px}
+  .dd-reasons{margin:6px 0 0; padding-inline-start:18px; font-size:12px; color:var(--dim); line-height:1.85}
+  .dd-warn{margin-top:8px; padding:8px 10px; border-radius:9px; font-size:12px; border:1px solid var(--dn); background:var(--dn-dim); color:var(--ink)}
+  .dd-in{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:6px 0}
+
+  @media (max-width:720px){
+    main{padding:12px 16px 50px}
+    header{padding:10px 16px; position:static} .pulse{padding:6px 16px} .appnav{padding:6px 12px; overflow-x:auto}
+    .fhint{display:none}
+    .dm{padding:12px}
+    .dm-row.hd{display:none}
+    .dm-row{grid-template-columns:1fr 1fr; gap:6px; margin-bottom:12px}
+    .dm-coin{grid-column:1/-1; flex-direction:row; align-items:baseline; gap:8px}
+    .dm-tf{display:block}
+    .dm-call{font-size:16px}
+    .dd-grid{grid-template-columns:1fr}
+    .sheet{padding:16px}
+  }
   @media (prefers-reduced-motion: reduce){ .led,.skel td{animation:none} .bar i{transition:none} .sheet{animation:none} }
 </style>
 </head>
@@ -268,7 +357,7 @@
 <header>
   <div class="brand">
     <div class="mark">⌁</div>
-    <div><h1>میز فرمان CTP</h1><div class="sub">پایش ارزهای برتر · ورود فقط با ترکیبِ پیش‌ثبت‌شده و قضاوت‌شده</div></div>
+    <div><h1>میز فرمان CTP</h1><div class="sub">تصمیمِ هر ارز در هر تایم‌فریم، کنارِ کارنامه‌اش · ورودِ خودکار فقط با قفلِ ایمنی</div></div>
   </div>
   <nav class="tabs" id="tfTabs">
     <button data-tf="15m">۱۵ دقیقه</button>
@@ -302,11 +391,21 @@
 </div>
 
 <main>
-  <div id="gateBanner"></div>
-  <div id="momBanner"></div>
-  <div id="trendBanner"></div>
-  <div id="calibBanner"></div>
-  <div id="edgeBanner"></div>
+  <!-- خطِ وضعیتِ فشرده؛ بنرهای کامل (قفل، مومنتوم، روند، کالیبراسیون، جیبِ لبه) زیرِ «جزئیات» -->
+  <div class="sline" id="sline">
+    <span id="slGate">🔒 معاملهٔ خودکار: در حالِ خواندن…</span>
+    <span class="sep">·</span><span id="slMom">🧭 مومنتوم BTC/ETH: …</span>
+    <span class="sep">·</span><span id="slTrend">📈 روندِ روزانه: …</span>
+    <span id="slCalib"></span>
+    <button class="sl-more" id="slBtn" onclick="toggleSline()" aria-expanded="false" aria-controls="slDetails">جزئیات ▾</button>
+  </div>
+  <div id="slDetails" hidden>
+    <div id="gateBanner"></div>
+    <div id="momBanner"></div>
+    <div id="trendBanner"></div>
+    <div id="calibBanner"></div>
+    <div id="edgeBanner"></div>
+  </div>
 
   <!-- ═══ صفحهٔ ربات ═══ -->
   <section class="page" id="page-bot">
@@ -334,13 +433,25 @@
 
   <!-- ═══ صفحهٔ بازار ═══ -->
   <section class="page on" id="page-market">
+  <!-- ═══ ماتریسِ تصمیم: یک تصمیمِ روشن برای هر ارز در هر تایم‌فریم، با کارنامه‌اش ═══ -->
+  <section class="dm" id="dmWrap" aria-label="ماتریس تصمیم">
+    <div class="dm-head">
+      <h2>🧮 ماتریسِ تصمیم <small class="posmeta">روی هر خانه بزنید تا اجزا، دلیل‌ها، ورود/حدضرر و کارنامه بیاید</small></h2>
+      <span class="dm-meta" id="dmMeta"></span>
+    </div>
+    <div id="dmGrid"><div class="dm-state">🧠 در حالِ ساختنِ ماتریسِ تصمیم…</div></div>
+    <div class="dm-scm" id="dmScMeta"></div>
+    <p class="dm-honest">⚠️ این‌ها تحلیلِ ترکیبیِ اندیکاتورها و هوش مصنوعی‌اند، نه سیگنالِ تأییدشده. در بک‌تستِ دوساله پس از کارمزد، تصمیم‌های ۱۵ دقیقه و ۱ ساعت روی هر پنج ارز زیان‌ده بوده‌اند و ۴ ساعته حدودِ سربه‌سر؛ روزانه نمونهٔ کافی ندارد. کارنامهٔ هر خانه را ببینید.
+      <br><small>خطِ زیرِ هر خانه = کارنامهٔ بک‌تستِ همان تصمیم (درصدِ برد · میانگینِ R پس از کارمزد · حکم): <span class="v-loss">قرمز = زیان‌ده</span>، <span class="v-pos">کهربایی = مثبت ولی تأییدنشده</span>، <span class="v-neu">خاکستری = نامشخص یا نمونهٔ کم</span>. نوار = امتیازِ فنی (۰ تا ۱۰۰؛ احتمالِ برد نیست). «صبر» یعنی شرطِ ورود کامل نیست؛ فلش = تمایل، «آمادگی» = چه مقدار از شرط‌های ورود پر است. ⚠ = هشدارِ موتور (در جزئیاتِ خانه).</small><span id="dmNote"></span></p>
+  </section>
+
   <div class="stats" id="statsRow"></div>
 
   <div class="fbar">
     <input type="search" id="q" placeholder="جستجوی ارز — کلید /" oninput="VIEW.q=this.value.trim().toUpperCase();renderTable()">
     <span class="fchip on" data-f="all" onclick="setFilter(this)">همه</span>
     <span class="fchip" data-f="predict" onclick="setFilter(this)">🎯 پیش‌بینی جهت</span>
-    <span class="fchip" data-f="ok" onclick="setFilter(this)">📈 سیگنال‌های قابل‌اقدام</span>
+    <span class="fchip" data-f="ok" id="okChip" onclick="setFilter(this)" title="سیگنال‌های امروزِ روشِ روندِ روزانه (فقط در تبِ روزانه)">📈 روندِ روزانه</span>
     <span class="fchip" data-f="sided" onclick="setFilter(this)">سیگنال‌دار</span>
     <span class="fchip" data-f="blocked" onclick="setFilter(this)">مسدود</span>
     <span class="fchip" data-f="waiting" onclick="setFilter(this)">منتظر</span>
@@ -354,7 +465,7 @@
     <span class="fchip" id="soundChip" onclick="toggleSound()">🔊 صدا</span>
     <span class="fhint">مرتب‌سازی: کلیک روی عنوان ستون · جستجو: کلید /</span>
   </div>
-  <div id="tfTrustNote" class="note" style="margin:-4px 2px 10px"></div>
+  <div class="ovErr" id="ovErr"></div>
 
   <div class="card">
     <table>
@@ -397,7 +508,7 @@
       <span class="fchip" style="margin-inline-start:auto" onclick="exportHistCSV()">⬇ CSV تاریخچه</span></h2>
   <div class="posgrid" id="closedPos"></div>
 
-  <p class="note" style="margin-top:18px">⚠️ همه پوزیشن‌ها «دمو» هستند و هیچ معامله واقعی انجام نمی‌شود. احتمال‌های ✓ از وین‌ریت واقعی ستاپ‌های مشابه در ~۳۰۰۰ کندل تاریخی ۴۰ ارز کالیبره شده‌اند؛ هیچ‌کدام قطعیت نیستند. ستاپ‌های با ارزش انتظاری منفی، خلاف بیت‌کوین یا خلاف مدل جهت‌یاب خودکار مسدود می‌شوند. مسئولیت تصمیم واقعی با شماست.</p>
+  <p class="note" style="margin-top:18px">⚠️ همه پوزیشن‌ها «دمو» هستند و هیچ معامله واقعی انجام نمی‌شود. وین‌ریت‌ها و کارنامه‌ها از داده‌های گذشتهٔ همین ۵ ارز می‌آیند و قطعیت نیستند؛ در بک‌تستِ دوساله پس از کارمزد، تصمیم‌های لانگ/شورتِ ۱۵ دقیقه و ۱ ساعت روی هر پنج ارز زیان‌ده بوده‌اند و ۴ ساعته حدودِ سربه‌سر؛ روزانه نمونهٔ کافی ندارد و هیچ‌کدام لبهٔ تأییدشده‌ای ندارند. ورودِ خودکار فقط با قفلِ ایمنی است. مسئولیت تصمیم واقعی با شماست.</p>
   </section>
 </main>
 
@@ -446,7 +557,7 @@
 
     <hr style="border-color:var(--line); margin:18px 0">
     <h3>📐 کالیبراسیون آماری</h3>
-    <p class="note">احتمال‌ها و EV از وین‌ریت واقعی سیگنال‌های تاریخی ~۳۰۰۰ کندلی ۴۰ ارز برتر ساخته می‌شوند و روزی یک‌بار خودکار تازه می‌شوند.</p>
+    <p class="note">احتمال‌ها و EV از وین‌ریت واقعی سیگنال‌های تاریخیِ ارزهای پایش‌شده ساخته می‌شوند و روزی یک‌بار خودکار تازه می‌شوند؛ مجوزِ ورود نمی‌دهند.</p>
     <div id="calStatus" class="note">—</div>
     <button class="gear" style="margin-top:8px" onclick="rebuildCalib()">🔄 بازکالیبراسیون دستی</button>
 
@@ -477,6 +588,14 @@
       <button class="btn long" id="tmGo" onclick="tmConfirm()" style="flex:1">باز کردن پوزیشن</button>
       <button class="gear" onclick="tmSetRisk()">حجم برای ریسک <b class="num" id="tmRiskDef">20</b>$</button>
     </div>
+  </div>
+</div>
+
+<!-- پنلِ جزئیاتِ یک خانهٔ ماتریسِ تصمیم -->
+<div class="drawer" id="dmDrawer" onclick="if(event.target===this)closeDecision()">
+  <div class="sheet" style="width:min(840px,97vw)">
+    <button class="closebtn" onclick="closeDecision()">✕ بستن</button>
+    <div id="ddBody"></div>
   </div>
 </div>
 
@@ -522,7 +641,7 @@ setInterval(()=>{
   $("#refreshCd").textContent = fmtCd(nextRefresh - now);
   // رفرش خودکار دقیقاً بعد از بسته‌شدن کندل — لحظه‌ای که سیگنال‌ها واقعاً عوض می‌شوند
   const bnd = Math.floor(now / per);
-  if(window._bnd != null && window._bnd !== bnd) setTimeout(loadOverview, 5000);
+  if(window._bnd != null && window._bnd !== bnd){ setTimeout(() => loadOverview(), 5000); setTimeout(() => loadDecisions(), 9000); }
   window._bnd = bnd;
 }, 1000);
 
@@ -535,23 +654,81 @@ const nprog = (()=>{
     done(){ active = Math.max(0, active-1); if(active>0) return; const e = el(); if(!e) return; clearInterval(timer); e.style.width="100%"; setTimeout(()=>{ e.classList.remove("on"); e.style.width="0"; }, 350); }
   };
 })();
-async function jget(url){                        // fetch با نوارِ پیشرفت
+/* ═══════════ درخواست با مهلت — هیچ رفرشی بی‌پایان معطل نمی‌ماند ═══════════ */
+const FETCH_MS = 25000, ABORTED = "__aborted__";
+const faN = (x, d=0) => (x==null || !isFinite(x)) ? "" : Number(x).toLocaleString("fa-IR", {minimumFractionDigits:d, maximumFractionDigits:d});
+const faS = (x, d=2) => (x==null || !isFinite(x)) ? "" : (x<0 ? "−" : x>0 ? "+" : "") + faN(Math.abs(x), d);
+const esc = s => String(s==null ? "" : s).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch]);
+const coinOf = s => String(s||"").replace("USDT","");
+// fetch + JSON زیرِ یک مهلت؛ ctl بیرونی برای لغوِ درخواستِ کهنه (مثلاً عوض‌شدنِ تب)
+async function jfetch(url, opts, ms, ctl){
+  ms = ms || FETCH_MS;
+  const ac = ctl || new AbortController();
+  let timedOut = false;
+  const t = setTimeout(()=>{ timedOut = true; ac.abort(); }, ms);
+  try{
+    const r = await fetch(url, Object.assign({}, opts||{}, {signal: ac.signal}));
+    let d = {};
+    try{ d = await r.json(); }catch(e){ if(ac.signal.aborted) throw e; d = {}; }
+    return {r, d: d || {}};
+  }catch(e){
+    if(ac.signal.aborted) throw new Error(timedOut ? `سرور در ${faN(ms/1000)} ثانیه پاسخ نداد` : ABORTED);
+    throw new Error("اتصال به سرور برقرار نشد — برنامه در حالِ اجراست؟");
+  }finally{ clearTimeout(t); }
+}
+function errMsg(r, d){
+  const x = d && d.detail;
+  if(typeof x === "string" && x) return x;
+  if(Array.isArray(x)) return "ورودیِ نامعتبر: " + x.map(e => (e && e.msg) || "").filter(Boolean).join("، ");
+  return r.status === 404 ? "این سرویس روی سرور پیدا نشد (۴۰۴)" : `خطای سرور (${r.status})`;
+}
+async function jq(url, ms){                        // GET با مهلت، بی‌نوارِ پیشرفت (رفرش‌های پس‌زمینه)
+  const {r, d} = await jfetch(url, {cache:"no-store"}, ms);
+  if(!r.ok) throw new Error(errMsg(r, d));
+  return d;
+}
+async function jget(url, ms){                      // GET با مهلت و نوارِ پیشرفت
   nprog.start();
-  try{ return await (await fetch(url)).json(); }
+  try{ return await jq(url, ms); }
   finally{ nprog.done(); }
+}
+// اجرای دوره‌ای که اگر دورِ قبل هنوز تمام نشده، این دور را رد می‌کند (درخواست‌ها روی هم انباشته نمی‌شوند)
+const _busy = {};
+function every(ms, name, fn){
+  setInterval(async ()=>{
+    if(_busy[name]) return;
+    _busy[name] = true;
+    try{ await fn(); }catch(e){}
+    finally{ _busy[name] = false; }
+  }, ms);
+}
+function setSL(id, html){ const e = document.getElementById(id); if(e) e.innerHTML = html; }
+function toggleSline(force){
+  const box = $("#slDetails"), btn = $("#slBtn");
+  if(!box || !btn) return;
+  const open = force != null ? !!force : box.hidden;
+  box.hidden = !open;
+  btn.textContent = open ? "بستن ▴" : "جزئیات ▾";
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  try{ localStorage.slOpen = open ? "1" : ""; }catch(e){}
 }
 
 /* ═══════════ بنرِ قفلِ ایمنی و سلامت ═══════════ */
 async function loadGateBanner(){
   try{
     const [g, h, r] = await Promise.all([
-      (await fetch("/api/gates", {cache:"no-store"})).json(),
-      (await fetch("/api/health", {cache:"no-store"})).json(),
-      (await fetch("/api/research", {cache:"no-store"})).json(),
+      jq("/api/gates"),
+      jq("/api/health").catch(() => ({})),
+      jq("/api/research").catch(() => ({})),
     ]);
+    window.GATES = g;
     const el = $("#gateBanner");
     const combos = (g.allowed_combos||[]);
     const color = h.status==="green" ? "var(--up)" : h.status==="amber" ? "var(--brass)" : "var(--dn)";
+    setSL("slGate", `🔒 معاملهٔ خودکار: <b>${combos.length ? `فقط ${faN(combos.length)} ترکیبِ مجاز` : "خاموش"}</b>`
+      + (combos.length ? "" : ` <small>(هیچ ترکیبی در قفلِ ایمنی مجاز نیست)</small>`)
+      + (g.live_effective ? ` · پول واقعی: <b class="dn">فعال</b>` : "")
+      + (h.status && h.status !== "green" ? ` · سلامت: <b style="color:${color}">${esc(h.status)}</b>` : ""));
     const judged = r.judgement && r.judgement.judged;
     const evid = judged ? Object.entries(r.judgement.hypotheses||{})
         .map(([k,v])=>`${k}: ${({edge_proven:"اثبات شد",no_edge:"لبه نیست",
@@ -564,9 +741,9 @@ async function loadGateBanner(){
         <span style="color:${color}">سلامت: <b>${h.status}</b></span></div>
       ${(h.problems||[]).length?`<div class="sub" style="color:var(--dn)">${h.problems.join(" · ")}</div>`:""}
       ${judged?`<div class="sub">حکمِ آزمونِ منجمد: ${evid}</div>`
-        : `<div class="sub">آزمونِ منجمد هنوز قضاوت نشده (${r.integrity})</div>`}
+        : `<div class="sub">آزمونِ منجمد هنوز قضاوت نشده (${r.integrity||"—"})</div>`}
     </div>`;
-  }catch(e){}
+  }catch(e){ if(!window.GATES) setSL("slGate", `🔒 معاملهٔ خودکار: <b>وضعیت خوانده نشد</b>`); }
 }
 
 /* ═══════════ روندِ روزانه — نامزدِ پژوهشی، فقط کاغذی ═══════════ */
@@ -683,8 +860,10 @@ async function openMomDemo(sym){
 function setMomAlloc(){ try{ localStorage.momAlloc = $("#momAlloc").value.trim(); }catch(e){} }
 async function loadMomentum(){
   try{
-    const d = await (await fetch("/api/momentum", {cache:"no-store"})).json();
+    const d = await jq("/api/momentum");
     const el = $("#momBanner"); if(!el || !d.assets) return;
+    setSL("slMom", "🧭 مومنتوم: " + (["BTCUSDT","ETHUSDT"].filter(s => d.assets[s]).map(s =>
+      `${coinOf(s)} ${((d.assets[s].current||{}).in_market) ? '<b class="up">در بازار</b>' : "<b>نقد</b>"}`).join("، ") || "بی‌داده"));
     let alloc = 20; try{ alloc = parseFloat(localStorage.momAlloc||"20")||20; }catch(e){}
     const day = ms => new Date(ms).toLocaleDateString("fa-IR", {timeZone:"UTC"});
     const ev = d.evidence || {};
@@ -728,11 +907,17 @@ function setTrendSizing(){
 async function loadTrendBanner(){
   try{
     const [d, x] = await Promise.all([
-      (await fetch("/api/trend", {cache:"no-store"})).json(),
-      fetch("/api/trend/testnet", {cache:"no-store"}).then(r => r.json()).catch(() => null),
+      jq("/api/trend"),
+      jq("/api/trend/testnet").catch(() => null),
     ]);
     const el = $("#trendBanner"); if(!el) return;
     if(!d.rules){ setTimeout(loadTrendBanner, 15000); return; }   // سرور تازه بالا آمده — زود دوباره
+    {
+      const nm = (d.now||[]).filter(x => (x.category === "new" || x.category === "join") && x.valid !== false).map(x => coinOf(x.sym));
+      const oosFail = (((d.evidence||{}).oos)||{}).verdict === "FAIL";
+      setSL("slTrend", `📈 روندِ روزانه: ${nm.length ? `<b class="up">${nm.join("، ")}</b>` : "امروز سیگنالی نیست"}`
+        + (nm.length && oosFail ? ` <small>(در آزمونِ خارج از نمونه رد شد — فقط دمو)</small>` : ""));
+    }
     const ae = document.activeElement;                            // وسطِ تایپِ سرمایه/ریسک، پنل را از نو نساز
     if(ae && (ae.id === "trCap" || ae.id === "trRisk")){ window.TREND = d; return; }
     const P = d.primary, evd = d.evidence || {}, ev = (evd.rules||{})[P] || {}, acct = ev.account || {};
@@ -811,8 +996,7 @@ async function loadTrendBanner(){
       ${trendTestnetHtml(x)}
     </div>`;
     window.TREND = d;
-    renderTable();                                       // ردیف‌های روند در هر تب بالای جدول + فیلترِ «قابل‌اقدام»
-    renderTfNote();
+    renderTable();                                       // ردیف‌های روند فقط در تبِ روزانه + فیلترِ «روندِ روزانه»
     notifyTrendSignals(d);
   }catch(e){ setTimeout(loadTrendBanner, 15000); }   // خطای شبکه در بالا آمدنِ سرور — ۱۰ دقیقه صبر نکن
 }
@@ -820,10 +1004,11 @@ async function loadTrendBanner(){
 /* ═══════════ بنرِ ساختِ کالیبراسیون ═══════════ */
 async function loadCalibBanner(){
   try{
-    const d = await (await fetch("/api/calib/status")).json();
+    const d = await jq("/api/calib/status");
     const el = $("#calibBanner");
     if(d.building){
       const pctN = d.total ? Math.round(d.done/d.total*100) : 0;
+      setSL("slCalib", `<span class="sep">·</span> 🧠 آموزشِ مدل: <b>${faN(pctN)}٪</b>`);
       el.innerHTML = `<div class="calbanner">
         <div class="top"><span>🧠 <b>هستهٔ هوش مصنوعی در حال آموزش</b> — ${d.progress||"…"}</span>
              <span class="num">${d.done||0}/${d.total||0} · ${pctN}٪</span></div>
@@ -832,6 +1017,7 @@ async function loadCalibBanner(){
       if(!window._calibTimer) window._calibTimer = setInterval(loadCalibBanner, 4000);
     } else {
       el.innerHTML = "";
+      setSL("slCalib", "");
       if(window._calibTimer){ clearInterval(window._calibTimer); window._calibTimer = null; loadEngineCred(); loadOverview(); }
     }
   }catch(e){}
@@ -839,7 +1025,7 @@ async function loadCalibBanner(){
 
 async function loadEngineCred(){
   try{
-    const d = await (await fetch("/api/calib/status")).json();
+    const d = await jq("/api/calib/status");
     if(!d.models) return;
     const parts = Object.entries(d.models).map(([tf,m])=>{
       const action = m.action_trusted;
@@ -871,7 +1057,7 @@ async function loadEngineCred(){
 
 async function loadEdgeHealth(){
   try{
-    const d = await (await fetch("/api/edge-health")).json();
+    const d = await jq("/api/edge-health");
     const el = $("#edgeBanner");
     if(!el || !d.ok){ if(el) el.innerHTML = ""; return; }
     const h = d.health || {}, fq = d.fill_quality || {};
@@ -899,7 +1085,7 @@ async function loadEdgeHealth(){
 
 async function loadVersion(){
   try{
-    const d = await (await fetch("/api/version", {cache:"no-store"})).json();
+    const d = await jq("/api/version");
     const model = d.model_version==null ? "در حال ساخت" : `مدل v${d.model_version}`;
     const state = d.model_building ? " · آموزش…" : d.model_stale ? " · کهنه" : "";
     $("#versionPill").innerHTML = `برنامه <b>v${d.app_version}</b> · هسته <b>${d.ai_core_version}</b> · ${model}${state}`;
@@ -921,7 +1107,11 @@ function defSizeFor(riskPct){
 /* ═══════════ جدول اصلی ═══════════ */
 let VIEW = {q:"", filter:"all", sort:"score", dir:-1, showAll:false};
 try{ Object.assign(VIEW, JSON.parse(localStorage.view||"{}"), {q:""}); }catch(e){}
-function saveView(){ localStorage.view = JSON.stringify({filter:VIEW.filter, sort:VIEW.sort, dir:VIEW.dir, showAll:VIEW.showAll, tf:TF}); }
+// فیلترِ «روندِ روزانه» ذخیره نمی‌شود: قبلاً پس از بارگذاریِ دوباره کاربر را در نمای ۱–۲ ردیفی گیر می‌انداخت
+if(VIEW.filter === "ok") VIEW.filter = "all";
+function saveView(){
+  try{ localStorage.view = JSON.stringify({filter: VIEW.filter==="ok" ? "all" : VIEW.filter, sort:VIEW.sort, dir:VIEW.dir, showAll:VIEW.showAll, tf:TF}); }catch(e){}
+}
 const WATCH = new Set(function(){ try{ return JSON.parse(localStorage.watch||"[]"); }catch(e){ return []; } }());
 function toggleWatch(sym){
   WATCH.has(sym) ? WATCH.delete(sym) : WATCH.add(sym);
@@ -1015,61 +1205,87 @@ function rowHtml(c){
         : `<span class="${cls(c.target_pct)}">${pct(c.target_pct)}</span>${(c.p_up>=55 && c.target_pct<0) || (c.p_up<=45 && c.target_pct>0) ? ` <small title="مدل جهت‌یاب و مسیر درِیفت اختلاف دارند — به احتمال کالیبره اعتماد کنید">⚠</small>` : ""}<br><small class="mid">${px(c.target)}</small>`}</td>
     <td class="num">${c.rr ? fmt(c.rr,1) : "—"}</td>
     <td class="num ${c.ev_lcb_pct!=null?cls(c.ev_lcb_pct):""}">${c.ev_pct!=null ? `<b>${pct(c.ev_pct)}</b>${c.ev_lcb_pct!=null?`<br><small title="کران پایین با لحاظ عدم‌قطعیت">LCB ${pct(c.ev_lcb_pct)}</small>`:""}` : "—"}</td>
-    <td class="num" ${c.p_win!=null && !c.tradeable ? 'style="opacity:.55" title="از مدلی که مجوزِ ورود ندارد — فقط تشخیصی"' : ""}>${c.p_win!=null ? `${fmt(c.p_win,0)}٪${!c.tradeable?' <small>تشخیصی</small>':''} <small>(${c.n_hist})</small>${c.p_win_low!=null?`<br><small class="mid">${fmt(c.p_win_low,0)}–${fmt(c.p_win_high,0)}٪ · ${c.reliability||"—"}</small>`:""}` : (c.win_rate!=null ? fmt(c.win_rate,0)+"٪ ("+c.bt_n+")" : "—")}</td>
+    <td class="num" ${c.p_win!=null && !c.tradeable ? 'style="opacity:.55" title="از مدلی که مجوزِ ورود ندارد — فقط تشخیصی"' : ""}>${winCell(c)}</td>
     <td><span class="chip ${regimeCls(c.regime)}">${c.regime}</span>${c.market_rank_pct!=null?`<br><small class="mid">رتبه بازار ${fmt(c.market_rank_pct,0)}٪</small>`:""}${c.btc_align===false?`<br><small class="dn">⛔ BTC مخالف</small>`:""}</td>
     <td>${actionCell(c)}</td>
   </tr>`;
 }
-// سیگنالِ روندِ روزانهٔ همین ارز (ورودِ تازه یا پیوستن، معتبر) — در هر تبِ تایم‌فریم نشان داده می‌شود،
-// چون تنها روشی است که آزمون را گذرانده؛ بدونِ این، کاربر در تب‌های ۱۵m/۱h/۴h فقط «مسدود» می‌دید.
+// ستونِ وین‌ریت: آمارِ ستاپ ← کارنامهٔ تصمیمِ ماتریس ← بک‌تستِ کوچکِ همین نماد (کم‌رنگ؛ قابلِ اتکا نیست)
+function winCell(c){
+  if(c.p_win!=null)
+    return `${fmt(c.p_win,0)}٪${!c.tradeable?' <small>تشخیصی</small>':''} <small>(${c.n_hist})</small>${c.p_win_low!=null?`<br><small class="mid">${fmt(c.p_win_low,0)}–${fmt(c.p_win_high,0)}٪ · ${c.reliability||""}</small>`:""}`;
+  const x = decisionFor(c.symbol, TF), sc = x && x.scorecard;
+  if(sc && sc.n) return `<span class="dm-rec" style="font-size:11.5px">${recLine(x)}<br><small class="mid">کارنامهٔ تصمیمِ ${TF}</small></span>`;
+  if(c.win_rate!=null){
+    const thin = !(c.bt_n >= 30);
+    return `<span style="${thin?"opacity:.45":""}" title="بک‌تستِ همین نماد${thin?" — نمونه کوچک است و قابلِ اتکا نیست":""}">${fmt(c.win_rate,0)}٪ <small>(n=${c.bt_n||0})</small>${thin?`<br><small class="dm-rec">نمونهٔ کم</small>`:""}</span>`;
+  }
+  return `<small class="dm-rec">بی‌کارنامه</small>`;
+}
+// سیگنالِ روندِ روزانهٔ همین ارز (ورودِ تازه یا پیوستن، معتبر)
 function trendRowFor(sym){
   const t = window.TREND;
   if(!t || !t.now) return null;
   const x = t.now.find(r => r.sym === sym);
   return x && (x.category === "new" || x.category === "join") && x.valid !== false ? x : null;
 }
-// یادداشتِ بالای جدول برای هر تب: چه چیزی در این تایم‌فریم آزموده و رد شد، و سیگنال‌های قابل‌اقدام کجایند
-function renderTfNote(){
-  const tn = $("#tfTrustNote");
-  if(!tn) return;
-  const n = trendCountToday();
-  const go = n ? ` <button class="gear" style="padding:2px 10px;font-size:12px" onclick="showActionable()">📈 نمایشِ ${n} سیگنالِ قابل‌اقدامِ امروز</button>` : "";
-  const why = {
-    "1d": "ستاپ‌های کوتاه‌مدتِ ستون‌های جدول روی روزانه در آزمونِ منجمد رد شدند؛ سیگنالِ معتبرِ روزانه همان روند است",
-    "4h": "ستاپ‌های جدول در آزمونِ منجمد رد شدند و روندِ ۴h هم آزموده و رد شد (−۰٫۰۶R در هر معامله)",
-    "1h": "ستاپ‌های جدول در آزمون پس از هزینه زیان‌ده بودند و روندِ ۱h هم آزموده و رد شد (−۰٫۱۶R در هر معامله)",
-    "15m": "روی ۱۵m هزینهٔ معامله از هر لبهٔ آزموده‌شده بزرگ‌تر است",
-  }[TF] || "";
-  tn.innerHTML = `ℹ️ ستونِ «اقدام» در تبِ <b>${TF}</b> فقط «مشاهده» است: ${why}. ` +
-    (n ? `امروز <b>${n}</b> سیگنالِ خریدِ روندِ روزانه بالای جدول با دکمهٔ دمو آمده‌اند — ${trendOosFailed() ? "این روش هم در آزمونِ خارج از نمونه رد شد؛ فقط برای دمو" : "بهترین روشِ آزموده، اثبات‌نشده"}.${go}`
-       : `امروز سیگنالِ روندِ روزانه‌ای نیست.`);
-}
+// روندِ روزانه فقط در تبِ روزانه — دیگر ردیف‌ها و ستونِ «اقدام»ِ تب‌های ۱۵m/۱h/۴h را نمی‌پوشاند
+function trendHere(sym){ return TF === "1d" ? trendRowFor(sym) : null; }
 function trendOosFailed(){ return ((((window.TREND||{}).evidence||{}).oos)||{}).verdict === "FAIL"; }
 function trendCountToday(){
   const t = window.TREND;
   return t && t.now ? t.now.filter(r => (r.category === "new" || r.category === "join") && r.valid !== false).length : 0;
 }
-function showActionable(){
-  const chip = document.querySelector('.fchip[data-f="ok"]');
-  if(chip) setFilter(chip);
+// چیپِ «روندِ روزانه» فقط در تبِ روزانه؛ در تب‌های دیگر اگر فعال بود به «همه» برمی‌گردد
+function syncOkChip(){
+  const ok = $("#okChip");
+  if(ok) ok.style.display = TF === "1d" ? "" : "none";
+  if(TF !== "1d" && VIEW.filter === "ok"){
+    VIEW.filter = "all";
+    document.querySelectorAll(".fchip[data-f]").forEach(x => x.classList.toggle("on", x.dataset.f === "all"));
+  }
 }
-function actionCell(c){
-  const tr = trendRowFor(c.symbol);
-  if(tr){
-    const open = ((window.TREND||{}).demo_open||[]).includes(c.symbol);
-    const L = trendLive(tr);
-    return `<div style="display:flex;flex-direction:column;gap:3px;align-items:center" onclick="event.stopPropagation()">
+function trendCellHtml(c, tr, mini){
+  const open = ((window.TREND||{}).demo_open||[]).includes(c.symbol);
+  const L = trendLive(tr);
+  const info = `${tr.category==="new"?"ورودِ تازه":"پیوستن روزِ "+tr.days_in} · حدضرر ${px(tr.stop)} (−${fmt(L.dist,1)}٪)${tr.tight?" · ⚠ نزدیک":""}`;
+  if(mini) return `<div style="margin-top:5px" onclick="event.stopPropagation()">
+      ${open ? `<small class="mid">📈 روندِ روزانه: در دمو باز است</small>`
+             : `<button class="btn mini" onclick="openTrendDemo('${c.symbol}')" title="${esc(info)}">📈 روندِ روزانه: خرید در دمو</button>`}</div>`;
+  return `<div style="display:flex;flex-direction:column;gap:3px;align-items:center" onclick="event.stopPropagation()">
       ${open ? `<span class="btn gray" style="min-width:104px">✓ روند در دمو باز است</span>`
              : `<button class="btn long" onclick="openTrendDemo('${c.symbol}')">📈 خرید در دمو (روند روزانه)</button>`}
-      <small class="mid" style="font-size:10px">${tr.category==="new"?"ورودِ تازه":"پیوستن روزِ "+tr.days_in} · حدضرر ${px(tr.stop)} (−${fmt(L.dist,1)}٪)${tr.tight?" · ⚠ نزدیک":""}</small>
+      <small class="mid" style="font-size:10px">${info}</small>
     </div>`;
+}
+// تصمیمِ ماتریس برای ستونِ «اقدام» (همان تصمیمِ خانهٔ ماتریس در تبِ فعال)
+function dmActionHtml(c, x){
+  const a = dmAct(x), k = a==="long" ? "l" : a==="short" ? "s" : "w";
+  let sub = "";
+  if(a === "wait"){
+    const ld = leanOf(x), rd = n100(x.readiness);
+    sub = [ld==="long" ? "تمایل ↗" : ld==="short" ? "تمایل ↘" : "", rd!=null ? `آمادگی ${faN(rd,0)}٪` : ""].filter(Boolean).join(" · ");
   }
-  // سیگنالِ پرمیومِ تأییدشده (از همهٔ دروازه‌ها گذشته)
+  const warns = warnsOf(x);
+  return `<div style="display:flex;flex-direction:column;gap:3px;align-items:center">
+    <button class="btn dmcall ${k}" onclick="event.stopPropagation();openDecision('${c.symbol}','${TF}')" title="جزئیاتِ تصمیم، ورود/حدضرر و کارنامه">${callLabel(a)}</button>
+    ${sub ? `<small class="mid" style="font-size:10px">${sub}</small>` : ""}
+    ${warns.length ? `<small class="v-pos" style="font-size:10px" title="${esc(warns.join("\n"))}">⚠ ${faN(warns.length)} هشدار</small>` : ""}
+    <small class="dm-rec">${recLine(x, true)}</small>
+  </div>`;
+}
+function actionCell(c){
+  // سیگنالِ پرمیومِ تأییدشده (از همهٔ دروازه‌ها گذشته) — مرجعِ مجوز فقط قفلِ ایمنی است
   if(c.side && c.tradeable){
     return `<button class="btn ${c.side}" onclick="event.stopPropagation();openTradeModal('${c.symbol}')">پوزیشن ${c.side==="long"?"خرید ▲":"فروش ▼"} ✅</button>
       ${c.signal_score!=null?`<div style="margin-top:4px" title="امتیاز سیگنال"><b class="num" style="color:${c.signal_score>=75?"var(--up)":c.signal_score>=60?"var(--brass)":c.signal_score>=45?"var(--blue)":"var(--dim)"}">${c.signal_score}</b><small class="mid">/۱۰۰ · ${c.signal_tier||""}</small></div>`:""}
       ${c.meta_confluence!=null?`<div style="margin-top:2px"><small class="mid">متا ${fmt(c.meta_score*100,0)}٪ · تلاقی ${c.meta_confluence}${c.meta_size_mult!=null?` · حجم×${fmt(c.meta_size_mult,2)}`:""}</small></div>`:""}`;
   }
+  const tr = trendHere(c.symbol);
+  // تصمیمِ روشنِ ماتریس (لانگ/شورت/صبر) وقتی رسیده باشد؛ روندِ روزانه فقط در تبِ روزانه، زیرش
+  const x = decisionFor(c.symbol, TF);
+  if(x && !x.error) return dmActionHtml(c, x) + (tr ? trendCellHtml(c, tr, true) : "");
+  if(tr) return trendCellHtml(c, tr, false);
   // ستاپ دیده شده ولی مرجع تصمیم مجوز نداده — دیگر مثل سیگنال خرید نشان نده
   if(c.side && !c.tradeable){
     const short = (c.status||"مشاهده").split("—")[0].trim();
@@ -1089,7 +1305,8 @@ function actionCell(c){
   const trust = window.OV && window.OV.tf_trust;
   const weak = trust && (!trust.setup_ok || !trust.edge_ok);   // هر دو مدلِ مستقل باید معتبر باشند
   return `<div style="display:flex;flex-direction:column;gap:3px;align-items:center">
-    <span class="btn gray" style="min-width:104px;color:${col}">${lbl} ${fmt(conf,0)}٪</span>
+    <button class="btn gray" style="min-width:104px;color:${col};cursor:pointer" title="پیش‌بینیِ جهت — برای بازکردنِ پوزیشنِ دمو بزنید"
+      onclick="event.stopPropagation();openLean('${c.symbol}','${dir}',${Number(p)||50},false)">${lbl} ${fmt(conf,0)}٪</button>
     <small class="mid" style="font-size:10px">${late?"دیررسیده · ":""}${weak?"فقط پیش‌بینی؛ مدل دوگانه تأیید نکرد":"فقط پیش‌بینی؛ شرایط ورود کامل نیست"}</small>
   </div>`;
 }
@@ -1144,21 +1361,24 @@ function trendSignalRows(){
   }).join("");
 }
 
+// تصمیمِ ماتریس برای این ارز در تبِ فعال: "long" | "short" | "wait" | null (هنوز نرسیده)
+function callOf(c){ const x = decisionFor(c.symbol, TF); return x && !x.error ? dmAct(x) : null; }
 function renderTable(){
-  const F = VIEW.filter;
+  const F = TF === "1d" ? VIEW.filter : (VIEW.filter === "ok" ? "all" : VIEW.filter);
   const thead = ($("#rows") && $("#rows").closest("table")) ? $("#rows").closest("table").querySelector("thead") : null;
   if(thead) thead.style.display = F === "ok" ? "none" : "";
   if(F === "ok"){ $("#rows").innerHTML = trendSignalRows(); window.LASTROWS = []; return; }
   const d = window.OV;
-  if(!d) return;
+  if(!d || !Array.isArray(d.coins)) return;
+  if(window.OV_TF && window.OV_TF !== TF) return;     // دادهٔ تبِ قبلی؛ تا رسیدنِ تبِ تازه اسکلت بماند
   let rows = d.coins.filter(c=>!c.error);
   if(VIEW.q) rows = rows.filter(c=>c.symbol.toUpperCase().includes(VIEW.q));
-  if(F==="predict") rows = rows.filter(c=>leanDir(c)!=="neutral");   // پیش‌بینیِ جهت
+  if(F==="predict") rows = rows.filter(c=>{ const k = callOf(c); return k ? k !== "wait" : leanDir(c)!=="neutral"; });
   else if(F==="sided") rows = rows.filter(c=>c.side);
   else if(F==="blocked") rows = rows.filter(c=>c.side && !c.tradeable);
   else if(F==="waiting") rows = rows.filter(c=>!c.side);
-  else if(F==="long") rows = rows.filter(c=>c.side==="long" || trendRowFor(c.symbol));
-  else if(F==="short") rows = rows.filter(c=>c.side==="short");
+  else if(F==="long") rows = rows.filter(c=>callOf(c)==="long" || c.side==="long" || trendHere(c.symbol));
+  else if(F==="short") rows = rows.filter(c=>callOf(c)==="short" || c.side==="short");
   else if(F==="watch") rows = rows.filter(c=>WATCH.has(c.symbol));
   if(F==="predict"){                       // در حالتِ پیش‌بینی: مرتب بر اساس اطمینانِ جهت (قوی‌ترین‌ها اول)
     rows.sort((a,b)=>leanConf(b)-leanConf(a));
@@ -1171,11 +1391,12 @@ function renderTable(){
       return VIEW.dir * (av - bv);
     });
   }
-  // ارزهای دارای سیگنالِ روندِ روزانه همیشه بالای جدول (در هر تب)
-  rows = rows.filter(c => trendRowFor(c.symbol)).concat(rows.filter(c => !trendRowFor(c.symbol)));
+  // ارزهای دارای سیگنالِ روندِ روزانه بالای جدول — فقط در تبِ روزانه
+  if(TF === "1d") rows = rows.filter(c => trendHere(c.symbol)).concat(rows.filter(c => !trendHere(c.symbol)));
   const total = rows.length;
   if(!VIEW.showAll && total > 50) rows = rows.slice(0, 50);
-  $("#pageChip").textContent = VIEW.showAll ? `همه (${total})` : `۵۰ برتر از ${total}`;
+  $("#pageChip").textContent = VIEW.showAll ? `همه (${faN(total)})` : `۵۰ برتر از ${faN(total)}`;
+  $("#pageChip").style.display = d.coins.length > 50 ? "" : "none";   // با ۵ ارز معنایی ندارد
   $("#pageChip").classList.toggle("on", VIEW.showAll);
   window.LASTROWS = rows;
   const errs = VIEW.filter==="all" && !VIEW.q ? d.coins.filter(c=>c.error) : [];
@@ -1208,19 +1429,21 @@ function renderStats(d){
     <div class="stat"><div class="lbl">عملکرد زنده ۳۰ روز</div><div class="val">${ls&&ls.n?`${fmt(ls.win_rate,0)}٪ <small>از ${ls.n} سیگنال</small>`:"—"}</div></div>
     <div class="stat"><div class="lbl">سود/زیان دمو</div><div class="val">${pt?`<span class="${cls(pt.open)}">${fmt(pt.open,1)}$</span> <small>باز</small> · <span class="${cls(pt.closed)}">${fmt(pt.closed,1)}$</span> <small>بسته</small>`:"—"}</div></div>`;
 }
-async function loadOverview(){
+let OV_CTL = null;
+async function loadOverview(force){
+  // رفرشِ قبلی هنوز در راه است: رفرشِ دوره‌ای رد می‌شود؛ عوض‌شدنِ تب (force) قبلی را لغو می‌کند
+  if(OV_CTL){ if(force !== true) return; OV_CTL.abort(); }
+  const ctl = OV_CTL = new AbortController(), tf = TF;
   $("#led").classList.add("busy"); nprog.start();
-  $("#pulseText").textContent = `در حال تحلیل ۲۰۰ ارز (${TF})…`;
+  $("#pulseText").textContent = `در حالِ تحلیلِ ارزها (${tf})…`;
+  let err = null;
   try{
-    const r = await fetch(`/api/overview?tf=${TF}`);
-    const d = await r.json();
-    if(d.net_error){
-      $("#rows").innerHTML = `<tr><td colspan="13" class="loading">⚠️ ${d.net_error}</td></tr>`;
-      $("#pulseText").textContent = "قطع اتصال به صرافی — تلاش مجدد خودکار";
-      $("#led").classList.remove("busy"); nprog.done(); nextRefresh = Date.now()+60000;
-      return;
-    }
-    window.OV = d;
+    const {r, d} = await jfetch(`/api/overview?tf=${tf}`, {cache:"no-store"}, FETCH_MS, ctl);
+    if(!r.ok) throw new Error(errMsg(r, d));
+    if(d.net_error) throw new Error("قطعِ اتصال به صرافی — " + d.net_error);
+    if(!Array.isArray(d.coins)) throw new Error("پاسخِ سرور شکلِ مورد انتظار را ندارد");
+    window.OV = d; window.OV_TF = tf;
+    $("#ovErr").innerHTML = "";
     notifyNewSignals(d.coins);
     $("#updated").textContent = "به‌روزرسانی: " + new Date(d.updated*1000).toLocaleTimeString("fa-IR");
     if(d.btc) $("#btcPill").innerHTML = `BTC: <b class="${d.btc.dir==="صعودی"?"up":d.btc.dir==="نزولی"?"dn":"mid"}">${d.btc.dir}</b>` +
@@ -1229,36 +1452,63 @@ async function loadOverview(){
     renderTable();
     renderStats(d);
     window.TF_TRUST = d.tf_trust || {};
-    renderTfNote();
-  }catch(e){ $("#rows").innerHTML = `<tr><td colspan="13" class="err loading">خطا در دریافت داده: ${e}</td></tr>`; }
-  $("#led").classList.remove("busy"); nprog.done();
+  }catch(e){
+    if(e.message === ABORTED) return;            // تبِ تازه جایش را گرفت
+    err = e.message;
+  }finally{
+    nprog.done();
+    if(OV_CTL === ctl){ OV_CTL = null; $("#led").classList.remove("busy"); }
+  }
+  nextRefresh = Date.now() + 60000;
+  if(err){
+    const retry = ` <button class="btn mini" onclick="loadOverview(true)">↻ تلاشِ دوباره</button>`;
+    if(window.OV && window.OV_TF === tf)
+      $("#ovErr").innerHTML = `⚠️ به‌روزرسانیِ جدول نشد: ${esc(err)} — داده‌های قبلی نمایش داده می‌شوند.${retry}`;
+    else
+      $("#rows").innerHTML = `<tr><td colspan="13" class="err loading">⚠️ ${esc(err)}${retry}</td></tr>`;
+    $("#pulseText").textContent = "پاسخِ سرور نرسید — تلاشِ دوبارهٔ خودکار تا یک دقیقهٔ دیگر";
+    return;
+  }
   const nCoins = ((window.OV && window.OV.coins) || []).length;
   $("#pulseText").textContent = `موتور زنده — ${nCoins ? nCoins.toLocaleString("fa-IR") + " ارز × " : ""}۴ تایم‌فریم · مجوزِ ورود فقط از قفلِ ایمنی`;
-  nextRefresh = Date.now() + 60000;
   loadLiveStats().then(()=>{ if(window.OV) renderStats(window.OV); });
 }
 async function loadLiveStats(){
   try{
-    const d = await (await fetch(`/api/live-stats?tf=${TF}`)).json();
+    const d = await jq(`/api/live-stats?tf=${TF}`);
     window.LSTATS = d.all;
-    const s = d.stats, a = d.all;
+    const s = d.stats || {}, a = d.all || {};
     const one = (x,l) => x.n ? `${l}: <b>${x.win_rate}٪</b> برد از ${x.n} سیگنال (میانگین ${x.avg_r>=0?"+":""}${x.avg_r}R)` : `${l}: هنوز سیگنال داوری‌شده‌ای نیست`;
     const susp = d.suspended && Object.keys(d.suspended).length
       ? ` · <b class="dn">⏸ ستاپ‌های معلق (بازده خالص ضعیف): ${Object.entries(d.suspended).map(([k,v])=>`${k} (${fmt(v,2)}R)`).join("، ")}</b>` : "";
     $("#liveStats").innerHTML = `📡 عملکرد زندهٔ سیگنال‌های نمایش‌داده‌شده (۳۰ روز اخیر) — ${one(s, "تایم‌فریم "+TF)} · ${one(a, "همه")} · در انتظار داوری: ${a.pending}${susp}`
       + (d.drift ? `<br><b class="dn">${d.drift}</b>` : "");
-  }catch(e){ $("#liveStats").textContent = "📡 عملکرد زنده: —"; }
+  }catch(e){ $("#liveStats").innerHTML = `📡 عملکرد زنده: خوانده نشد (${esc(e.message)})`; }
 }
 
 /* ═══════════ کشوی جزئیات ارز ═══════════ */
+let DETAIL_SEQ = 0;
 async function openDetail(sym){
+  const seq = ++DETAIL_SEQ;
   $("#drawer").classList.add("open");
   $("#dTitle").textContent = sym.replace("USDT","") + " / USDT";
   $("#dGrid").innerHTML = `<div class="loading">🧠 در حال تحلیل چهار تایم‌فریم…<div class="prog" style="max-width:240px;margin:12px auto 0"><i style="width:100%"></i></div></div>`;
-  const d = await jget(`/api/coin/${sym}`);
-  const tfName = {"15m":"۱۵ دقیقه","1h":"۱ ساعت","4h":"۴ ساعت","1d":"روزانه"};
+  let d;
+  try{
+    d = await jget(`/api/coin/${sym}`);
+    if(!d || !d.tfs) throw new Error("پاسخِ سرور شکلِ مورد انتظار را ندارد");
+  }catch(e){
+    if(seq === DETAIL_SEQ)
+      $("#dGrid").innerHTML = `<div class="loading err">⚠️ ${esc(e.message)}<br><button class="btn mini" style="margin-top:10px" onclick="openDetail('${sym}')">↻ تلاشِ دوباره</button></div>`;
+    return;
+  }
+  if(seq !== DETAIL_SEQ) return;                   // کاربر در این فاصله ارزِ دیگری باز کرد
+  const tfName = TF_FA;
   $("#dGrid").innerHTML = Object.entries(d.tfs).map(([tf,a]) => {
     if(a.error) return `<div class="tfcard"><h4>${tfName[tf]}</h4><div class="err">${a.error}</div></div>`;
+    const dx = decisionFor(sym, tf);
+    const dmLine = dx && !dx.error ? `<div class="kv"><span>تصمیمِ ماتریس</span><b><a href="#" class="${dmAct(dx)==="long"?"up":dmAct(dx)==="short"?"dn":"mid"}"
+        onclick="event.preventDefault();closeDrawer();openDecision('${sym}','${tf}')">${callLabel(dmAct(dx))}</a> <small>${recLine(dx, true)}</small></b></div>` : "";
     const t = a.trade, f = a.forecast;
     const compBar = (name,v)=>{
       const w = Math.min(Math.abs(v)*50,50);
@@ -1268,7 +1518,8 @@ async function openDetail(sym){
     return `<div class="tfcard">
       <h4><span>${tfName[tf]} <span class="chip ${regimeCls(a.regime)}">${a.regime}</span></span>
           <span>${gradeHtml(t.grade, t.side, t.tradeable!==false && t.viable)}</span></h4>
-      ${Object.entries(a.components).map(([k,v])=>compBar(k,v)).join("")}
+      ${dmLine}
+      ${Object.entries(a.components||{}).map(([k,v])=>compBar(k,v)).join("")}
       <div class="divider"></div>
       <div class="kv"><span>احتمال رشد تا ${f.horizon_bars} کندل ${a.p_calibrated?"(کالیبره ✓)":"(برآورد مدل)"}</span><b class="num ${a.p_up>=55?"up":a.p_up<=45?"dn":"mid"}">${fmt(a.p_up,0)}٪</b></div>
       ${t.p_win!=null ? `<div class="kv"><span>${t.tradeable?"وین‌ریت ستاپ‌های مشابه تاریخی":"آمار تشخیصی (مجوز ورود نیست)"}</span><b class="num">${fmt(t.p_win,0)}٪ از ${t.n_hist} نمونه — اتکا: ${t.reliability}</b></div>
@@ -1313,27 +1564,29 @@ function setRiskSize(tf, riskPct){
   document.getElementById("sz_"+tf).value = Math.max(Math.round((TS().risk||20)/riskPct*100), 10);
   updRisk(tf, riskPct);
 }
-async function openPos(symbol, tf, size, force, forceRisk, side){
+// levels = {entry, sl, tp} از ماتریسِ تصمیم؛ سرور ورود را با قیمتِ زنده می‌گذارد و حدها را از تحلیلِ خودش می‌سازد
+async function openPos(symbol, tf, size, force, forceRisk, side, levels){
   try{
     const body = {symbol, tf, size_usdt: Number(size||500), force: force===true, force_risk: forceRisk===true};
-    if(side) body.side = side;                        // جهتِ دستی (پیش‌بینیِ جهت)
-    const r = await fetch("/api/positions", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
-    const d = await r.json();
+    if(side) body.side = side;                        // جهتِ دستی (پیش‌بینیِ جهت / تصمیمِ ماتریس)
+    if(levels) ["entry","sl","tp"].forEach(k => { if(levels[k]!=null && isFinite(levels[k])) body[k] = Number(levels[k]); });
+    const {r, d} = await jfetch("/api/positions", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
     if(!r.ok){
-      const m = String(d.detail||"خطا");
+      const m = typeof d.detail === "string" ? d.detail : errMsg(r, d);
       if(m.indexOf("DRIFT|")===0 && confirm(m.split("|")[2] + "\n\nبا مسئولیت خودم باز کن؟"))
-        return openPos(symbol, tf, size, true, forceRisk, side);
+        return openPos(symbol, tf, size, true, forceRisk, side, levels);
       if(m.indexOf("HEAT|")===0 && confirm("⚠️ هشدار ریسک پرتفوی:\n\n" + m.split("|")[2] + "\n\nبا مسئولیت خودم باز کن؟"))
-        return openPos(symbol, tf, size, force, true, side);
+        return openPos(symbol, tf, size, force, true, side, levels);
       if(m.indexOf("WEAK|")===0 && confirm("🛑 هشدار آماری:\n\n" + m.split("|")[2] +
           "\n\nتجربهٔ ۵ ژوئیه: از ۱۳ معاملهٔ مشابه، ۱۰تا باخت. واقعاً باز کنم؟"))
-        return openPos(symbol, tf, size, true, forceRisk, side);
+        return openPos(symbol, tf, size, true, forceRisk, side, levels);
       throw new Error((m.indexOf("DRIFT|")===0||m.indexOf("HEAT|")===0||m.indexOf("WEAK|")===0) ? "لغو شد" : m);
     }
     saveTS({size: Number(size||500)});
     toast(`✅ پوزیشن دمو ${d.position.side==="long"?"خرید":"فروش"} ${symbol.replace("USDT","")} با ${fmt(Number(size),0)}$ باز شد`);
     loadPositions();
-  }catch(e){ toast("❌ " + e.message, false); }
+    return true;
+  }catch(e){ toast("❌ " + e.message, false); return false; }
 }
 
 /* ═══════════ مودال معامله ═══════════ */
@@ -1408,12 +1661,18 @@ function posCard(p, open){
   const side = p.side==="long" ? `<span class="up">خرید ▲</span>` : `<span class="dn">فروش ▼</span>`;
   const modeChip = (p.mode==="testnet" ? ` <span class="chip trend">تست‌نت</span>` : "")
                  + (p.opened_by==="bot" ? ` <span class="chip" style="background:rgba(88,166,255,.12);color:var(--blue)">🤖 ربات</span>` : "")
-                 + (p.strategy==="trend20" ? ` <span class="chip trend">📈 روند · اسپات</span>` : "");
+                 + (p.strategy==="trend20" ? ` <span class="chip trend">📈 روند · اسپات</span>` : "")
+                 + (p.strategy==="tsmom28" ? ` <span class="chip trend">🧭 مومنتوم ۲۸روزه</span>` : "");
   const rp = Math.abs(p.entry-p.sl)/Math.max(p.entry,1e-12)*100;
   let range = "";
   if(open && p.tp==null){
-    // پوزیشنِ روند: هدف ندارد؛ حدضررِ دنباله‌دار هر روز فقط بالا می‌رود
-    range = `<div class="rlbl"><span>حدضررِ دنباله‌دار ${px(p.sl)}</span><span>بی‌هدف — تا خوردنِ حدضرر</span></div>`;
+    range = p.strategy==="tsmom28"
+      // مومنتومِ ۲۸روزه: خروج با تصمیمِ دوشنبه؛ حدضرر فقط ترمزِ اضطراری است، دنباله‌دار نیست
+      ? `<div class="rlbl"><span>حدضررِ اضطراری ${px(p.sl)}</span><span>بی‌هدف — خروج با تصمیمِ دوشنبه</span></div>`
+      : p.strategy==="trend20"
+      // پوزیشنِ روند: هدف ندارد؛ حدضررِ دنباله‌دار هر روز فقط بالا می‌رود
+      ? `<div class="rlbl"><span>حدضررِ دنباله‌دار ${px(p.sl)}</span><span>بی‌هدف — تا خوردنِ حدضرر</span></div>`
+      : `<div class="rlbl"><span>حدضرر ${px(p.sl)}</span><span>بی‌هدف</span></div>`;
   } else if(open && p.tp!==p.sl){
     const posn = Math.min(Math.max(((p.last_price!=null?p.last_price:p.entry)-p.sl)/(p.tp-p.sl),0),1)*100;
     const entn = Math.min(Math.max((p.entry-p.sl)/(p.tp-p.sl),0),1)*100;
@@ -1445,7 +1704,7 @@ function posCard(p, open){
 }
 async function loadPositions(){
   try{
-    const d = await (await fetch("/api/positions")).json();
+    const d = await jq("/api/positions");
     $("#openCount").textContent = d.open.length;
     $("#navPosBadge").textContent = d.open.length;
     window.PT = {open: d.total_open_pnl, closed: d.total_closed_pnl};
@@ -1456,7 +1715,7 @@ async function loadPositions(){
       + (d.portfolio_note ? `<br><b class="dn">${d.portfolio_note}</b>` : "");
     $("#closeAllBtn").style.display = d.open.length >= 2 ? "" : "none";
     window.CLOSED = d.closed;
-    $("#openPos").innerHTML = d.open.map(p=>posCard(p,true)).join("") || `<div class="note">پوزیشن بازی نیست — از جدول بالا یکی از سیگنال‌های ✅ را انتخاب کنید.</div>`;
+    $("#openPos").innerHTML = d.open.map(p=>posCard(p,true)).join("") || `<div class="note">پوزیشن بازی نیست — در صفحهٔ «بازار» روی یک خانهٔ لانگ/شورتِ «ماتریسِ تصمیم» بزنید و «باز کردن در دمو» را انتخاب کنید.</div>`;
     $("#closedPos").innerHTML = d.closed.slice(0,12).map(p=>posCard(p,false)).join("") || `<div class="note">هنوز معامله بسته‌شده‌ای ثبت نشده.</div>`;
     // منحنی سرمایه از معاملات بسته‌شده (قدیمی → جدید)
     const seq = [...d.closed].reverse();
@@ -1562,7 +1821,7 @@ function openSettings(){
 function closeSettings(){ $("#settings").classList.remove("open"); }
 async function loadConfig(fillForm){
   try{
-    const d = await (await fetch("/api/config")).json();
+    const d = await jq("/api/config");
     if(d.broker === "binance_testnet"){
       $("#brokerPill").innerHTML = d.connected
         ? `حساب: <b>تست‌نت بایننس</b> — <b class="num">${fmt(d.balance,0)}</b> USDT`
@@ -1628,19 +1887,32 @@ async function rebuildCalib(){
 
 /* ═══════════ ربات معامله‌گر خودکار ═══════════ */
 let BOT = null;
-function botParamsMirror(lv){                     // آینهٔ level_params بک‌اند برای پیش‌نمایشِ فوری
+// فقط برای پیش‌نمایشِ فوریِ اسلایدر (آستانه/تایم‌ها مثلِ level_params بک‌اند)؛ ریسک و سقفِ ریسکِ کل را
+// سرور با سقف‌های قفلِ ایمنی محدود می‌کند، پس آن‌ها همیشه از BOT.params (پاسخِ سرور) خوانده می‌شوند.
+function botParamsMirror(lv){
   lv = Math.max(1, Math.min(lv|0, 10));
   return {min_score: Math.round(82 - lv*2.5),
-          min_open: 0,
           max_open: 2 + Math.floor((lv-1)/3),
-          risk: (0.25 + lv*0.025).toFixed(2),
-          heat: (1.25 + lv*0.15).toFixed(1),
-          tfs: lv<=4?["4h"]:["4h","1h"]};
+          tfs: lv<=3 ? ["1h"] : ["1h","4h"]};
+}
+function gateLine(){
+  const g = window.GATES;
+  if(!g) return `<span class="mid">وضعیتِ قفلِ ایمنی هنوز خوانده نشده.</span>`;
+  const c = g.allowed_combos || [];
+  return c.length
+    ? `🔓 ترکیب‌های مجاز در قفلِ ایمنی: <b>${c.map(esc).join("، ")}</b> — ربات فقط همین‌ها را معامله می‌کند.`
+    : `🔒 <b>اکنون هیچ ترکیبی در قفلِ ایمنی مجاز نیست</b> — ربات حتی روشن هم معامله‌ای باز نمی‌کند؛ فقط پایش می‌کند و افکارش را می‌نویسد.`;
 }
 function botLvlPreview(v){
+  const lv = Number(v);
   $("#botLvlNum").textContent = v;
-  const p = botParamsMirror(Number(v));
-  $("#botLvlDesc").innerHTML = `بدون اجبار به معامله · سقف <b>${p.max_open}</b> پوزیشن · فقط امتیاز <b>${p.min_score}+</b> · تایم‌ها: <b>${p.tfs.join("/")}</b> · ریسکِ هر معامله <b>${p.risk}٪</b> موجودی · سقفِ ریسکِ کل <b>${p.heat}٪</b>`;
+  const P = BOT && BOT.params, srv = !!(P && P.level === lv), m = botParamsMirror(lv);
+  const maxOpen = srv ? P.max_open : m.max_open, minScore = srv ? P.min_score : m.min_score;
+  const tfs = srv && Array.isArray(P.scan_tfs) ? P.scan_tfs : m.tfs;
+  const risk = P && P.risk_pct_equity != null ? `<b>${faN(P.risk_pct_equity,2)}٪</b>` : "طبقِ سقفِ قفلِ ایمنی";
+  const heat = P && P.heat_cap != null ? `<b>${faN(P.heat_cap,2)}٪</b>` : "طبقِ سقفِ قفلِ ایمنی";
+  $("#botLvlDesc").innerHTML = `بدون اجبار به معامله · سقف <b>${maxOpen}</b> پوزیشن${srv ? "" : " (پیش‌نمایش)"} · فقط امتیاز <b>${minScore}+</b> · تایم‌ها: <b>${tfs.join("/")}</b>
+    · ریسکِ هر معامله ${risk} موجودی · سقفِ ریسکِ کل ${heat} <small>(از سرور؛ محدود به سقف‌های قفلِ ایمنی)</small><br>${gateLine()}`;
 }
 function renderBot(d){
   BOT = d;
@@ -1674,7 +1946,7 @@ function renderBot(d){
   if(atBottom) log.scrollTop = 0;
 }
 async function loadBot(){
-  try{ renderBot(await (await fetch("/api/bot")).json()); }catch(e){}
+  try{ renderBot(await jq("/api/bot", 12000)); }catch(e){}
 }
 async function botSet(patch){
   try{
@@ -1684,8 +1956,357 @@ async function botSet(patch){
 }
 function botToggle(){
   if(!BOT) return;
-  if(!BOT.enabled && !confirm("ربات روشن شود؟\n\nخودش با هوش مصنوعی پوزیشنِ دمو باز/بسته می‌کند (فقط کیف‌پولِ دمو — پول واقعی در کار نیست) و همهٔ تصمیم‌هایش را در جریانِ افکار می‌نویسد.")) return;
+  if(!BOT.enabled){
+    const g = window.GATES, c = (g && g.allowed_combos) || [];
+    const now = !g ? "وضعیتِ قفلِ ایمنی هنوز خوانده نشده."
+      : c.length ? `ترکیب‌های مجازِ فعلی: ${c.join("، ")}.` : "اکنون هیچ ترکیبی مجاز نیست، پس هیچ معامله‌ای باز نمی‌کند.";
+    if(!confirm(`ربات روشن شود؟\n\nربات فقط ترکیب‌های مجاز در قفل ایمنی را معامله می‌کند؛ ${now}\n\nفقط کیف‌پولِ دمو — پولِ واقعی در کار نیست. هر تصمیمش در «جریانِ افکار» نوشته می‌شود.`)) return;
+  }
   botSet({enabled: !BOT.enabled});
+}
+
+/* ═══════════ ماتریسِ تصمیم — ۵ ارز × ۴ تایم‌فریم (GET /api/decisions) ═══════════ */
+// هر خانه: تصمیمِ ترکیبیِ اندیکاتورها + هوش مصنوعی (engine) کنارِ کارنامهٔ اندازه‌گیری‌شده‌اش.
+// تحلیل است، نه سیگنالِ تأییدشده؛ مجوزِ ورودِ خودکار فقط از قفلِ ایمنی (gates.json) می‌آید.
+const TF_FA = {"15m":"۱۵ دقیقه", "1h":"۱ ساعت", "4h":"۴ ساعت", "1d":"روزانه"};
+const TFS_ALL = ["15m","1h","4h","1d"];
+window.DEC = null;
+let DEC_ERR = null, DEC_CTL = null, DD = null;
+const dmAct = x => (x && (x.action === "long" || x.action === "short")) ? x.action : "wait";
+const callLabel = a => a === "long" ? "لانگ ▲" : a === "short" ? "شورت ▼" : "صبر";
+const safeSym = s => String(s||"").replace(/[^A-Za-z0-9]/g, "");
+// قراردادِ سرور: readiness، strength و win_rate همیشه عددِ ۰..۱۰۰ هستند (بی‌حدس‌زدنِ مقیاس)
+const n100 = v => (v==null || v==="" || !isFinite(v)) ? null : Math.max(0, Math.min(100, Number(v)));
+// from/to/window_from/window_to همیشه «YYYY-MM-DD» (UTC)
+function ymdMs(s){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s==null ? "" : s));
+  return m ? Date.UTC(+m[1], +m[2]-1, +m[3]) : NaN;
+}
+function ymdFa(s){
+  const ms = ymdMs(s);
+  return isFinite(ms) ? new Date(ms).toLocaleDateString("fa-IR", {timeZone:"UTC"}) : String(s==null || s==="" ? "—" : s);
+}
+const warnsOf = x => (x && Array.isArray(x.warnings)) ? x.warnings.filter(w => w != null && String(w).trim()).map(String) : [];
+const SC_NA = "کارنامهٔ نمایش‌داده‌شده مربوط به قاعدهٔ پایه است و این تصمیم را پوشش نمی‌دهد";
+// حکمِ کارنامه فقط از verdict_code خوانده می‌شود؛ رنگ و جملهٔ صادقانه از همین جدول می‌آیند
+const VERDICT = {
+  loss:     {cls:"v-loss", fa:"زیان‌ده",               say:"این تصمیم در بک‌تستِ دوساله پس از کارمزد زیان‌ده بوده است."},
+  positive: {cls:"v-pos",  fa:"مثبت (تأییدنشده)",       say:"در بک‌تست مثبت بوده ولی از نظر آماری تأیید نشده."},
+  unclear:  {cls:"v-neu",  fa:"نامشخص — بازه شامل صفر", say:"بک‌تست نه سود نشان می‌دهد نه زیان؛ لبهٔ ثابت‌شده‌ای نیست."},
+  small:    {cls:"v-neu",  fa:"نمونهٔ کم",              say:"تعداد معامله برای قضاوت کم است."},
+};
+function vInfo(sc){
+  const code = sc && sc.verdict_code, v = VERDICT[code];
+  if(!v) return {code:"none", cls:"v-neu", fa:"بی‌حکم", say:"حکمِ آماریِ این خانه نیامده؛ هیچ لبه‌ای فرض نکنید."};
+  let fa = sc.verdict ? String(sc.verdict) : v.fa;
+  if(code === "positive" && !fa.includes("تأییدنشده")) fa += " (تأییدنشده)";
+  return {code, cls:v.cls, fa, say:v.say};
+}
+// وضعیتِ کارنامهٔ یک خانه: ok | building | error
+function scOf(x){
+  const sc = x && x.scorecard, meta = (window.DEC && window.DEC.scorecard_meta) || {};
+  if(sc && !sc.error && sc.n != null) return {st:"ok", sc};
+  if(sc && sc.error && meta.building !== true) return {st:"error", sc};
+  return {st:"building", sc: sc || null};
+}
+const bR = (v, d=2) => `<bdi dir="ltr">${faS(v, d)}R</bdi>`;
+function leanOf(x){
+  const l = x && x.lean;
+  if(l==null) return null;
+  if(typeof l === "number") return l > 0 ? "long" : l < 0 ? "short" : null;
+  const s = String(l).toLowerCase();
+  return ["long","up","bull","buy"].includes(s) ? "long" : ["short","down","bear","sell"].includes(s) ? "short" : null;
+}
+function decisionFor(sym, tf){
+  const D = window.DEC;
+  return D && D.cells && D.cells[sym] ? (D.cells[sym][tf] || null) : null;
+}
+function msOf(t){
+  if(t==null || t==="") return NaN;
+  if(typeof t === "number") return t < 1e11 ? t*1000 : t;
+  const n = Number(t);
+  return isFinite(n) ? (n < 1e11 ? n*1000 : n) : Date.parse(t);
+}
+function tsFa(t, withTime){
+  const ms = msOf(t);
+  if(!isFinite(ms)) return "";
+  const dt = new Date(ms);
+  return withTime ? dt.toLocaleString("fa-IR", {dateStyle:"short", timeStyle:"short"}) : dt.toLocaleDateString("fa-IR");
+}
+function recSpan(sc){                               // طولِ دورهٔ کارنامه: «۲ سال» / «۸ ماه»
+  const a = ymdMs(sc && sc.from), b = ymdMs(sc && sc.to);
+  if(!isFinite(a) || !isFinite(b) || b <= a) return "بک‌تست";
+  const days = (b - a) / 864e5;
+  return days >= 330 ? `${faN(Math.round(days/365))} سال` : days >= 45 ? `${faN(Math.round(days/30))} ماه` : `${faN(Math.round(days))} روز`;
+}
+function ciText(sc){                                 // «بازهٔ ۹۵٪: از −۰٫۴۵ تا −۰٫۲۷R در هر معامله»
+  return (sc && sc.ci_lo!=null && sc.ci_hi!=null && isFinite(sc.ci_lo) && isFinite(sc.ci_hi))
+    ? `بازهٔ ۹۵٪: از <bdi dir="ltr">${faS(sc.ci_lo,2)}</bdi> تا ${bR(sc.ci_hi)} در هر معامله` : "";
+}
+function recLine(x, short){                          // «۲ سال: ۳۶٪ برد · −۰٫۳۶R · زیان‌ده»
+  const {st, sc} = scOf(x);
+  if(st === "building") return `<span class="v-neu">کارنامه در حال ساخت…</span>`;
+  if(st === "error") return `<span class="v-neu" title="${esc(sc.error)}">کارنامه ساخته نشد</span>`;
+  const v = vInfo(sc), na = x.scorecard_applies === false;
+  const parts = sc.n
+    ? [sc.win_rate!=null ? `${faN(n100(sc.win_rate),0)}٪ برد` : "", sc.avg_r!=null ? bR(sc.avg_r) : ""]
+    : ["معامله‌ای نبود"];
+  parts.push(`<b>${esc(v.fa)}</b>`);
+  const tip = [`کارنامهٔ بک‌تست پس از کارمزد · n=${faN(sc.n)}`,
+               sc.ci_lo!=null && sc.ci_hi!=null ? `بازهٔ ۹۵٪: ${faS(sc.ci_lo,2)} تا ${faS(sc.ci_hi,2)}R` : "",
+               v.say, na ? SC_NA : ""].filter(Boolean).join(" · ");
+  return `<span class="${v.cls}${na ? " na" : ""}" title="${esc(tip)}">${short ? "" : recSpan(sc) + ": "}${parts.filter(Boolean).join(" · ")}</span>`;
+}
+function dmCell(sym, tf, x){
+  const act = tf === TF ? " act" : "";
+  const tfl = `<span class="dm-tf">${TF_FA[tf] || tf}</span>`;
+  if(!x || x.error)
+    return `<div class="dm-cell none${act}">${tfl}<b class="dm-call" style="color:var(--faint)">؟</b>
+      <small class="dm-rec">${x && x.error ? esc(x.error) : "برای این خانه داده‌ای نیامد"}</small></div>`;
+  const a = dmAct(x), warns = warnsOf(x);
+  let lean = "", meter;
+  if(a === "wait"){
+    // آمادگی جدا از امتیازِ فنی: نوارِ نازک و کم‌رنگ + عدد
+    const ld = leanOf(x), rd = n100(x.readiness);
+    if(ld) lean = `<span class="dm-lean ${ld==="long"?"up":"dn"}" title="تمایل — شرطِ ورود هنوز کامل نیست">${ld==="long"?"↗":"↘"}</span>`;
+    meter = rd==null ? "" : `<span class="dm-rd" title="آمادگی: چه مقدار از شرط‌های ورود پر است — احتمالِ برد نیست">آمادگی ${faN(rd,0)}٪<i><i style="width:${rd}%"></i></i></span>`;
+  }else{
+    const st = n100(x.strength);
+    meter = `<span class="dm-str" title="امتیازِ فنی ${st!=null ? faN(st,0) + " از ۱۰۰" : "نامعلوم"} — شدتِ هم‌سوییِ اندیکاتورها، نه احتمالِ برد"><i style="width:${st==null ? 0 : Math.max(st,3)}%"></i></span>
+    <small class="dm-sl">امتیازِ فنی ${st!=null ? faN(st,0) : "—"}</small>`;
+  }
+  const s = safeSym(sym);
+  const tip = `${coinOf(sym)} · ${TF_FA[tf]||tf}${x.setup_fa ? " · " + x.setup_fa : ""} — برای جزئیات بزنید` +
+              (warns.length ? `\n⚠ ${warns.join("\n⚠ ")}` : "");
+  return `<button class="dm-cell ${a}${act}" onclick="openDecision('${s}','${tf}')" title="${esc(tip)}">
+    ${warns.length ? `<span class="dm-wb" aria-label="${faN(warns.length)} هشدار">⚠${warns.length > 1 ? faN(warns.length) : ""}</span>` : ""}
+    ${tfl}
+    <span><b class="dm-call">${callLabel(a)}</b>${lean}</span>
+    ${meter}
+    <small class="dm-rec">${recLine(x)}</small>
+    ${x.scorecard_applies === false ? `<small class="dm-na" title="${esc(SC_NA)}">کارنامهٔ قاعدهٔ پایه، نه این تصمیم</small>` : ""}
+  </button>`;
+}
+function srcFa(s){                                   // منبعِ دادهٔ کارنامه
+  const t = Array.isArray(s) ? s.join(",") : String(s==null ? "" : s);
+  if(!t) return "بایننس";
+  if(/(^|[^a-z])um[_:]|fapi|futures|perp/i.test(t)) return "فیوچرزِ بایننس";
+  if(/binance/i.test(t)) return "بایننس";
+  return t;
+}
+function scMetaHtml(D){                              // یک بار زیرِ ماتریس: پنجره، منبع، کارمزد + کارنامهٔ زندهٔ کل
+  const m = D.scorecard_meta || {}, out = [];
+  if(m.window_from || m.window_to)
+    out.push(`📜 کارنامه: بک‌تستِ همین قاعده روی داده‌های ${esc(srcFa(m.source))}، ${esc(ymdFa(m.window_from))} تا ${esc(ymdFa(m.window_to))}` +
+             `${m.window_days_actual ? ` (${faN(m.window_days_actual)} روز)` : ""}، با کارمزدِ رفت‌وبرگشت ${m.cost_pct!=null ? faN(m.cost_pct,2) : "؟"}٪` +
+             `${m.building === true ? ` — <span class="v-pos">کارنامه در حال ساخت…</span>` : m.built_at ? ` · ساخته‌شده ${tsFa(m.built_at, true)}` : ""}`);
+  else if(m.building === true || !Object.keys(m).length)
+    out.push(`📜 <span class="v-pos">کارنامه در حال ساخت…</span>${m.cost_pct!=null ? ` (کارمزدِ رفت‌وبرگشت ${faN(m.cost_pct,2)}٪)` : ""}`);
+  const lo = D.live_overall;
+  if(lo && lo.n > 0)
+    out.push(`📡 کارنامهٔ زنده (رو-به-جلو، همهٔ خانه‌ها، پس از کارمزد): n=${faN(lo.n)}` +
+             `${lo.win_rate!=null ? ` · ${faN(n100(lo.win_rate),0)}٪ برد` : ""}${lo.avg_r!=null ? ` · میانگین ${bR(lo.avg_r)}` : ""}` +
+             `${lo.total_r!=null ? ` · جمع ${bR(lo.total_r,1)}` : ""}${lo.open ? ` · ${faN(lo.open)} در انتظارِ داوری` : ""}`);
+  return out.join("<br>");
+}
+function renderMatrix(){
+  const g = $("#dmGrid");
+  if(!g) return;
+  const D = window.DEC;
+  const retry = `<button class="btn mini" onclick="loadDecisions(true)">↻ تلاشِ دوباره</button>`;
+  if(!D){
+    g.innerHTML = DEC_ERR
+      ? `<div class="dm-state err">⚠️ ماتریسِ تصمیم نیامد: ${esc(DEC_ERR)}<br>${retry}</div>`
+      : `<div class="dm-state">🧠 در حالِ ساختنِ ماتریسِ تصمیم…<div class="prog" style="max-width:220px;margin:10px auto 0"><i style="width:100%"></i></div></div>`;
+    $("#dmMeta").textContent = "";
+    setSL("dmScMeta", "");
+    return;
+  }
+  const tfs = (Array.isArray(D.tfs) && D.tfs.length ? D.tfs : TFS_ALL).filter(t => TF_FA[t]);
+  const coins = Array.isArray(D.coins) && D.coins.length ? D.coins : Object.keys(D.cells || {});
+  const head = `<div class="dm-row hd"><span></span>${tfs.map(t => `<span class="${t===TF?"act":""}">${TF_FA[t]}</span>`).join("")}</div>`;
+  const rows = coins.map(sym => {
+    const cs = (D.cells || {})[sym] || {};
+    const pr = tfs.map(t => cs[t]).find(x => x && x.price != null);
+    return `<div class="dm-row"><div class="dm-coin">${esc(coinOf(sym))}<small class="num">${pr ? px(pr.price) : ""}</small></div>
+      ${tfs.map(t => dmCell(sym, t, cs[t])).join("")}</div>`;
+  }).join("");
+  g.innerHTML = head + (rows || `<div class="dm-state">سرور هیچ ارزی برنگرداند.</div>`) +
+    (DEC_ERR ? `<div class="note err" style="margin-top:4px">⚠️ آخرین به‌روزرسانی نشد: ${esc(DEC_ERR)} — تصمیم‌های قبلی نمایش داده می‌شوند. ${retry}</div>` : "");
+  const gen = tsFa(D.generated_at, true);
+  $("#dmMeta").textContent = gen ? `به‌روزرسانی: ${gen}` : "";
+  setSL("dmScMeta", scMetaHtml(D));
+  setSL("dmNote", D.note ? `<br><small>${esc(D.note)}</small>` : "");
+}
+async function loadDecisions(force){
+  // دورِ قبلی هنوز در راه است: رفرشِ دوره‌ای رد می‌شود؛ «تلاشِ دوباره» قبلی را لغو می‌کند
+  if(DEC_CTL){ if(force !== true) return; DEC_CTL.abort(); }
+  const ctl = DEC_CTL = new AbortController();
+  if(force === true && !window.DEC){ DEC_ERR = null; renderMatrix(); }
+  try{
+    const {r, d} = await jfetch("/api/decisions", {cache:"no-store"}, 60000, ctl);   // سردِ اول: ۲۰ تحلیل
+    if(r.status === 404) throw new Error("سرویسِ ماتریس (/api/decisions) هنوز روی سرور فعال نیست — پس از به‌روزرسانی و راه‌اندازیِ دوبارهٔ سرور ظاهر می‌شود");
+    if(!r.ok) throw new Error(errMsg(r, d));
+    if(!d || typeof d.cells !== "object" || !d.cells) throw new Error("پاسخِ سرور شکلِ مورد انتظار را ندارد");
+    window.DEC = d; DEC_ERR = null;
+  }catch(e){
+    if(e.message === ABORTED) return;
+    DEC_ERR = e.message;
+  }finally{
+    if(DEC_CTL === ctl) DEC_CTL = null;
+  }
+  renderMatrix();
+  renderTable();                                    // ستونِ «اقدام» همان تصمیم را نشان می‌دهد
+}
+
+/* ── پنلِ جزئیاتِ یک خانه ── */
+function openDecision(sym, tf){
+  const x = decisionFor(sym, tf);
+  if(!x || x.error){ toast("برای این خانه هنوز تصمیمی نیامده", false); return; }
+  DD = {sym, tf, x};
+  $("#ddBody").innerHTML = ddHtml(sym, tf, x);
+  $("#dmDrawer").classList.add("open");
+  if(dmAct(x) !== "wait") dmSize(true);
+}
+function closeDecision(){ $("#dmDrawer").classList.remove("open"); DD = null; }
+function ddHtml(sym, tf, x){
+  const a = dmAct(x), col = a==="long" ? "up" : a==="short" ? "dn" : "mid";
+  const comps = (x.components || []).map(c => {
+    const v = Math.max(-1, Math.min(1, Number(c.value) || 0)), w = Math.abs(v) * 50;
+    const vote = c.vote > 0 ? `<b class="up" title="رأیِ لانگ">▲</b>` : c.vote < 0 ? `<b class="dn" title="رأیِ شورت">▼</b>` : `<b class="mid" title="بی‌رأی">·</b>`;
+    return `<div class="comp v"><label>${esc(c.fa || c.key)}</label><div class="bar" style="width:100%"><i style="${v>=0?"left":"right"}:50%;width:${w}%;background:${v>=0?"var(--up)":"var(--dn)"}"></i></div><b class="num ${cls(Number(c.value))}">${fmt(c.value,2)}</b>${vote}</div>`;
+  }).join("") || `<div class="note">جزئیاتِ اجزا نیامد.</div>`;
+  const st = n100(x.strength), rd = n100(x.readiness), ld = leanOf(x), warns = warnsOf(x);
+  const reasons = (x.reasons || []).length ? `<ul class="dd-reasons">${x.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul>` : "";
+  const hasLv = a !== "wait" && x.entry != null && x.sl != null;
+  const levels = hasLv ? `
+      <div class="kv"><span>ورود / حدضرر / هدف</span><b class="num">${px(x.entry)} / <span class="dn">${px(x.sl)}</span> / <span class="up">${px(x.tp)}</span></b></div>
+      <div class="kv"><span>فاصلهٔ حدضرر · R:R</span><b class="num">${x.risk_pct!=null ? fmt(x.risk_pct,2) + "٪" : "—"} · ${x.rr!=null ? fmt(x.rr,1) : "—"}</b></div>
+      <p class="note">حدضرر = ۱R و هدف = ۱٫۸R (قاعدهٔ bracket). ورود بر اساسِ بستهٔ کندل است؛ قیمتِ لحظه‌ای ممکن است جابه‌جا شده باشد.</p>`
+    : `<div class="kv"><span>وضعیت</span><b class="mid">صبر — ورودی پیشنهاد نمی‌شود</b></div>
+      <p class="note">شرطِ ورود: z ≥ ۱٫۲ و دست‌کم ۳ رأیِ هم‌جهت از ۵ و حداکثر ۱ رأیِ مخالف (برای شورت برعکس). ${ld ? `تمایلِ فعلی: <b class="${ld==="long"?"up":"dn"}">${ld==="long"?"صعودی ↗":"نزولی ↘"}</b>` : ""}${rd!=null ? ` · آمادگی ${faN(rd,0)}٪` : ""}</p>`;
+  const lv = x.live, S = scOf(x), sc = S.sc, v = S.st === "ok" ? vInfo(sc) : null, na = x.scorecard_applies === false;
+  const hasGC = sc && sc.avg_gross_r!=null && isFinite(sc.avg_gross_r) && sc.avg_cost_r!=null && isFinite(sc.avg_cost_r);
+  const scHtml = S.st === "ok" ? `
+      <div class="kv"><span>دوره</span><b>${esc(ymdFa(sc.from))} تا ${esc(ymdFa(sc.to))} <small class="mid">(${recSpan(sc)})</small></b></div>
+      <div class="kv"><span>تعداد · درصدِ برد</span><b class="num">n=${faN(sc.n)} · ${sc.win_rate!=null ? faN(n100(sc.win_rate),0) + "٪" : "—"}</b></div>
+      ${sc.long_n!=null || sc.short_n!=null ? `<div class="kv"><span>لانگ · شورت</span><b class="num">${faN(sc.long_n||0)} · ${faN(sc.short_n||0)}</b></div>` : ""}
+      <div class="kv"><span>میانگین / جمع (پس از کارمزد)</span><b class="${v.cls}">${sc.avg_r!=null ? bR(sc.avg_r,3) : "—"} / ${sc.total_r!=null ? bR(sc.total_r,1) : "—"}</b></div>
+      ${ciText(sc) ? `<div class="kv"><span>عدمِ قطعیت</span><b class="${v.cls}">${ciText(sc)}</b></div>` : ""}
+      ${hasGC ? `<div class="kv"><span>چرا؟ میانگینِ هر معامله</span><b>پیش از کارمزد ${bR(sc.avg_gross_r)}، کارمزد ${bR(-Math.abs(sc.avg_cost_r))}</b></div>
+      <p class="note">کارمزد به‌نسبتِ فاصلهٔ حدضرر سنجیده می‌شود؛ هرچه حدضرر نزدیک‌تر (تایم‌فریمِ کوتاه‌تر)، سهمِ کارمزد از هر R بیشتر است.</p>` : ""}
+      <div class="kv"><span>ضریبِ سود (PF)</span><b class="num">${sc.profit_factor!=null ? fmt(sc.profit_factor,2) : "—"}</b></div>
+      ${sc.cost_pct!=null ? `<div class="kv"><span>کارمزدِ رفت‌وبرگشتِ لحاظ‌شده</span><b class="num">${faN(sc.cost_pct,2)}٪</b></div>` : ""}
+      <div class="kv"><span>حکم</span><b class="${v.cls}">${esc(v.fa)}</b></div>
+      ${na ? `<p class="note v-pos">ℹ️ ${SC_NA}.</p>` : ""}`
+    : S.st === "building"
+      ? `<p class="note">کارنامه در حال ساخت… — تا آماده شود، دربارهٔ سودآوریِ این خانه هیچ ادعایی نمی‌شود کرد.</p>`
+      : `<p class="note">کارنامهٔ این خانه ساخته نشد${sc && sc.error ? ` (${esc(sc.error)})` : ""} — پس دربارهٔ سودآوری‌اش هیچ ادعایی نمی‌شود کرد.</p>`;
+  const verdictBox = v
+    ? `<div class="dd-verdict vb-${v.code}"><b class="${v.cls}">کارنامه: ${esc(v.fa)}</b>؛ ${esc(v.say)}${ciText(sc) ? `<br><small>${ciText(sc)}${hasGC ? ` · پیش از کارمزد ${bR(sc.avg_gross_r)}، کارمزد ${bR(-Math.abs(sc.avg_cost_r))}` : ""}</small>` : ""}${na ? `<br><small class="v-pos">ℹ️ ${SC_NA}.</small>` : ""}</div>`
+    : `<div class="dd-verdict"><b class="v-neu">${S.st === "building" ? "کارنامه در حال ساخت…" : "کارنامه ساخته نشد"}</b> — دربارهٔ سودآوریِ این تصمیم هیچ ادعایی نمی‌شود کرد.</div>`;
+  const warnBox = warns.length
+    ? `<div class="dd-caution"><b>⚠ هشدارهای موتور (${faN(warns.length)})</b><ul class="dd-reasons">${warns.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
+  const liveHtml = lv && (lv.n || lv.open) ? `
+      <div class="kv"><span>داوری‌شده · درصدِ برد</span><b class="num">n=${faN(lv.n||0)} · ${lv.win_rate!=null ? faN(n100(lv.win_rate),0) + "٪" : "—"}</b></div>
+      <div class="kv"><span>میانگین R</span><b class="num ${(lv.n||0) >= 30 ? cls(lv.avg_r) : ""}">${lv.avg_r!=null ? faS(lv.avg_r,2) + "R" : "—"}</b></div>
+      <div class="kv"><span>در انتظارِ داوری</span><b class="num">${faN(lv.open||0)}</b></div>`
+    : `<p class="note">کارنامهٔ زنده (رو-به-جلو) هنوز داده‌ای ندارد.</p>`;
+  let bal = "", risk = "1";
+  try{ bal = localStorage.dBal || ""; risk = localStorage.dRisk || "1"; }catch(e){}
+  const trade = hasLv ? `
+    <div class="dd-grid">
+      <div class="tfcard"><h4>▶ پوزیشنِ دمو</h4>
+        <div class="dd-in"><span class="mid">حجمِ دمو ($)</span><input id="ddSize" class="cfgin" type="number" min="10" step="10" value="${defSizeFor(x.risk_pct)}"></div>
+        <button class="btn ${a}" style="width:100%;margin-top:6px" onclick="dmDemo()">باز کردن در دمو — ${callLabel(a)}</button>
+        <p class="note" style="margin-top:8px">فقط کیف‌پولِ دمو. سرور ورود را با قیمتِ زندهٔ لحظهٔ کلیک می‌گذارد و حدضرر/هدف را خودش از تحلیلِ همین تایم‌فریم می‌سازد (ممکن است کمی با اعدادِ بالا فرق کند). هشدارهای آماری و ریسکِ پرتفوی جداگانه پرسیده می‌شوند.</p>
+      </div>
+      <div class="tfcard"><h4>🧮 اندازه در فیوچرزِ کوکوین</h4>
+        <div class="dd-in"><span class="mid">موجودی (USDT)</span><input id="ddBal" class="cfgin" type="number" min="1" step="10" value="${esc(bal)}" placeholder="مثلاً ۱۰۰۰" onchange="dmSize()"></div>
+        <div class="dd-in"><span class="mid">ریسکِ هر معامله (٪)</span><input id="ddRisk" class="cfgin" type="number" min="0.05" max="5" step="0.05" value="${esc(risk)}" style="width:80px" onchange="dmSize()">
+          <button class="gear" onclick="dmSize()">محاسبه</button></div>
+        <p class="note">کارمزد با نرخِ تیکر (سفارشِ بازار) حساب می‌شود — همان فرضِ کارمزدِ کارنامهٔ بک‌تست.</p>
+        <div id="ddSizeOut" class="note"></div>
+      </div>
+    </div>` : "";
+  return `
+    <h3>${esc(coinOf(sym))} · ${TF_FA[tf] || esc(tf)} — <span class="${col}">${callLabel(a)}</span></h3>
+    <span class="sub">${[x.setup_fa, x.grade ? "درجه " + x.grade : "", x.regime].filter(Boolean).map(esc).join(" · ")}${x.price!=null ? ` · قیمتِ بستهٔ کندل <b class="num">${px(x.price)}</b>` : ""}${x.candle_ts!=null ? ` · کندلِ ${tsFa(x.candle_ts, true)}` : ""}</span>
+    <div class="note" style="margin-top:6px">⚠️ تحلیلِ ترکیبیِ اندیکاتورها و هوش مصنوعی است، نه سیگنالِ تأییدشده. ورودِ خودکار فقط با قفلِ ایمنی.</div>
+    ${verdictBox}
+    ${warnBox}
+    <div class="dd-grid">
+      <div class="tfcard"><h4><span>اجزا و رأی‌ها</span><span class="num" style="font-size:12px"><span class="up">▲${faN(x.votes_bull||0)}</span> <span class="dn">▼${faN(x.votes_bear||0)}</span>${x.z!=null ? ` · z ${fmt(x.z,2)}` : ""}</span></h4>
+        ${comps}
+        <div class="divider"></div>
+        ${a === "wait"
+          ? `<div class="kv"><span>آمادگی <small class="mid">(چه مقدار از شرط‌های ورود پر است)</small></span><b class="num">${rd!=null ? faN(rd,0) + "٪" : "—"}</b></div>`
+          : `<div class="kv"><span>امتیازِ فنی <small class="mid">(۰ تا ۱۰۰ — شدتِ هم‌سویی، نه احتمالِ برد)</small></span><b class="num">${st!=null ? faN(st,0) : "—"}</b></div>`}
+        ${reasons ? `<div class="divider"></div><b style="font-size:12.5px">چرا این تصمیم</b>${reasons}` : ""}
+      </div>
+      <div class="tfcard"><h4>${a === "wait" ? "⏳ صبر" : "📍 معامله"}</h4>
+        ${levels}
+        <div class="divider"></div>
+        <h4 style="margin-bottom:4px">📜 کارنامهٔ بک‌تست</h4>${scHtml}
+        <div class="divider"></div>
+        <h4 style="margin-bottom:4px">📡 کارنامهٔ زنده</h4>${liveHtml}
+      </div>
+    </div>
+    ${trade}`;
+}
+function dmDemo(){
+  if(!DD) return;
+  const {sym, tf, x} = DD, a = dmAct(x);
+  if(a === "wait") return;
+  const size = Number(($("#ddSize")||{}).value || 0);
+  if(!(size >= 10)){ toast("حجم حداقل ۱۰$ است", false); return; }
+  const S = scOf(x), sc = S.sc, warns = warnsOf(x);
+  let rec;
+  if(S.st === "ok"){
+    const v = vInfo(sc);
+    rec = `کارنامه (${recSpan(sc)}، پس از کارمزد): ${sc.n ? `${sc.win_rate!=null ? faN(n100(sc.win_rate),0) + "٪ برد · " : ""}میانگین ${faS(sc.avg_r,2)}R · ` : ""}n=${faN(sc.n)} — ${v.fa}` +
+          `${sc.ci_lo!=null && sc.ci_hi!=null ? `\nبازهٔ ۹۵٪: از ${faS(sc.ci_lo,2)} تا ${faS(sc.ci_hi,2)}R در هر معامله` : ""}\n${v.say}`;
+  }else rec = S.st === "building" ? "کارنامه در حال ساخت… — دربارهٔ سودآوریِ این تصمیم هیچ ادعایی نمی‌شود کرد."
+                                  : "کارنامهٔ این خانه ساخته نشد — دربارهٔ سودآوری‌اش هیچ ادعایی نمی‌شود کرد.";
+  if(x.scorecard_applies === false) rec += `\n${SC_NA}.`;
+  const wl = warns.length ? `\n\n⚠ هشدارهای موتور:\n• ${warns.join("\n• ")}` : "";
+  const msg = `${coinOf(sym)} · ${TF_FA[tf]||tf} — ${callLabel(a)}\n\n${rec}${wl}\n\nاین تحلیل است، نه سیگنالِ تأییدشده.\n\nپوزیشنِ دمو با ${fmt(size,0)}$ باز شود؟ (فقط کیف‌پولِ دمو)`;
+  if(!confirm(msg)) return;
+  openPos(sym, tf, size, false, false, a, {entry: x.entry, sl: x.sl, tp: x.tp})
+    .then(ok => { if(ok && DD && DD.sym === sym && DD.tf === tf) closeDecision(); });
+}
+async function dmSize(auto){
+  if(!DD) return;
+  const key = DD, x = DD.x, out = $("#ddSizeOut");
+  if(!out) return;
+  const bal = parseFloat(($("#ddBal")||{}).value), risk = parseFloat(($("#ddRisk")||{}).value);
+  try{ localStorage.dBal = isFinite(bal) ? String(bal) : ""; if(isFinite(risk)) localStorage.dRisk = String(risk); }catch(e){}
+  if(!(bal > 0) || !(risk > 0)){
+    out.innerHTML = auto === true ? `<span class="mid">موجودیِ حسابِ فیوچرز و ریسک را وارد کنید تا تعدادِ قرارداد و اهرم حساب شود.</span>`
+                                  : `<span class="err">موجودی و ریسک باید عددِ مثبت باشند.</span>`;
+    return;
+  }
+  out.innerHTML = `<span class="mid">در حالِ محاسبه…</span>`;
+  try{
+    const {r, d} = await jfetch("/api/kucoin/size", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({sym: key.sym, balance: bal, risk_pct: risk, entry: x.entry, stop: x.sl, fee_side: "taker"})});   // تیکر = همان فرضِ کارمزدِ کارنامه
+    if(DD !== key) return;
+    if(!r.ok) throw new Error(errMsg(r, d));
+    const sd = d.side === "long" ? `<span class="up">لانگ</span>` : d.side === "short" ? `<span class="dn">شورت</span>` : esc(d.side||"");
+    out.innerHTML = `
+      <div class="kv"><span>جهت · تعدادِ قرارداد</span><b class="num">${sd} · ${fmt(d.contracts,3)}</b></div>
+      <div class="kv"><span>ارزشِ پوزیشن / مارجین</span><b class="num">${fmt(d.notional,0)}$ / ${fmt(d.margin,1)}$</b></div>
+      <div class="kv"><span>اهرم</span><b class="num">${fmt(d.leverage,1)}x</b></div>
+      <div class="kv"><span>قیمتِ لیکوئید (تقریبی)</span><b class="num ${d.liq_before_stop ? "dn" : ""}">${d.liquidation!=null ? px(d.liquidation) : "—"}</b></div>
+      <div class="kv"><span>ضرر اگر حدضرر بخورد</span><b class="num dn">−${fmt(d.loss_at_stop,2)}$${d.loss_at_stop_pct!=null ? ` (${fmt(d.loss_at_stop_pct,2)}٪ موجودی)` : ""}</b></div>
+      <div class="kv"><span>کارمزدِ رفت‌وبرگشت (تیکر)</span><b class="num">${fmt(d.fees_round_trip,2)}$</b></div>
+      <div class="kv"><span>فاصلهٔ حدضرر · حرکتِ لازم برای سربه‌سر</span><b class="num">${fmt(d.stop_distance_pct,2)}٪ · ${fmt(d.breakeven_move_pct,3)}٪</b></div>
+      ${d.liq_before_stop
+        ? `<div class="dd-warn">⛔ قیمتِ لیکوئید پیش از حدضرر می‌رسد — با این اهرم حدضرر اجرا نمی‌شود و کلِ مارجین از دست می‌رود. اهرم را کم کنید.</div>`
+        : `<div class="note up">✓ لیکوئید پشتِ حدضرر است.</div>`}`;
+  }catch(e){
+    if(DD === key) out.innerHTML = `<span class="err">⚠️ ${esc(e.message)}</span> <button class="btn mini" onclick="dmSize()">↻ تلاشِ دوباره</button>`;
+  }
 }
 
 /* ═══════════ راه‌اندازی ═══════════ */
@@ -1694,9 +2315,12 @@ document.querySelectorAll("#tfTabs button").forEach(b => b.onclick = () => {
   b.classList.add("on");
   TF = b.dataset.tf;
   window.prevOK = null;
+  syncOkChip();
   saveView();
+  $("#ovErr").innerHTML = "";
   $("#rows").innerHTML = `<tr class="skel"><td colspan="13"></td></tr><tr class="skel"><td colspan="13"></td></tr>`;
-  loadOverview();
+  renderMatrix();                                   // ستونِ تبِ فعال در ماتریس برجسته می‌شود
+  loadOverview(true);
 });
 (function restoreState(){
   try{
@@ -1708,9 +2332,13 @@ document.querySelectorAll("#tfTabs button").forEach(b => b.onclick = () => {
     const chip = document.querySelector(`.fchip[data-f="${VIEW.filter}"]`);
     if(chip){ document.querySelectorAll(".fchip[data-f]").forEach(x=>x.classList.remove("on")); chip.classList.add("on"); }
   }catch(e){}
-  if(localStorage.dense==="1"){ document.body.classList.add("dense"); $("#densChip").classList.add("on"); }
-  $("#notifChip").classList.toggle("on", localStorage.notif==="1");
-  $("#soundChip").classList.toggle("on", localStorage.sound==="1");
+  syncOkChip();
+  try{
+    if(localStorage.dense==="1"){ document.body.classList.add("dense"); $("#densChip").classList.add("on"); }
+    $("#notifChip").classList.toggle("on", localStorage.notif==="1");
+    $("#soundChip").classList.toggle("on", localStorage.sound==="1");
+    if(localStorage.slOpen==="1") toggleSline(true);
+  }catch(e){}
 })();
 document.querySelectorAll("thead th[data-k]").forEach(th=>{
   th.onclick = ()=>{
@@ -1721,20 +2349,22 @@ document.querySelectorAll("thead th[data-k]").forEach(th=>{
 });
 document.addEventListener("keydown", e=>{
   if(e.key==="/" && document.activeElement.tagName!=="INPUT"){ e.preventDefault(); $("#q").focus(); }
-  if(e.key==="Escape"){ closeDrawer(); closeSettings(); closeTModal(); }
+  if(e.key==="Escape"){ closeDrawer(); closeSettings(); closeTModal(); closeDecision(); }
 });
 
-loadVersion(); loadGateBanner(); loadMomentum(); loadTrendBanner(); loadOverview(); loadPositions(); loadConfig(false); loadEngineCred(); loadCalibBanner(); loadEdgeHealth(); loadBot();
-setInterval(loadGateBanner, 60000);
-setInterval(loadTrendBanner, 60000);
-setInterval(loadMomentum, 600000);     // قیمتِ زندهٔ سیگنال‌ها (سرور ۶۰ ثانیه کش می‌کند؛ عکسِ روزانه ۳۰ دقیقه)
-setInterval(loadBot, 6000);
-setInterval(loadOverview, 60000);
-setInterval(loadPositions, 30000);
-setInterval(()=>loadConfig(false), 60000);
-setInterval(loadEngineCred, 600000);
-setInterval(loadEdgeHealth, 120000);
-setInterval(loadVersion, 600000);
+loadVersion(); loadGateBanner(); loadMomentum(); loadTrendBanner(); loadDecisions(); loadOverview(); loadPositions(); loadConfig(false); loadEngineCred(); loadCalibBanner(); loadEdgeHealth(); loadBot();
+// هر رفرش اگر دورِ قبلش هنوز تمام نشده رد می‌شود؛ همهٔ درخواست‌ها مهلتِ ۲۵ ثانیه‌ای دارند
+every(60000, "gate", loadGateBanner);
+every(60000, "trend", loadTrendBanner);
+every(600000, "mom", loadMomentum);     // قیمتِ زندهٔ سیگنال‌ها (سرور ۶۰ ثانیه کش می‌کند؛ عکسِ روزانه ۳۰ دقیقه)
+every(6000, "bot", loadBot);
+setInterval(() => loadDecisions(), 60000);   // گاردِ «در راه» درونِ خودِ تابع
+setInterval(() => loadOverview(), 60000);    // همین‌طور
+every(30000, "pos", loadPositions);
+every(60000, "cfg", () => loadConfig(false));
+every(600000, "cred", loadEngineCred);
+every(120000, "edge", loadEdgeHealth);
+every(600000, "ver", loadVersion);
 </script>
 </body>
 </html>

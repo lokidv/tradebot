@@ -27,3 +27,5 @@ __pycache__/
 .venv/
 bot/data/notify.json
 bot/data/trade_journal.jsonl
+bot/data/decision_ledger.jsonl
+bot/data/research/decision_scorecard.json

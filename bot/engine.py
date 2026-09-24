@@ -270,6 +270,8 @@ def regime_at(cs, c, i):
 # ───────────────────────── ستاپ‌های چهارگانه (مشترک آموزش/زنده) ─────────────────────────
 SETUP_FA = {"zx": "کراس z", "pb": "پولبک روند", "sq": "شکست فشردگی", "fd": "فید روند",
             "rg": "فید رنج", "dm": "جهت‌یاب", "ap": "سیاست انتخاب عمل"}
+SETUP_LOOKBACK = 2          # ستاپِ زنده: کندلِ بستهٔ آخر و یکی قبل از آن (کهنه‌تر اجرا نمی‌شود)
+SETUP_LOOKBACK_FA = "۲"
 
 
 def setup_signal(cs, o, h, l, c, i):
@@ -485,12 +487,14 @@ def trade_suggestion(c, cs, fc, tf, votes_bull, votes_bear, s_ml, force_side=Non
             reasons.append(f"رأی‌ها {bull5}▲/{bear5}▼ — حداقل ۳ رأی هم‌جهت لازم است")
         if bull5 >= 2 and bear5 >= 2:
             reasons.append("دسته‌ها دوپاره‌اند")
-        reasons.append("و هیچ‌یک از ۵ ستاپ رویدادی (کراس z، پولبک، شکست، فید روند، فید رنج) در ۴ کندل اخیر رخ نداده")
+        # analyze() فقط کندلِ آخر و یکی قبل‌تر را برای ستاپ می‌گردد (range(0, 2)) — متن همان را بگوید
+        reasons.append(f"و هیچ‌یک از ۵ ستاپ رویدادی (کراس z، پولبک، شکست، فید روند، فید رنج) در {SETUP_LOOKBACK_FA} کندل اخیر رخ نداده")
         # آمادگی: چند درصد شرایطِ نزدیک‌ترین سیگنال پر شده (برای نمایش پیشرفت در UI)
         long_prog = 0.55 * min(max(z, 0.0) / 1.2, 1.0) + 0.45 * min(bull5 / 3.0, 1.0)
         short_prog = 0.55 * min(max(-z, 0.0) / 1.2, 1.0) + 0.45 * min(bear5 / 3.0, 1.0)
         ready_side = "long" if long_prog >= short_prog else "short"
         return {"side": None, "status": "منتظر ستاپ", "reasons": reasons,
+                "setup": None, "setup_fa": None, "setup_observed": False,
                 "readiness": round(max(long_prog, short_prog) * 100),
                 "ready_side": ready_side}
 
@@ -607,7 +611,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
     # ستاپ زنده (همان منطق آموزش) — حداکثر کندل جاری/قبلی؛ سیگنال کهنه اجرا نمی‌شود
     suspended = ex.get("suspended") or {}            # P1: ستاپ‌های معلق‌شده با عملکردِ زندهٔ ضعیف
     live_sig, live_setup = 0, None
-    for back in range(0, 2):
+    for back in range(0, SETUP_LOOKBACK):
         j = n - 1 - back
         if j < 260:
             break
@@ -630,13 +634,17 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
     stats = None
     if tr.get("side"):
         d = 1 if tr["side"] == "long" else -1
-        setup_used = "ap" if action_used else live_setup if (live_sig != 0 and live_sig == d) else "zx"
+        # بدونِ ستاپِ رویدادی، setup خالی است (None) — قبلاً «zx» برچسب می‌خورد و UI «کراس z»
+        # نشان می‌داد در حالی که فقط قاعدهٔ سطحیِ z/رأی جهت داده بود. ویژگی‌ها عوض نمی‌شوند:
+        # event_features برای zx و None هر چهار پرچمِ ستاپ را صفر می‌گذارد. دفترِ کاندید/سایه
+        # مقدارِ خالی را مثل قبل «zx» ثبت می‌کنند (candidates.py / shadow.py: setup or "zx").
+        setup_used = "ap" if action_used else live_setup if (live_sig != 0 and live_sig == d) else None
         policy_applicable = bool(action_used or (live_sig != 0 and live_sig == d and live_setup is not None))
         btc_align = True if btc_z is None else (btc_z * d > -0.3)   # همان آستانه آموزش
         trending_now = float(cs["adx"][-1]) >= 22 and float(cs["chop"][-1]) < 55
         tr["btc_align"] = btc_align
         tr["setup"] = setup_used
-        tr["setup_fa"] = SETUP_FA.get(setup_used, setup_used)
+        tr["setup_fa"] = SETUP_FA.get(setup_used, setup_used) if setup_used else None
         votes_now = vb if d == 1 else vs
         feats = event_features(cs, c, n - 1, d, setup_used, kl["t"][-1],
                                funding_z=ex.get("funding_z", 0.0),
@@ -706,6 +714,11 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         susp_combos = ex.get("suspended_combos") or {}
         combo = f"{tf}|{setup_used}"
         combo_side = f"{tf}|{setup_used}|{tr['side']}"
+        # فقط برای متنِ کاربر: بی‌ستاپ setup_used خالی است و متن «1h|None|long» می‌شد.
+        # کلیدهای combo/combo_side (جیب‌ها/تعلیق‌ها/gates/متا-گیت) دست نمی‌خورند.
+        _setup_disp = setup_used or "قاعده"
+        combo_fa = f"{tf}|{_setup_disp}"
+        combo_side_fa = f"{tf}|{_setup_disp}|{tr['side']}"
         pocket_hit = pockets.get(combo_side)
         if pocket_hit:                              # فقط نمایش — هرگز مجوزِ ورود
             tr["pocket_n"] = int(pocket_hit.get("n") or 0)
@@ -771,7 +784,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         elif combo_side in susp_combos or combo in susp_combos:
             bad = susp_combos.get(combo_side, susp_combos.get(combo))
             tr["viable"] = False
-            tr["status"] = (f"معلق — ترکیب زندهٔ {combo} ضعیف است "
+            tr["status"] = (f"معلق — ترکیب زندهٔ {combo_fa} ضعیف است "
                             f"(بازده خالص: {bad:+.2f}R)")
         elif setup_used in suspended:
             tr["viable"] = False
@@ -798,7 +811,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         tr["gate_allowed"] = gate_ok
         if tr["viable"] and not gate_ok:
             tr["viable"] = False
-            tr["status"] = (f"قفل ایمنی — ترکیب {combo_side} در فهرست مجاز gates.json نیست؛ "
+            tr["status"] = (f"قفل ایمنی — ترکیب {combo_side_fa} در فهرست مجاز gates.json نیست؛ "
                             "ورود فقط پس از پیش‌ثبت و عبور از آزمون منجمد")
         tr["tradeable"] = bool(tr["viable"])
         # ── متا-گیت (لایهٔ دوم تصمیم) — فقط روی سیگنال‌های مجوزدار ──
@@ -911,9 +924,8 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
     elif calibrated and tr.get("p_win") is not None:
         # احتمال از فراوانی واقعی ستاپ‌های مشابه تاریخی (کالیبره)
         p_up = tr["p_win"] if tr["side"] == "long" else 100 - tr["p_win"]
-    elif bt["win_rate"] is not None and bt["n"] >= 8:
-        bias = bt["win_rate"] if float(cs["score_s"][-1]) >= 0 else 100 - bt["win_rate"]
-        p_up = 0.65 * p_up + 0.35 * bias
+    # ترکیبِ win_rateِ بک‌تست حذف شد: آن نرخِ بردِ معامله‌های براکتیِ ستاپ‌ها در **هر دو جهت**
+    # است، نه احتمالِ بالارفتن؛ آمیختنش با p_up عدد را بی‌دلیل به ۶۵/۳۵ می‌کشید.
 
     return {
         "tf": tf,

@@ -42,11 +42,25 @@ import momentum
 import watchlist
 import kucoin_desk
 import notify
+import decision
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
 _mstate_cache: dict = {}   # tf -> (ts, {"breadth","dom","ethbtc"})
 _susp_cache = {"ts": 0.0, "map": {}}
+
+# ── تک‌پروازیِ کمک‌تابع‌ها: پنج نخِ overview روی کشِ سرد هر کدام همین‌ها را از نو می‌ساختند
+# (تاریخچهٔ PAXG با صفحه‌بندی، دفترِ سایه، edge_book). حالا اولی می‌سازد و بقیه همان را می‌خوانند.
+_once_locks: dict = {}
+_once_guard = threading.Lock()
+
+
+def _once(key):
+    with _once_guard:
+        lk = _once_locks.get(key)
+        if lk is None:
+            lk = _once_locks[key] = threading.Lock()
+        return lk
 
 
 def _market_state(tf):
@@ -54,6 +68,14 @@ def _market_state(tf):
     hit = _mstate_cache.get(tf)
     if hit and time.time() - hit[0] < 300:
         return hit[1]
+    with _once(("mstate", tf)):
+        hit = _mstate_cache.get(tf)
+        if hit and time.time() - hit[0] < 300:
+            return hit[1]
+        return _market_state_build(tf)
+
+
+def _market_state_build(tf):
     out = {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0}
     try:
         symbols, _ = market.get_top_symbols(calib.CALIB_UNIVERSE_N)   # همان جمعیتِ آموزش
@@ -116,6 +138,13 @@ def _suspended_setups():
     تعلیقِ خفیفِ سراسری (مثل zx با −۰٫۰۱R) جیب‌های سوددهٔ تایم‌فریم‌محور را می‌کشت."""
     if time.time() - _susp_cache["ts"] < 120:
         return _susp_cache["map"]
+    with _once("susp"):
+        if time.time() - _susp_cache["ts"] < 120:
+            return _susp_cache["map"]
+        return _suspended_setups_build()
+
+
+def _suspended_setups_build():
     m = {}
     try:
         st = shadow.stats(None, days=30, since_ts=_model_era())
@@ -133,7 +162,8 @@ def _live_edge_book():
     """جیب‌های سودده و ترکیب‌های معلق — معیار LCB/نیمه‌ها در edge_book."""
     try:
         import edge_book
-        pockets, suspended, _ = edge_book.refresh()
+        with _once("edge_book"):                   # edge_book کشِ ۹۰ثانیه‌ای دارد ولی قفل ندارد
+            pockets, suspended, _ = edge_book.refresh()
         return pockets, suspended
     except Exception:  # noqa: BLE001
         return {}, {}
@@ -144,6 +174,13 @@ def _suspended_tfs():
     اگر همان TF جیب سوددهٔ ترکیبی داشته باشد، تعلیقِ کل TF اعمال نمی‌شود."""
     if time.time() - _tf_susp_cache["ts"] < 120:
         return _tf_susp_cache["map"]
+    with _once("tf_susp"):
+        if time.time() - _tf_susp_cache["ts"] < 120:
+            return _tf_susp_cache["map"]
+        return _suspended_tfs_build()
+
+
+def _suspended_tfs_build():
     m = {}
     pockets, _ = _live_edge_book()
     pocket_tfs = {p["tf"] for p in pockets.values()}
@@ -171,10 +208,18 @@ _macro_cache: dict = {}   # tf -> (ts, {"gold": x})
 
 def _rs_rank(tf):
     """رتبه قدرت نسبی ۰..۱ هر ارز بین تاپ نمادها (بازده ۲۰ کندلی)."""
-    now = time.time()
     hit = _rs_cache.get(tf)
-    if hit and now - hit[0] < 180:
+    if hit and time.time() - hit[0] < 180:
         return hit[1]
+    with _once(("rs", tf)):
+        hit = _rs_cache.get(tf)
+        if hit and time.time() - hit[0] < 180:
+            return hit[1]
+        return _rs_rank_build(tf)
+
+
+def _rs_rank_build(tf):
+    now = time.time()
     ranks = {}
     try:
         # همان جمعیتِ آموزش: ۱۰۰ ارزِ برتر، با حداقلِ جمعیت (وگرنه همه خنثی).
@@ -198,10 +243,18 @@ def _macro(tf):
     شاخصِ دلار حذف شد: فایلِ dxy_daily.json هرگز پر نشد و ویژگی در تمامِ آموزش
     ثابتِ ۰ بود؛ زنده‌کردنش بعداً یعنی دادنِ ورودیِ ندیده به مدل.
     """
-    now = time.time()
     hit = _macro_cache.get(tf)
-    if hit and now - hit[0] < 900:
+    if hit and time.time() - hit[0] < 900:
         return hit[1]
+    with _once(("macro", tf)):                     # تاریخچهٔ PAXG فقط یک‌بار صفحه‌بندی شود
+        hit = _macro_cache.get(tf)
+        if hit and time.time() - hit[0] < 900:
+            return hit[1]
+        return _macro_build(tf)
+
+
+def _macro_build(tf):
+    now = time.time()
     out = {"gold": 0.0}
     try:
         gk = market.get_history("PAXGUSDT", tf, calib.BARS.get(tf, 3000))
@@ -216,10 +269,17 @@ def _macro(tf):
 
 def _btc_macro():
     """رژیم کلان BTC روی روزانه + پهنای 1d — کش ۱۵ دقیقه‌ای."""
+    if _btc_macro_cache["data"] and time.time() - _btc_macro_cache["ts"] < 900:
+        return _btc_macro_cache["data"]
+    with _once("btc_macro"):
+        if _btc_macro_cache["data"] and time.time() - _btc_macro_cache["ts"] < 900:
+            return _btc_macro_cache["data"]
+        return _btc_macro_build()
+
+
+def _btc_macro_build():
     import meta_gate
     now = time.time()
-    if _btc_macro_cache["data"] and now - _btc_macro_cache["ts"] < 900:
-        return _btc_macro_cache["data"]
     data = {"regime": "chop", "btc_vs_sma100": 0.0, "btc_vs_sma200": 0.0, "breadth": 0.0}
     try:
         br = (_market_state("1d") or {}).get("breadth", 0.0)
@@ -321,33 +381,82 @@ DRIFT_CAP = {"15m": 1.2, "1h": 2.5, "4h": 5.0, "1d": 9.0}
 
 _an_lock = threading.Lock()
 _an_cache: dict = {}      # (symbol, tf) -> (ts, analysis | {"error": str})
-_inflight: dict = {}      # (symbol, tf) -> threading.Event — جلوگیری از محاسبه تکراری هم‌زمان
+_inflight: dict = {}      # (symbol, tf) -> (Event, نخِ محاسبه‌گر) — جلوگیری از محاسبه تکراری هم‌زمان
 _pool = ThreadPoolExecutor(max_workers=8)
+INFLIGHT_POLL = 5.0       # منتظر هر چند ثانیه زنده‌بودنِ محاسبه‌گر را می‌پاید
+INFLIGHT_MAX_WAIT = 300.0  # سقفِ کلِ انتظارِ یک منتظر؛ بعدش خطا برمی‌گردد (نشانگرِ محاسبه‌گر دست نمی‌خورد)
+ERROR_TTL = 60.0           # نتیجهٔ خطا فقط ۶۰ ثانیه کش می‌شود، نه تا مرزِ کندل (خطای گذرا روی 1d یک روز می‌ماند)
+
+
+def _an_fresh(hit, tf, max_age):
+    now = time.time()
+    res = hit[1]
+    if isinstance(res, dict) and "error" in res:
+        return now - hit[0] < (min(max_age, ERROR_TTL) if max_age else ERROR_TTL)
+    boundary = now - (now % (market.TF_MINUTES[tf] * 60))
+    # تحلیل تا پایان کندل جاری معتبر است (+۴۵ ثانیه مهلت بعد از بسته‌شدن)
+    return hit[0] >= boundary or now - hit[0] < (max_age or 45)
 
 
 def get_analysis(symbol: str, tf: str, max_age=None):
+    """تحلیلِ کش‌شده؛ برای هر کلید فقط یک نخ محاسبه می‌کند و بقیه نتیجهٔ همان را می‌گیرند.
+
+    باگِ قبلی (overview روزانه ۵۱۵ ثانیه): منتظر پس از wait(timeout=180) نشانگرِ inflight را
+    برمی‌داشت در حالی که محاسبه‌گر هنوز کار می‌کرد ⇒ محاسبهٔ تکراری؛ و محاسبه‌گرِ اول در پایان
+    نشانگرِ **نخِ دوم** را پاک می‌کرد ⇒ نخِ سوم هم از نو شروع می‌کرد. زنجیرهٔ HTF و BTC
+    (15m→4h→1d) این را چندبرابر می‌کرد. حالا منتظر تا وقتی محاسبه‌گر زنده است می‌ماند،
+    و هر نخ فقط نشانگرِ خودش را برمی‌دارد.
+    """
     key = (symbol, tf)
+    me = threading.current_thread()
+    deadline = time.time() + INFLIGHT_MAX_WAIT      # سقفِ کلِ انتظار برای محاسبه‌گرِ دیگر
     while True:
         with _an_lock:
             hit = _an_cache.get(key)
-            if hit:
-                now = time.time()
-                boundary = now - (now % (market.TF_MINUTES[tf] * 60))
-                # تحلیل تا پایان کندل جاری معتبر است (+۴۵ ثانیه مهلت بعد از بسته‌شدن)
-                if hit[0] >= boundary or now - hit[0] < (max_age or 45):
-                    return hit[1]
-            other = _inflight.get(key)
-            if other is None:
-                ev = threading.Event()
-                _inflight[key] = ev
+            if hit and _an_fresh(hit, tf, max_age):
+                return hit[1]
+            cur = _inflight.get(key)
+            if cur is None:
+                mine = (threading.Event(), me)
+                _inflight[key] = mine
                 break                          # این نخ مسئول محاسبه است
-        other.wait(timeout=180)                # نخ دیگری در حال محاسبه همین کلید است
+        ev_o, owner = cur
+        if owner is me:                        # بازگشتِ حلقوی — هرگز نباید رخ دهد؛ قفلِ ابدی نساز
+            return {"symbol": symbol, "tf": tf, "error": "بازگشتِ حلقوی در زنجیرهٔ تحلیل"}
+        t_wait = time.time()
+        timed_out = False
+        # نخ دیگری در حال محاسبه همین کلید است
+        while not ev_o.wait(max(0.0, min(INFLIGHT_POLL, deadline - time.time()))):
+            if not owner.is_alive():
+                break
+            if time.time() >= deadline:
+                timed_out = True
+                break
         with _an_lock:
             hit = _an_cache.get(key)
-            if hit:
-                return hit[1]
-            if _inflight.get(key) is other:    # محاسبه‌گر قبلی بی‌نتیجه ماند
+            if hit and (hit[0] >= t_wait or _an_fresh(hit, tf, max_age)):
+                return hit[1]                  # نتیجهٔ همان محاسبه‌گر
+            if timed_out:
+                # محاسبه‌گر زنده ولی کُند است: نشانگرش را برنمی‌داریم و محاسبهٔ تکراری هم نمی‌سازیم؛
+                # این خطا کش نمی‌شود و درخواستِ بعدی دوباره نتیجهٔ همان محاسبه‌گر را می‌گیرد.
+                return {"symbol": symbol, "tf": tf,
+                        "error": f"مهلتِ انتظار برای تحلیلِ {symbol} {tf} ({INFLIGHT_MAX_WAIT:.0f} ثانیه) "
+                                 "تمام شد — محاسبه هنوز در جریان است؛ کمی بعد دوباره تلاش کنید"}
+            if _inflight.get(key) is cur:      # محاسبه‌گر بی‌نتیجه مُرد — نشانگرِ او را بردار
                 _inflight.pop(key, None)
+    try:
+        res = _compute_analysis(symbol, tf)
+        with _an_lock:
+            _an_cache[key] = (time.time(), res)
+    finally:
+        with _an_lock:
+            if _inflight.get(key) is mine:     # فقط نشانگرِ خودم
+                _inflight.pop(key, None)
+        mine[0].set()
+    return res
+
+
+def _compute_analysis(symbol, tf):
     try:
         btc_z = None
         if symbol != "BTCUSDT":
@@ -410,13 +519,12 @@ def get_analysis(symbol: str, tf: str, max_age=None):
             res = engine.analyze(kl, tf, btc_z=btc_z, predict_fn=calib.predict,
                                  extras=extras, dir_fn=calib.predict_dir,
                                  action_fn=calib.predict_action)
+            # analyze این دو را فقط در مسیرِ مجوزدار به status می‌برد؛ ماتریسِ تصمیم باید همیشه ببیندشان
+            res["tf_suspended"] = extras["tf_suspended"]
+            res["btc_z"] = btc_z
         res["symbol"] = symbol
     except Exception as e:  # noqa: BLE001
         res = {"symbol": symbol, "tf": tf, "error": str(e)}
-    with _an_lock:
-        _an_cache[key] = (time.time(), res)
-        _inflight.pop(key, None)
-    ev.set()
     return res
 
 
@@ -501,6 +609,8 @@ def _startup():
                 log.exc("trend testnet executor")
             time.sleep(600)
     threading.Thread(target=_health_and_report, daemon=True).start()
+    # میزِ تصمیم: ثبت/داوریِ دفترِ رو-به-جلو ~۲۰ ثانیه پس از هر مرزِ ۱۵دقیقه‌ای (فقط تحلیل)
+    threading.Thread(target=_decision_loop, name="decision-ledger", daemon=True).start()
     autotrader.init(overview, DRIFT_CAP, get_analysis, health_fn=health)   # 🤖 ربات معامله‌گر خودکار
     autotrader.start()
 
@@ -1102,6 +1212,98 @@ def overview(tf: str = "1h"):
 def coin_detail(symbol: str):
     results = dict(zip(TFS, _pool.map(lambda tf: get_analysis(symbol, tf), TFS)))
     return {"symbol": symbol, "tfs": results}
+
+
+# ───────────────────────── میزِ تصمیم (لانگ/شورت/صبر) — فقط تحلیل، هرگز مجوزِ معامله ─────────────────────────
+DECISION_WARM_DELAY = 30.0   # ثانیه پس از راه‌اندازی تا گرم‌کردنِ کارنامهٔ دوساله (در پس‌زمینه)
+DECISION_LAG = 20.0          # ثانیه پس از هر مرزِ ۱۵دقیقه‌ای UTC: کندل بسته شده و کشِ کندل تازه است
+DECISION_PERIOD = 900        # ۱۵ دقیقه
+
+
+def _decision_lookup(symbols=None, tfs=None):
+    """همهٔ تحلیل‌های ارز × تایم‌فریمِ میزِ تصمیم (۵×۴=۲۰) را موازی روی ``_pool`` می‌سازد
+    و یک تابعِ جست‌وجوی ``(sym, tf) -> analysis`` برای ``decision.collect/refresh`` برمی‌گرداند.
+
+    ترتیب: تایم‌فریمِ بالاتر و BTC اول — پیش‌نیازِ زنجیرهٔ HTF/BTCِ بقیه‌اند، پس منتظرها کمتر معطل می‌شوند.
+    """
+    symbols = tuple(symbols or decision.SYMBOLS)
+    tfs = tuple(tfs or decision.TFS)
+    keys = sorted(((s, tf) for s in symbols for tf in tfs),
+                  key=lambda k: (-market.TF_MINUTES.get(k[1], 0), k[0] != "BTCUSDT"))
+
+    def _one(k):
+        try:
+            return get_analysis(k[0], k[1])
+        except Exception as e:  # noqa: BLE001 — یک خانهٔ خراب نباید کلِ جدول را بیندازد
+            log.exc("decision analysis", symbol=k[0], tf=k[1])
+            return {"symbol": k[0], "tf": k[1], "error": str(e)}
+
+    results = dict(zip(keys, _pool.map(_one, keys)))
+
+    def lookup(sym, tf):
+        hit = results.get((sym, tf))
+        return hit if hit is not None else get_analysis(sym, tf)
+    return lookup
+
+
+def _decision_cycle():
+    """یک دورِ پس‌زمینه: تصمیم‌ها → ثبت در دفترِ رو-به-جلو → داوریِ ردیف‌های باز → کارنامه (بی‌انتظار).
+
+    هر گام جدا خطاگیری می‌شود تا خرابیِ یکی بقیه را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
+    out = {"decisions": 0, "recorded": None, "resolved": None}
+    decisions = decision.collect(_decision_lookup())
+    out["decisions"] = len(decisions or [])
+    try:
+        out["recorded"] = decision.record(decisions)
+    except Exception:  # noqa: BLE001
+        log.exc("decision ledger record")
+    try:
+        out["resolved"] = decision.resolve(market.get_klines)
+    except Exception:  # noqa: BLE001
+        log.exc("decision ledger resolve")
+    try:
+        decision.scorecards(wait=False)             # حداکثر روزی یک‌بار، در نخِ جدا
+    except Exception:  # noqa: BLE001
+        log.exc("decision scorecard refresh")
+    return out
+
+
+def _next_decision_run(now):
+    """زمانِ اجرای بعدی: DECISION_LAG ثانیه پس از نزدیک‌ترین مرزِ ۱۵دقیقه‌ای UTC که هنوز نگذشته."""
+    base = ((now - DECISION_LAG) // DECISION_PERIOD) * DECISION_PERIOD
+    return base + DECISION_PERIOD + DECISION_LAG
+
+
+def _decision_loop():
+    """دفترِ میزِ تصمیم باید حتی وقتی کسی صفحه را باز نکرده ثبت و داوری شود."""
+    time.sleep(DECISION_WARM_DELAY)
+    try:
+        decision.scorecards(wait=False)             # بازسازیِ کارنامه در پس‌زمینه، اگر کهنه است
+    except Exception:  # noqa: BLE001
+        log.exc("decision scorecard warm-up")
+    while True:
+        try:
+            time.sleep(max(1.0, _next_decision_run(time.time()) - time.time()))
+            info = _decision_cycle()
+            log.info("decision cycle", **info)
+        except Exception:  # noqa: BLE001
+            log.exc("decision loop")
+            time.sleep(60)
+
+
+@app.get("/api/decisions")
+def decisions_view():
+    """میزِ تصمیم: لانگ/شورت/صبرِ هر ارز × تایم‌فریم کنارِ کارنامهٔ دوسالهٔ خالص و دفترِ زنده.
+
+    ``def`` همگام است عمداً: FastAPI آن را در threadpool اجرا می‌کند و حلقهٔ رویداد بسته نمی‌شود.
+    """
+    try:
+        return decision.refresh(_decision_lookup(), market.get_klines)
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001
+        log.exc("decisions endpoint")
+        raise HTTPException(500, "ساختِ جدولِ تصمیم‌ها ناموفق بود — جزئیات در لاگِ سرور است؛ کمی بعد دوباره تلاش کنید")
 
 
 class OpenReq(BaseModel):

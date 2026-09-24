@@ -17,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOT = os.path.join(ROOT, "bot")
 REAL = os.path.join(BOT, "data")
 COPY_FILES = ("positions.json", "closed_trades.jsonl", "gates.json", "preregistration.json", "calib.json")
-COPY_DIRS = ("research", "final_test")
+COPY_DIRS = ("research", "final_test", os.path.join("hist_research", "micro"))   # micro: کارنامهٔ ماتریسِ تصمیم
 
 
 def main():
