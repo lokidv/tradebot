@@ -106,10 +106,13 @@ def _market_state(tf, tk=None):
     (tf, tk) است، نه TTLِ ساعتی — حالتِ یک کندل برای همهٔ ارزهای همان کندل یکی است.
     پهنای بازار عمداً خنثی (۰) است: نه ویژگیِ مدل است (features.DISABLED) و نه ورودیِ متا-گیت
     تغییر می‌کند (با پنج ارز هم قبلاً همیشه ۰ بود).
+
+    بی ``tk`` (رژیمِ کلان، overview، یادداشتِ پوزیشن‌ها) فقط پهنا خوانده می‌شود که همیشه ۰ است:
+    حالتِ خنثی بی واکشیِ کندل‌های سبد. دامیننس و ETH/BTC فقط در کندلِ تحلیل‌شده ساخته می‌شوند.
     """
-    if tf not in tf_spec.MODEL_TFS:
-        return {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0}      # 5m مدلی ندارد
-    tk = int(tk) if tk is not None else _last_closed_open(tf)
+    if tf not in tf_spec.MODEL_TFS or tk is None:
+        return {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0}      # 5m مدلی ندارد / بی کندلِ تحلیل
+    tk = int(tk)
     key = (tf, tk)
     hit = _mstate_cache.get(key)
     if hit and (hit[1] or time.time() - hit[0] < 60):

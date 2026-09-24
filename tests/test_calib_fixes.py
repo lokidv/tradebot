@@ -695,6 +695,14 @@ class LiveMarketStateTests(unittest.TestCase):
             self.assertEqual(self.main._market_state("1h", self.tk)["breadth"], 0.0)
         self.assertEqual(self.main._market_state("5m", self.tk), {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0})
 
+    def test_breadth_only_callers_fetch_no_basket(self):
+        # رژیمِ کلان، overview و یادداشتِ پوزیشن‌ها بی tk فقط پهنا (همیشه ۰) را می‌خوانند
+        with mock.patch.object(market, "get_klines", side_effect=AssertionError("شبکه")), \
+                mock.patch.object(market, "_fetch_klines", side_effect=AssertionError("شبکه")):
+            st = self.main._market_state("1d")
+        self.assertEqual(st["breadth"], 0.0)
+        self.assertEqual(self.main._mstate_cache, {})
+
 
 class LiveGoldTests(unittest.TestCase):
     """calib-F7: طلای زنده در کندلِ تحلیل‌شده، با تازگیِ کندلِ بسته — نه کشِ ۲۴ساعته."""
