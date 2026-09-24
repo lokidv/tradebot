@@ -106,5 +106,52 @@ class SetupAndEdgeHysteresisTests(unittest.TestCase):
         self.assertIsNone(out.get("edge_r"))
 
 
+class _Stop(Exception):
+    pass
+
+
+class ActionPolicyEmbargoTests(unittest.TestCase):
+    """calib-F8: برچسبِ سیاستِ عمل براکتِ ۴۰ کندلی است ⇒ embargo دست‌کم ۴۱ کندل."""
+
+    def _dense(self, n=2000):
+        rng = np.random.RandomState(5)
+        dx, dy, dr = [], [], []
+        for i in range(n):
+            x = rng.normal(size=4).tolist()
+            dx.append((x, [-v for v in x]))
+            dy.append(((i // 5) * calib.TF_MS["4h"], 1.0))
+            dr.append((0.1, -0.1, 1.0, 0.1))
+        return dx, dy, dr
+
+    def test_walk_forward_partitions_and_bootstrap_use_the_bracket_length(self):
+        seen = {}
+
+        def wf_edge(X, y, ts, embargo_ms):
+            seen["wf"] = embargo_ms
+            raise _Stop()
+        dx, dy, dr = self._dense()
+        with mock.patch.object(calib, "_walk_forward_edge", side_effect=wf_edge):
+            with self.assertRaises(_Stop):
+                calib._fit_action_policy(dx, dy, dr, "4h", calib.COST_PCT)
+        self.assertEqual(seen["wf"], (calib.bracket.MAX_BARS + 1) * calib.TF_MS["4h"])
+        self.assertGreater(seen["wf"], calib.engine.HORIZON["4h"] * calib.TF_MS["4h"])
+
+    def test_partition_purge_matches(self):
+        seen = {}
+        real_parts = calib._time_partitions
+
+        def parts(rows, timestamps, purge_ms=0):
+            seen["purge"] = purge_ms
+            return real_parts(rows, timestamps, purge_ms=purge_ms)
+        dx, dy, dr = self._dense()
+        nan_oof = lambda X, y, ts, emb, *a: {"ridge_edge": np.zeros(len(y))}   # noqa: E731
+        with mock.patch.object(calib, "_walk_forward_edge", side_effect=nan_oof), \
+                mock.patch.object(calib, "_walk_forward_ridge_rolling",
+                                  side_effect=lambda X, y, ts, emb, w: np.zeros(len(y))), \
+                mock.patch.object(calib, "_time_partitions", side_effect=parts):
+            calib._fit_action_policy(dx, dy, dr, "1h", calib.COST_PCT)
+        self.assertEqual(seen["purge"], (calib.bracket.MAX_BARS + 1) * calib.TF_MS["1h"])
+
+
 if __name__ == "__main__":
     unittest.main()

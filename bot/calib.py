@@ -1223,7 +1223,9 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     X[0::2], X[1::2] = X_long, X_short
     target[0::2], target[1::2] = net_long, net_short
     ts_stack = np.repeat(timestamps, 2)
-    embargo = engine.HORIZON[tf] * TF_MS[tf]
+    # برچسب‌ها نتیجهٔ براکتِ ۴۰ کندلی‌اند (کندل‌های i+1..i+40)، نه افقِ جهت‌یاب (۳۰-۳۶ کندل):
+    # purge/embargo و بلوکِ بوت‌استرپ باید کلِ عمرِ برچسب را بپوشانند (calib-F8)
+    embargo = (bracket.MAX_BARS + 1) * TF_MS[tf]
     oof_all = _walk_forward_edge(X, target, ts_stack, embargo)
     for window in ACTION_ROLLING_WINDOWS[tf]:
         oof_all[f"ridge_roll_{window}"] = _walk_forward_ridge_rolling(
