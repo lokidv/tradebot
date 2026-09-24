@@ -20,6 +20,7 @@ import glob
 import json
 import math
 import os
+import re
 import time
 from datetime import datetime, timezone
 
@@ -63,7 +64,10 @@ COST = decision.COST_PCT         # 0.14
 MAKER_COST = decision.MAKER_COST_PCT   # 0.10 — فقط توصیفی
 MARGIN = 0.05
 SENS_MARGINS = (0.0, 0.10, 0.20)      # فقط حساسیت
-LABEL_TAIL_BARS = bracket.MAX_BARS + 5  # کندل‌های فیوچرزِ پس از پایانِ پنجره فقط برای بستنِ براکتِ آخرین سیگنال‌ها
+# ممیزی DATA-5: پیش‌تر ۴۵ (= MAX_BARS + 5) کندلِ فیوچرزِ پس از پایانِ پنجره برای بستنِ براکتِ سیگنال‌های آخر
+# خوانده می‌شد، پس برچسب و معاملهٔ پایانِ اعتبارسنجی به کندل‌های holdout وابسته بود. اکنون صفر: هیچ کندلی در/پس از
+# پایانِ پنجره خوانده نمی‌شود و براکتی که تا پایانِ پنجره بسته نشده نامعلوم است (برچسب NaN، معامله شمرده نمی‌شود).
+LABEL_TAIL_BARS = 0
 
 BOOT_B = 2000
 BOOT_SEED = 42
@@ -221,6 +225,8 @@ def load_bars(prefix, sym, tf, t_end=None, micro_dir=None):
 
 
 def load_kfund(sym, t_end=None, micro_dir=None):
+    """فاندینگِ تسویه‌شدهٔ کوکوین؛ ``t_end`` انحصاری است (تسویه‌های ``t < t_end``). برای «تا بسته‌شدنِ آخرین کندل،
+    خودش هم» (همان ``≤ close`` در ``core_feats._kfund``) ``t_end = پایان + 1`` بدهید."""
     with np.load(os.path.join(micro_dir or MICRO_DIR, f"kfund_{sym}.npz")) as z:
         out = {"t": np.asarray(z["t"], dtype=np.int64), "rate": np.asarray(z["rate"], dtype=np.float64),
                "interval_h": np.asarray(z["interval_h"], dtype=np.float64)}
@@ -236,6 +242,8 @@ def build_dataset(tf, spot_end, fut_end, symbols=SYMBOLS, spot=None, fut=None, k
     فقط سطرهایی که کندلِ فیوچرزِ هم‌زمان دارند و از گرم‌شدن (``TRAIN_WARMUP``) گذشته‌اند. برچسبِ نامعلوم
     (NaN) می‌ماند تا سطرِ پیش‌بینی حذف نشود؛ ماسکِ آموزش آن را کنار می‌گذارد.
     ``spot``/``fut``/``kfund`` (اختیاری، برای تست) = ``{نماد: کندل‌ها}``؛ نبود ⇒ از micro/.
+    فاندینگِ کوکوین تا بسته‌شدنِ آخرین کندل، خودش هم (``t ≤ spot_end``، ممیزی model-5): ``_kfund`` تسویهٔ هم‌لحظه
+    با بسته‌شدن را معلوم می‌داند، پس برشِ ``t < spot_end`` سطرِ آخر را با محاسبهٔ کل‌تاریخچه/زنده متفاوت می‌کرد.
     """
     t0 = time.time()
     spot = spot or {s: load_bars("spot", s, tf, spot_end) for s in symbols}
@@ -243,7 +251,7 @@ def build_dataset(tf, spot_end, fut_end, symbols=SYMBOLS, spot=None, fut=None, k
     fut = fut or {s: load_bars("um", s, tf, fut_end) for s in symbols}
     fut = {s: {k: v[:int(np.searchsorted(b["t"], int(fut_end)))] for k, v in b.items()} for s, b in fut.items()}
     if kfund is None:
-        kfund = {s: load_kfund(s, spot_end) for s in symbols}
+        kfund = {s: load_kfund(s, int(spot_end) + 1) for s in symbols}
     cache = {}
     parts = []
     bar = BAR_MS[tf]
@@ -521,18 +529,25 @@ def ic_stats(oos, symbols):
     return out
 
 
+def window_bars(F, w0, w1):
+    """کندل‌های فیوچرزِ یک پنجره برای بازپخش: ``WARMUP_BARS`` کندلِ پیش از ``w0`` (همان گرم‌شدنِ scorecard_for) تا
+    پیش از ``w1`` — **هیچ** کندلی در/پس از پایانِ پنجره (ممیزی DATA-5)؛ براکتی که تا آن‌جا بسته نشده در ``replay``
+    و ``replay_sides`` شمرده نمی‌شود."""
+    t = np.asarray(F["t"], dtype=np.int64)
+    s0 = int(np.searchsorted(t, w0))
+    e1 = int(np.searchsorted(t, w1))
+    cut = max(0, s0 - decision.WARMUP_BARS)
+    return {kk: np.asarray(v)[cut:e1] for kk, v in F.items() if kk in ("t", "o", "h", "l", "c", "v")}
+
+
 def evaluate(tf, oos, w0, w1, fut, symbols=SYMBOLS, log=None):
-    """معامله‌های v2 (همهٔ حاشیه‌ها) و قاعدهٔ فعلی روی همان کندل‌های فیوچرز و همان پنجره."""
+    """معامله‌های v2 (همهٔ حاشیه‌ها) و قاعدهٔ فعلی روی همان کندل‌های فیوچرز و همان پنجره (``window_bars``)."""
     bar = BAR_MS[tf]
     v2 = {m: {} for m in (MARGIN,) + SENS_MARGINS}
     rule = {}
     replay_equal = True
     for k, s in enumerate(symbols):
-        F = fut[s]
-        t = F["t"]
-        s0 = int(np.searchsorted(t, w0))
-        cut = max(0, s0 - decision.WARMUP_BARS)       # همان گرم‌شدنِ scorecard_for
-        sub = {kk: np.asarray(v)[cut:] for kk, v in F.items() if kk in ("t", "o", "h", "l", "c", "v")}
+        sub = window_bars(fut[s], w0, w1)
         st = sub["t"]
         rep = decision.replay(sub, start_ts=w0, cost_pct=COST)
         rule[s] = [x for x in rep["trades"] if x["t"] < w1]
@@ -560,8 +575,9 @@ def evaluate(tf, oos, w0, w1, fut, symbols=SYMBOLS, log=None):
 
 
 def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=None, allow_holdout=False):
-    """یک تایم‌فریم روی یک پنجره: ساختِ داده، walk-forward، ارزیابی. در حالتِ ``validation`` هیچ کندلِ
-    پس از پایانِ پنجره جز ``LABEL_TAIL_BARS`` کندلِ فیوچرز (برای بستنِ براکتِ سیگنال‌های آخر) بارگذاری نمی‌شود.
+    """یک تایم‌فریم روی یک پنجره: ساختِ داده، walk-forward، ارزیابی. هیچ کندلی (اسپات یا فیوچرز) در/پس از پایانِ
+    پنجره بارگذاری نمی‌شود (ممیزی DATA-5): برچسبی که براکتش تا پایان بسته نشده NaN است و در IC نمی‌آید، و معاملهٔ
+    بازمانده شمرده نمی‌شود — در ``validation`` و ``holdout`` یکسان.
     ``holdout`` فقط با ``allow_holdout=True`` و فقط اگر ``holdout_guard`` اجازه دهد."""
     if window not in ("validation", "holdout"):
         raise ValueError(window)
@@ -572,8 +588,7 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
             raise PermissionError(why or "holdout بدونِ پرچمِ صریح اجرا نمی‌شود")
     wall = time.time()
     w0, w1 = window_ms(window)
-    bar = BAR_MS[tf]
-    fut_end = w1 + LABEL_TAIL_BARS * bar
+    fut_end = w1                                      # بی‌دُم: هیچ کندلِ فیوچرزی در/پس از پایانِ پنجره
     ds = build_dataset(tf, w1, fut_end, log=log)
     months = month_starts(w0, w1)
     t_fit = time.time()
@@ -612,6 +627,9 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
                       if k != "min_data_in_leaf"},
            "train_warmup_bars": TRAIN_WARMUP[tf], "subsample": SUBSAMPLE.get(tf, 1),
            "dataset_rows": int(len(ds["t"])), "oos_rows": int(len(oos["t"])),
+           "futures_end": "window end (exclusive): no futures bar at/after it; brackets still open there are not counted",
+           "label_tail_bars": LABEL_TAIL_BARS,
+           "oos_rows_label_unresolved": int((~(np.isfinite(oos["yL"]) & np.isfinite(oos["yS"]))).sum()),
            "v2": trade_stats(ta, syms), "rule": trade_stats(tr, syms),
            "rule_maker_0.10": _compact(trade_stats(trade_array(rule, syms, MAKER_COST), syms)),
            "bootstrap": bt, "sensitivity": sens, "importance_gain_top20": imp, "ic": ic_stats(oos, syms),
@@ -683,7 +701,9 @@ def assemble(results, tfs=TFS):
             "decision_rule": {"margin": MARGIN, "sensitivity_margins": list(SENS_MARGINS)},
             "cost_pct": COST, "maker_cost_pct_descriptive": MAKER_COST,
             "holdout_touched": False,
-            "note_fa": ("فقط پنجرهٔ اعتبارسنجی (۲۰۲۴-۰۷ تا ۲۰۲۵-۰۶). هیچ آماری روی holdout حساب نشده است. "
+            "futures_end": "window end (exclusive): labels and trades use no bar at/after it (audit DATA-5)",
+            "note_fa": ("فقط پنجرهٔ اعتبارسنجی (۲۰۲۴-۰۷ تا ۲۰۲۵-۰۶). هیچ آماری روی holdout حساب نشده است: برچسب و "
+                        "معامله هیچ کندلی در/پس از پایانِ پنجره نمی‌خوانند و براکتِ بازمانده شمرده نمی‌شود. "
                         "v2 هرگز tradeable را روشن نمی‌کند و به gates.json دست نمی‌زند."),
             "adopted": [tf for tf in tfs if cells[tf].get("adopted")],
             "timeframes": cells}
@@ -708,8 +728,14 @@ def summary_lines(report):
 
 
 # ───────────────────────── نگهبانِ holdout ─────────────────────────
+def report_files(prefix, research_dir):
+    """فقط گزارش‌های زمان‌دارِ ``<prefix>YYYYMMDD_HHMMSS.json`` به ترتیبِ زمان — نه سنجاق یا اِراتا که همان پیشوند را دارند."""
+    pat = re.compile(re.escape(prefix) + r"\d{8}_\d{6}\.json$")
+    return sorted(p for p in glob.glob(os.path.join(research_dir, prefix + "*.json")) if pat.match(os.path.basename(p)))
+
+
 def latest_validation_report(research_dir=None):
-    files = sorted(glob.glob(os.path.join(research_dir or RESEARCH_DIR, REPORT_PREFIX + "*.json")))
+    files = report_files(REPORT_PREFIX, research_dir or RESEARCH_DIR)
     if not files:
         return None, None
     with open(files[-1], "r", encoding="utf-8") as f:

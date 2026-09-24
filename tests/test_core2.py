@@ -181,6 +181,159 @@ class DatasetTests(unittest.TestCase):
         self.assertTrue(np.isnan(ds["yL"][~ok]).all() or not (~ok).any())
 
 
+class KfundCutTests(unittest.TestCase):
+    """ممیزی model-5: تسویهٔ هم‌لحظه با بسته‌شدنِ آخرین کندل (``t == spot_end``) در سطرِ آخر هست — مثلِ کل‌تاریخچه."""
+    SYMS = ("BTCUSDT", "ETHUSDT")
+
+    def setUp(self):
+        self.micro = tempfile.mkdtemp(prefix="core2-kf-")
+        n = 900
+        for k, s in enumerate(self.SYMS):
+            np.savez_compressed(os.path.join(self.micro, f"spot_{s}_1d.npz"), **synth(n, D_MS, seed=k))
+            np.savez_compressed(os.path.join(self.micro, f"um_{s}_1d.npz"), **synth(n, D_MS, seed=k + 50))
+            ft = T0 + np.arange(0, 3 * n) * 8 * H_MS                          # ۰۰:۰۰، ۰۸:۰۰، ۱۶:۰۰
+            np.savez_compressed(os.path.join(self.micro, f"kfund_{s}.npz"), t=ft.astype(np.int64),
+                                rate=np.random.RandomState(k).normal(1e-4, 2e-4, len(ft)),
+                                interval_h=np.full(len(ft), 8.0))
+        self.patch = mock.patch.object(core2, "MICRO_DIR", self.micro)
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        import shutil
+        shutil.rmtree(self.micro, True)
+
+    def _last_row(self, ds, T):
+        m = (ds["sym"] == 0) & (ds["t"] == T - D_MS)
+        self.assertEqual(int(m.sum()), 1)
+        return ds["X"][m][0]
+
+    def test_last_row_equals_the_full_history_row(self):
+        T = T0 + 850 * D_MS                                                     # یک تسویه دقیقاً در T
+        cut = core2.build_dataset("1d", T, T, symbols=self.SYMS)
+        full = core2.build_dataset("1d", T + 30 * D_MS, T + 30 * D_MS, symbols=self.SYMS)
+        a, b = self._last_row(cut, T), self._last_row(full, T)
+        self.assertTrue(np.array_equal(a, b, equal_nan=True))
+        old = core2.build_dataset("1d", T, T, symbols=self.SYMS,
+                                  kfund={s: core2.load_kfund(s, T) for s in self.SYMS})     # برشِ قدیمیِ t < T
+        j = cf.FEATURES["1d"].index("kfund_bp")
+        self.assertNotEqual(float(self._last_row(old, T)[j]), float(b[j]))
+
+
+class WindowEndTests(unittest.TestCase):
+    """ممیزی DATA-5: ارزیابی هیچ کندلِ فیوچرزی در/پس از پایانِ پنجره نمی‌خواند و براکتِ باز در پایان شمرده نمی‌شود."""
+
+    def _setup(self):
+        syms = ("A", "B")
+        fut = {s: synth(3000, seed=k + 9) for k, s in enumerate(syms)}
+        t = fut["A"]["t"]
+        w0, w1 = int(t[2400]), int(t[2900])
+        rng = np.random.RandomState(0)
+        ot = np.r_[t[2400:2900], t[2400:2900]]
+        oos = {"sym": np.r_[np.zeros(500), np.ones(500)].astype(np.int8), "t": ot,
+               "E_L": rng.normal(0, 0.1, 1000).astype(np.float32), "E_S": rng.normal(0, 0.1, 1000).astype(np.float32)}
+        return syms, fut, w0, w1, oos
+
+    def test_bars_after_the_window_end_never_change_a_trade(self):
+        syms, fut, w0, w1, oos = self._setup()
+        poisoned = {}
+        for s, F in fut.items():
+            after = F["t"] >= w1
+            P = {k: np.array(v, copy=True) for k, v in F.items()}
+            for k in ("o", "h", "l", "c"):
+                P[k][after] = P[k][after] * np.where(np.arange(int(after.sum())) % 2, 3.0, 0.2)   # قیمت‌های وحشی
+            poisoned[s] = P
+        cut = {s: {k: v[F["t"] < w1] for k, v in F.items()} for s, F in fut.items()}
+        a = core2.evaluate("1h", oos, w0, w1, poisoned, symbols=syms)
+        b = core2.evaluate("1h", oos, w0, w1, cut, symbols=syms)
+        self.assertTrue(a[2] and b[2])
+        self.assertEqual(a[0], b[0])
+        self.assertEqual(a[1], b[1])
+        for s in syms:
+            for x in a[0][core2.MARGIN][s] + a[1][s]:
+                self.assertLess(x["exit_t"], w1)                              # کندلِ خروج پیش از پایان
+                self.assertLess(x["t"], w1)
+
+    def test_window_bars_stop_before_the_end(self):
+        F = synth(3000)
+        w0, w1 = int(F["t"][2400]), int(F["t"][2900])
+        sub = core2.window_bars(F, w0, w1)
+        self.assertLess(int(sub["t"][-1]), w1)
+        self.assertEqual(int(sub["t"][0]), int(F["t"][2400 - decision.WARMUP_BARS]))
+
+
+class RunWindowTests(unittest.TestCase):
+    """اجرای کاملِ v2 روی فایل‌های مصنوعیِ 1d (مدلِ ساختگیِ سریع): هیچ کندلی در/پس از پایانِ پنجره خوانده نمی‌شود و
+    برچسبِ بازماندهٔ پایان NaN است."""
+    SYMS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "TRXUSDT")
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls._rm = shutil.rmtree
+        cls.micro = tempfile.mkdtemp(prefix="core2-micro-")
+        cls.patch = mock.patch.object(core2, "MICRO_DIR", cls.micro)
+        cls.patch.start()
+        t0 = core2._ms("2020-01-01")
+        n = (core2._ms("2025-10-01") - t0) // D_MS                           # فیوچرز تا پس از پایانِ پنجره
+        for k, s in enumerate(cls.SYMS):
+            np.savez_compressed(os.path.join(cls.micro, f"spot_{s}_1d.npz"), **synth(int(n), D_MS, seed=60 + k, t0=t0))
+            np.savez_compressed(os.path.join(cls.micro, f"um_{s}_1d.npz"), **synth(int(n), D_MS, seed=60 + k, t0=t0))
+            ft = np.arange(core2._ms("2021-10-01"), core2._ms("2025-10-01"), 8 * H_MS, dtype=np.int64)
+            np.savez_compressed(os.path.join(cls.micro, f"kfund_{s}.npz"), t=ft,
+                                rate=np.random.RandomState(k).normal(1e-4, 1e-4, len(ft)),
+                                interval_h=np.full(len(ft), 8.0))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.patch.stop()
+        cls._rm(cls.micro, True)
+
+    def test_validation_reads_nothing_at_or_after_the_window_end(self):
+        w0, w1 = core2.window_ms("validation")
+        seen = []
+        real_load, real_kf = core2.load_bars, core2.load_kfund
+
+        def spy(prefix, sym, tf, t_end=None, micro_dir=None):
+            seen.append((prefix, t_end))
+            return real_load(prefix, sym, tf, t_end, micro_dir)
+
+        def spy_kf(sym, t_end=None, micro_dir=None):
+            seen.append(("kfund", t_end))
+            return real_kf(sym, t_end, micro_dir)
+
+        def fit_fn(X, yL, yS, t, sym, tf, names, threads):
+            rng = np.random.RandomState(len(t))
+            return (lambda Xt: (rng.normal(0.05, 0.1, len(Xt)).astype(np.float32),
+                                rng.normal(0.05, 0.1, len(Xt)).astype(np.float32))), {}
+
+        with mock.patch.object(core2, "load_bars", side_effect=spy), \
+                mock.patch.object(core2, "load_kfund", side_effect=spy_kf):
+            res, oos = core2.run_window("1d", "validation", threads=1, fit_fn=fit_fn)
+        self.assertTrue(seen)
+        for prefix, t_end in seen:
+            self.assertIsNotNone(t_end)
+            self.assertLessEqual(t_end, w1 + (1 if prefix == "kfund" else 0))     # فاندینگ: t ≤ w1
+        self.assertEqual(res["label_tail_bars"], 0)
+        self.assertGreater(res["oos_rows_label_unresolved"], 0)              # براکت‌های بازِ پایان ⇒ NaN
+        self.assertTrue(np.isnan(oos["yL"][oos["t"] == w1 - D_MS]).all())
+        self.assertTrue(res["replay_equal_to_decision_replay"])
+        self.assertGreater(res["v2"]["n"], 0)
+        json.dumps(core2.to_json(res))
+
+
+class ReportFilesTests(unittest.TestCase):
+    def test_latest_report_ignores_pin_and_erratum(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("core2_validation_20250101_000000.json", "core2_validation_20260101_000000.json",
+                         "core2_validation_pin.json", "core2_validation_erratum.json"):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    json.dump({"name": name}, f)
+            rep, path = core2.latest_validation_report(d)
+            self.assertEqual(os.path.basename(path), "core2_validation_20260101_000000.json")
+            self.assertEqual(rep["name"], "core2_validation_20260101_000000.json")
+
+
 class DecisionRuleTests(unittest.TestCase):
     def test_fixed_rule(self):
         EL = np.array([0.10, 0.05, 0.06, 0.04, -0.2, 0.30, np.nan, 0.20])

@@ -283,21 +283,31 @@ class RunWindowTests(unittest.TestCase):
         shutil.rmtree(cls.micro, True)
 
     def test_validation_run_end_to_end_without_looking_past_the_window(self):
+        """ممیزی DATA-5: نه اسپات و نه فیوچرز (دیگر دُمِ ۴۵ کندلی نیست)؛ فاندینگِ کوکوین تا خودِ w1 (model-5)."""
         w0, w1 = core2_1.window_ms("validation")
-        tail = w1 + core2_1.LABEL_TAIL_BARS * D_MS
+        self.assertEqual(core2_1.LABEL_TAIL_BARS, 0)
         seen = []
-        real_load = core2.load_bars
+        real_load, real_kf = core2.load_bars, core2.load_kfund
 
         def spy(prefix, sym, tf, t_end=None, micro_dir=None):
             seen.append((prefix, t_end))
             return real_load(prefix, sym, tf, t_end, micro_dir)
 
-        with mock.patch.object(core2, "load_bars", side_effect=spy):
+        def spy_kf(sym, t_end=None, micro_dir=None):
+            seen.append(("kfund", t_end))
+            return real_kf(sym, t_end, micro_dir)
+
+        with mock.patch.object(core2, "load_bars", side_effect=spy), \
+                mock.patch.object(core2, "load_kfund", side_effect=spy_kf):
             res, oos = core2_1.run_window(self.TF, "validation", threads=2)
         self.assertTrue(seen)
+        self.assertIn("um", {p for p, _ in seen})
         for prefix, t_end in seen:
             self.assertIsNotNone(t_end)
-            self.assertLessEqual(t_end, w1 if prefix == "spot" else tail)
+            self.assertLessEqual(t_end, w1 + 1 if prefix == "kfund" else w1)
+        self.assertEqual(res["label_tail_bars"], 0)
+        self.assertGreater(res["oos_rows_label_unresolved"], 0)              # براکت‌های بازِ پایان ⇒ NaN
+        self.assertTrue(np.isnan(oos["yL"][oos["t"] == w1 - D_MS]).all())
         self.assertEqual(len(res["months"]), 6)
         self.assertTrue(all(m["rounds"] == 150 for m in res["months"]))
         self.assertTrue(all(m["train_t_min"] >= "2022-01-01" for m in res["months"]))
@@ -314,6 +324,22 @@ class RunWindowTests(unittest.TestCase):
     def test_coverage_refuses_short_data(self):
         with self.assertRaises(RuntimeError):
             core2_1._coverage(self.TF, core2_1._ms("2027-01-01"), core2_1._ms("2027-01-01"))
+
+
+class ReportFilesTests(unittest.TestCase):
+    def test_latest_report_ignores_pin_and_erratum(self):
+        """سنجاق و اِراتا همان پیشوند را دارند و در مرتب‌سازی پس از گزارشِ زمان‌دار می‌آیند."""
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("core2_1_validation_20260924_135542.json", "core2_1_validation_pin.json",
+                         "core2_1_validation_erratum.json"):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    json.dump({"name": name}, f)
+            rep, path = core2_1.latest_validation_report(d)
+            self.assertEqual(os.path.basename(path), "core2_1_validation_20260924_135542.json")
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "core2_1_validation_erratum.json"), "w", encoding="utf-8") as f:
+                f.write("{}")
+            self.assertEqual(core2_1.latest_validation_report(d), (None, None))
 
 
 def _git(d, *args):
