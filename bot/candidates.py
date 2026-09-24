@@ -29,12 +29,13 @@ import time
 import bracket
 import paths
 import stats as statsmod   # «stats» نامِ تابعِ همین ماژول است
+import tf_spec
 
 DATA_DIR = paths.DATA_DIR
 CAND_PATH = os.path.join(DATA_DIR, "candidates.jsonl")
 RESULT_PATH = os.path.join(DATA_DIR, "candidate_results.jsonl")
 
-TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+TF_MINUTES = tf_spec.MINUTES   # ثبتِ واحد: bot/tf_spec.py
 MAX_CANDLE_AGE_BARS = 3        # کندلِ کهنه‌تر = فیدِ مرده
 MIN_RISK_PCT = 0.05            # زیر این مقدار، R بی‌معنا می‌شود
 
@@ -98,7 +99,9 @@ def log_candidate(row, tf, extra=None):
     risk_pct = abs(float(entry) - float(sl)) / max(abs(float(entry)), 1e-12) * 100
     if risk_pct < MIN_RISK_PCT or not math.isfinite(risk_pct):
         return False
-    bar_ms = TF_MINUTES.get(tf, 60) * 60000
+    if not tf_spec.is_known(tf):
+        return False                      # تایم‌فریمِ ناشناخته: هرگز با فرضِ ۶۰ دقیقه داوری نمی‌شود
+    bar_ms = tf_spec.bar_ms(tf)
     if time.time() * 1000 - float(candle_ts) > MAX_CANDLE_AGE_BARS * bar_ms:
         return False                      # فیدِ مرده
     cid = candidate_id(symbol, tf, side, candle_ts)
@@ -231,7 +234,7 @@ def stats(tf=None, days=30, only_tradeable=False, setup=None, side=None):
     out["sum_net_r"] = round(sum(vals), 3)
     # کرانِ پایین با بوت‌استرپِ بلوکی و n مؤثر — همان معیاری که داورِ آزمونِ منجمد دارد
     stamps = [float(r.get("candle_ts") or 0) for r in rows]
-    block = bracket.MAX_BARS * TF_MINUTES.get(tf or "1h", 60) * 60000
+    block = bracket.MAX_BARS * tf_spec.bar_ms(tf or "1h")   # همه‌تایم‌فریم‌ها: بلوکِ 1h
     out["lcb_net_r_90"] = statsmod.block_bootstrap_lcb(vals, stamps, block, alpha=0.10, B=500)
     out["n_eff"] = statsmod.effective_n(vals, stamps, block)
     for r in rows:

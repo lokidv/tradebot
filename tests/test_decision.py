@@ -382,7 +382,12 @@ class ScorecardTests(unittest.TestCase):
             return synth(900, seed=len(calls)), "test"
 
         sc = decision.scorecards(force=True, loader=loader)
-        self.assertEqual(len(calls), 20)
+        per_build = len(decision.SYMBOLS) * len(decision.TFS)                # ۵ ارز × ۵ تایم‌فریم (با 5m)
+        self.assertEqual(per_build, 25)
+        self.assertEqual(len(calls), per_build)
+        self.assertEqual(sc["version"], decision.SCORECARD_VERSION)
+        self.assertGreaterEqual(decision.SCORECARD_VERSION, 3)
+        self.assertEqual((sc["cost_pct"], sc["maker_cost_pct"]), (0.14, 0.10))
         self.assertTrue(os.path.exists(decision.SCORECARD_PATH))
         cell = sc["cells"]["BTCUSDT"]["1h"]
         for key in ("n", "win_rate", "avg_r", "profit_factor", "total_r", "long_n", "short_n",
@@ -396,11 +401,50 @@ class ScorecardTests(unittest.TestCase):
         self.assertLessEqual(sc["window_from"], cell["from"])
         self.assertGreater(sc["window_days_actual"], 0)
         self.assertLess(sc["window_days_actual"], decision.WINDOW_DAYS)  # پنجرهٔ واقعی، نه اسمی
+        # گونهٔ ثانویِ میکر: همان معامله‌ها، هزینهٔ کمتر؛ قراردادِ اصلی دست‌نخورده
+        mk = sc["cells"]["BTCUSDT"]["5m"]["maker"]
+        self.assertEqual(set(mk), set(decision.MAKER_KEYS))
+        self.assertEqual(mk["cost_pct"], 0.10)
+        self.assertEqual(sc["cells"]["BTCUSDT"]["5m"]["cost_pct"], 0.14)
         again = decision.scorecards(loader=loader, now=sc["built_at"] + 3600)
-        self.assertEqual(len(calls), 20)
+        self.assertEqual(len(calls), per_build)
         self.assertEqual(again["built_at"], sc["built_at"])
         decision.scorecards(loader=loader, now=sc["built_at"] + 86_401)
-        self.assertEqual(len(calls), 40)
+        self.assertEqual(len(calls), 2 * per_build)
+
+    def test_maker_variant_is_the_same_trades_at_lower_cost(self):
+        rep = decision.replay(synth(1500, seed=11), first=decision.LIVE_BARS)
+        self.assertGreater(len(rep["trades"]), 3)
+        tk = decision.summarize(rep["trades"], decision.COST_PCT)
+        mk = decision.maker_variant(rep["trades"])
+        self.assertEqual(mk["n"], tk["n"])
+        self.assertGreater(mk["avg_r"], tk["avg_r"])
+        want = np.mean([bracket.net_r(x["gross_r"], x["risk_pct"], 0.10) for x in rep["trades"]])
+        self.assertAlmostEqual(mk["avg_r"], round(float(want), 4), places=4)
+        self.assertEqual(decision.maker_variant([])["verdict_code"], "small")
+
+    def test_load_history_reads_the_native_archive_and_never_mislabels(self):
+        tmp = tempfile.mkdtemp(prefix="micro-")
+
+        def write(tf, n):
+            kl = synth(n, step_ms=decision.TF_MINUTES[tf] * 60_000)
+            np.savez(os.path.join(tmp, f"um_BTCUSDT_{tf}.npz"), **{k: np.asarray(v) for k, v in kl.items()})
+
+        write("5m", 1500)
+        write("15m", 1500)
+        fake = types.SimpleNamespace(get_history=lambda sym, tf, bars=3000: synth(900))
+        with mock.patch.object(decision, "MICRO_DIR", tmp), mock.patch.dict(sys.modules, {"market": fake}):
+            kl, src = decision.load_history("BTCUSDT", "5m")
+            self.assertEqual(src, "binance-futures-5m-archive")
+            self.assertEqual(int(np.median(np.diff(kl["t"]))), 300_000)          # کندلِ واقعیِ ۵ دقیقه
+            kl, src = decision.load_history("BTCUSDT", "15m")
+            self.assertEqual((src, int(np.median(np.diff(kl["t"])))), ("binance-futures-15m-archive", 900_000))
+            kl, src = decision.load_history("BTCUSDT", "1h")                     # بومی نیست ⇒ تجمیعِ ریزتر
+            self.assertEqual(src, "binance-futures-15m-archive→1h")
+            self.assertEqual(int(np.median(np.diff(kl["t"]))), 3_600_000)
+            os.remove(os.path.join(tmp, "um_BTCUSDT_5m.npz"))
+            kl, src = decision.load_history("BTCUSDT", "5m")                     # 15m هرگز «5m» نمی‌شود
+            self.assertEqual(src, decision.SOURCE_FALLBACK)
 
 
 class LedgerTests(unittest.TestCase):
@@ -536,7 +580,7 @@ class LedgerTests(unittest.TestCase):
 
     def test_refresh_with_stubs_and_a_malformed_ledger(self):
         self._write_malformed()
-        recent = (int(time.time() * 1000) // 900_000) * 900_000 - 900_000
+        recent = (int(time.time() * 1000) // 300_000) * 300_000 - 300_000   # تازه حتی برای 5m (STALE_BARS)
 
         def ga(sym, tf):
             if sym == "ETHUSDT":
@@ -562,7 +606,7 @@ class LedgerTests(unittest.TestCase):
         self.assertTrue(p["scorecard_meta"]["building"])
         self.assertEqual(p["scorecard_meta"]["cost_pct"], 0.14)
         opens = [json.loads(x) for x in self._lines() if '"open"' in x and "BNBUSDT" in x]
-        self.assertEqual(len(opens), 4)                                           # یک پیشنهاد برای هر تایم‌فریم
+        self.assertEqual(len(opens), len(decision.TFS))                           # یک پیشنهاد برای هر تایم‌فریم (با 5m)
 
 
 class PayloadTests(unittest.TestCase):
@@ -572,7 +616,8 @@ class PayloadTests(unittest.TestCase):
         lv = {"cells": {}, "overall": {"n": 0}}
         p = decision.payload(ds, scorecard=sc, live=lv)
         self.assertEqual(p["coins"], list(decision.SYMBOLS))
-        self.assertEqual(p["tfs"], ["15m", "1h", "4h", "1d"])
+        self.assertEqual(p["tfs"], ["5m", "15m", "1h", "4h", "1d"])          # کوتاه→بلند، 5m اول
+        self.assertEqual(p["tfs"], list(decision.TFS))
         cell = p["cells"]["BTCUSDT"]["1h"]
         self.assertEqual(cell["action"], "long")
         self.assertEqual(cell["scorecard"]["verdict"], "زیان‌ده")

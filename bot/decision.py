@@ -33,14 +33,18 @@ import numpy as np
 import bracket
 import engine
 import paths
+import tf_spec
 from watchlist import SYMBOLS
 
 import log
 
-TFS = ("15m", "1h", "4h", "1d")
-TF_MINUTES = engine.TF_MINUTES
+TFS = tf_spec.TFS          # 5m | 15m | 1h | 4h | 1d — ثبتِ واحد: bot/tf_spec.py
+TF_MINUTES = tf_spec.MINUTES
 
 COST_PCT = 0.14            # رفت‌وبرگشت: تیکرِ فیوچرزِ کوکوین ۰٫۰۶٪ × ۲ + ۰٫۰۲٪ لغزش
+# گونهٔ دوم (فقط نمایش، ثانوی): ورودِ «میکر» با سفارشِ محدود — ۰٫۰۲٪ + خروجِ تیکر ۰٫۰۶٪ + ۰٫۰۲٪ لغزش.
+# همان معامله‌ها (انتخابِ معامله به هزینه بستگی ندارد)، فقط هزینهٔ کمتر؛ پرشدنِ سفارشِ محدود تضمینی نیست.
+MAKER_COST_PCT = 0.10
 WINDOW_DAYS = 730          # پنجرهٔ کارنامه: دو سالِ اخیرِ دادهٔ موجود
 LIVE_BARS = 420            # موتورِ زنده روی market.get_klines(limit=420) اجرا می‌شود — kNN هم همین پنجره را می‌بیند
 WARMUP_BARS = 2000         # کندل‌های پیش از پنجره فقط برای گرم‌شدنِ اندیکاتورها
@@ -50,12 +54,13 @@ LEAN_MIN = 50              # «تمایل» فقط وقتی دست‌کم نیم
 MIN_TRADES = 30
 Z95 = 1.96                 # بازهٔ ۹۵٪ (تقریبِ نرمال) روی میانگینِ R خالص
 SCORECARD_TTL = 86400      # حداکثر روزی یک‌بار بازسازی
-SCORECARD_VERSION = 2      # ۲: بازهٔ اطمینان + verdict_code + پنجرهٔ واقعی
+SCORECARD_VERSION = 3      # ۲: بازهٔ اطمینان + verdict_code + پنجرهٔ واقعی؛ ۳: 5m، آرشیوِ بومیِ هر تایم‌فریم، گونهٔ میکر
 STALE_BARS = 3             # تصمیمِ کهنه‌تر از این (فیدِ مرده) در دفتر ثبت نمی‌شود
 MIN_BARS = LIVE_BARS + 5   # کمتر از این، بازپخش حتی یک کندلِ قابلِ داوری ندارد
 SETUP_LOOKBACK = max(int(getattr(engine, "SETUP_LOOKBACK", 2)), 1)   # کندلِ فعلی + قبلی، مثلِ analyze
 MAX_WARNINGS = 4
-SOURCE_ARCHIVE = "binance-futures-15m-archive"
+SOURCE_ARCHIVE_FMT = "binance-futures-{tf}-archive"          # آرشیوِ بومیِ همان تایم‌فریم
+SOURCE_RESAMPLED_FMT = "binance-futures-{base}-archive→{tf}"   # فقط از آرشیوِ ریزتر، هرگز درشت‌تر
 SOURCE_FALLBACK = "binance-spot-history"
 
 VERDICT_FA = {"small": "نمونهٔ کم", "loss": "زیان‌ده", "positive": "مثبت (تأییدنشده)",
@@ -63,7 +68,7 @@ VERDICT_FA = {"small": "نمونهٔ کم", "loss": "زیان‌ده", "positive
 
 SCORECARD_PATH = paths.data("research", "decision_scorecard.json")
 LEDGER_PATH = paths.data("decision_ledger.jsonl")
-MICRO_DIR = paths.data("hist_research", "micro")     # um_<SYM>_15m.npz: فیوچرزِ ۱۵ دقیقه ۲۰۲۲-۰۱..۲۰۲۶-۰۸
+MICRO_DIR = paths.data("hist_research", "micro")     # um_<SYM>_<tf>.npz: فیوچرزِ بایننس ۲۰۲۲-۰۱..۲۰۲۶-۰۸
 
 # (کلید، برچسب، سریِ component_series، آستانهٔ رأی) — همان آستانه‌های engine.votes_at
 COMPONENTS = (
@@ -77,15 +82,18 @@ SIDE_FA = {"long": "لانگ (خرید)", "short": "شورت (فروش)"}
 
 NOTE_FA = ("این‌ها تحلیلِ موتورِ چندشاخصه + هوش مصنوعی (kNN) هستند، نه لبهٔ تأییدشده. بازپخشِ دوسالهٔ همین قاعده "
            "پس از هزینهٔ رفت‌وبرگشتِ ۰٫۱۴٪ در 15m و 1h روی هر پنج ارز زیان‌ده است، در 4h حدوداً سربه‌سر است، "
-           "و در 1d تعدادِ معامله‌ها برای قضاوت کافی نیست. پیشنهادهای زنده‌ای که از ستاپِ معلق‌شده یا از مسیرِ "
-           "«سیاستِ انتخابِ عمل» می‌آیند در این بازپخش پوشش داده نشده‌اند. هر پیشنهاد در دفترِ رو به جلو ثبت "
+           "و در 1d تعدادِ معامله‌ها برای قضاوت کافی نیست. در 5m حدضرر از همه کوچک‌تر است، پس همین هزینه سهمِ "
+           "بزرگ‌تری از هر R را می‌خورد. پیشنهادهای زنده‌ای که از ستاپِ معلق‌شده یا از مسیرِ "
+           "«سیاستِ انتخابِ عمل» می‌آیند در این بازپخش پوشش داده نشده‌اند. گونهٔ «ورودِ میکر» (۰٫۱۰٪) فقط برای "
+           "مقایسه است و پرشدنِ سفارشِ محدود را تضمین نمی‌کند. هر پیشنهاد در دفترِ رو به جلو ثبت "
            "و داوری می‌شود؛ مجوزِ معامله فقط از gates.json می‌آید.")
-METHOD_FA = ("بازپخشِ علّیِ قاعدهٔ زنده روی آرشیوِ ۱۵ دقیقهٔ فیوچرزِ بایننس (و تجمیعش): ستاپِ رویدادیِ "
+METHOD_FA = ("بازپخشِ علّیِ قاعدهٔ زنده روی آرشیوِ بومیِ فیوچرزِ بایننسِ همان تایم‌فریم (5m، 15m، 1h، 4h، 1d): ستاپِ رویدادیِ "
              f"{engine.SETUP_LOOKBACK_FA} کندلِ بستهٔ اخیر، وگرنه z≥1.2 با ≥۳ رأی از ۵ (kNN روی پنجرهٔ ۴۲۰ کندلی "
              "مثلِ موتور) و ≤۱ رأیِ مخالف؛ ورود در بازِ کندلِ بعد، حدضرر 1R، هدف 1.8R، سقفِ ۴۰ کندل، یک معامله "
              "در هر لحظه، هزینهٔ رفت‌وبرگشتِ ۰٫۱۴٪. تعلیقِ زندهٔ ستاپ‌ها و مسیرِ «سیاست» بازپخش نمی‌شوند. "
              "برچسب با بازهٔ ۹۵٪ میانگینِ R: «زیان‌ده» فقط وقتی کلِ بازه زیرِ صفر است و «مثبت» فقط وقتی کلش "
-             "بالای صفر است؛ زیرِ ۳۰ معامله «نمونهٔ کم».")
+             "بالای صفر است؛ زیرِ ۳۰ معامله «نمونهٔ کم». گونهٔ دوم (ثانوی): همان معامله‌ها با ورودِ میکر و "
+             "هزینهٔ رفت‌وبرگشتِ ۰٫۱۰٪.")
 
 _ledger_lock = threading.Lock()
 _sc_lock = threading.Lock()
@@ -619,7 +627,24 @@ def scorecard_for(kl, window_days=WINDOW_DAYS, cost_pct=COST_PCT, knn_window=LIV
     out = summarize(rep["trades"], cost_pct, int(ts[first]), int(ts[-1]))
     out["bars"] = int(len(ts) - first)
     out["signal_bars"] = int(np.count_nonzero(rep["side"][first:]))
+    out["maker"] = maker_variant(rep["trades"])
     return out
+
+
+MAKER_KEYS = ("n", "win_rate", "avg_r", "profit_factor", "total_r", "se", "ci_lo", "ci_hi",
+              "verdict_code", "verdict", "long_avg_r", "short_avg_r", "avg_cost_r", "cost_pct")
+
+
+def maker_variant(trades, cost_pct=MAKER_COST_PCT):
+    """گونهٔ ثانویِ «ورودِ میکر»: **همان** معامله‌ها (انتخابِ یک‌معامله‌در‌لحظه به هزینه بستگی ندارد)
+    با هزینهٔ رفت‌وبرگشتِ کمتر؛ قراردادِ اصلیِ کارنامه (تیکر ۰٫۱۴٪) دست نمی‌خورد."""
+    mk = [dict(x, net_r=bracket.net_r(x["gross_r"], x["risk_pct"], cost_pct)) for x in trades or []]
+    st = summarize(mk, cost_pct)
+    return {k: st.get(k) for k in MAKER_KEYS}
+
+
+def _empty_maker():
+    return maker_variant([])
 
 
 # ───────────────────────── داده ─────────────────────────
@@ -648,8 +673,9 @@ def resample(kl, minutes):
     return {k: v[keep] for k, v in out.items()}
 
 
-def _load_local_15m(sym):
-    path = os.path.join(MICRO_DIR, f"um_{sym}_15m.npz")
+def _load_local(sym, tf):
+    """آرشیوِ بومیِ ``um_<SYM>_<tf>.npz`` (فیوچرزِ بایننس)؛ نبود ⇒ ``None``."""
+    path = os.path.join(MICRO_DIR, f"um_{sym}_{tf}.npz")
     if not os.path.exists(path):
         return None
     with np.load(path) as z:
@@ -662,16 +688,23 @@ def _load_local_15m(sym):
 
 
 def load_history(sym, tf):
-    """طولانی‌ترین تاریخچهٔ موجود: آرشیوِ محلیِ ۱۵ دقیقهٔ فیوچرز (و تجمیعش)، وگرنه تاریخچهٔ اسپاتِ شبکه.
+    """طولانی‌ترین تاریخچهٔ موجود: آرشیوِ بومیِ فیوچرزِ همان تایم‌فریم (``um_<SYM>_<tf>.npz``)؛ اگر نبود،
+    تجمیعِ آرشیوِ **ریزتری** که مضربش است (با برچسبِ «→tf»)؛ وگرنه تاریخچهٔ اسپاتِ شبکه.
 
+    هرگز دادهٔ درشت‌تر با برچسبِ ریزتر برنمی‌گردد (قبلاً resample(15m, 5) کندلِ ۱۵ دقیقه‌ای را «5m» می‌نامید).
     جایگزینِ شبکه باید دست‌کم ``MIN_BARS`` کندل بدهد؛ وگرنه خطای روشن (برای همان خانه) —
     نه افتادنِ بی‌صدا به ۴۲۰ کندلِ زنده که هیچ معامله‌ای را داوری نمی‌کند.
     """
-    base = _load_local_15m(sym)
-    if base is not None and len(base["t"]) > 1000:
-        if tf == "15m":
-            return base, SOURCE_ARCHIVE
-        return resample(base, TF_MINUTES[tf]), SOURCE_ARCHIVE
+    m = tf_spec.minutes(tf)
+    native = _load_local(sym, tf)
+    if native is not None and len(native["t"]) > MIN_BARS:
+        return native, SOURCE_ARCHIVE_FMT.format(tf=tf)
+    finer = sorted((b for b in TFS if tf_spec.minutes(b) < m and m % tf_spec.minutes(b) == 0),
+                   key=tf_spec.minutes, reverse=True)       # درشت‌ترینِ ریزترها اول (15m پیش از 5m)
+    for b in finer:
+        base = _load_local(sym, b)
+        if base is not None and len(base["t"]) > 1000:
+            return resample(base, m), SOURCE_RESAMPLED_FMT.format(base=b, tf=tf)
     import market                                   # فقط وقتی دادهٔ محلی نیست (تست‌ها loader می‌دهند)
     try:
         kl = market.get_history(sym, tf, bars=3000)
@@ -700,11 +733,13 @@ def build_scorecards(loader=None, symbols=SYMBOLS, tfs=TFS):
                 cell["source"] = src
             except Exception as e:  # noqa: BLE001
                 cell = _stats([])
-                cell.update(error=str(e) or type(e).__name__, cost_pct=COST_PCT, source=src)
+                cell.update(error=str(e) or type(e).__name__, cost_pct=COST_PCT, source=src,
+                            maker=_empty_maker())
             cell["elapsed_s"] = round(time.time() - t1, 2)
             cells[sym][tf] = cell
     out = {"version": SCORECARD_VERSION, "built_at": time.time(),
            "elapsed_s": round(time.time() - t0, 1), "cost_pct": COST_PCT,
+           "maker_cost_pct": MAKER_COST_PCT,
            "window_days": WINDOW_DAYS, "knn_window": LIVE_BARS, "method": METHOD_FA,
            "cells": cells}
     out.update(_window_meta(cells))
@@ -1019,6 +1054,8 @@ def payload(decisions, scorecard=None, live=None):
                                     "window_days_min", "source", "window_days", "knn_window", "method")}
     meta["building"] = bool(sc.get("building"))
     meta["cost_pct"] = sc.get("cost_pct") if sc.get("cost_pct") is not None else COST_PCT
+    meta["maker_cost_pct"] = (sc.get("maker_cost_pct") if sc.get("maker_cost_pct") is not None
+                              else MAKER_COST_PCT)
     return {
         "generated_at": int(time.time()),
         "coins": list(SYMBOLS), "tfs": list(TFS),

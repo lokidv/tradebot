@@ -84,6 +84,9 @@ class DecisionsEndpointTests(unittest.TestCase):
             self.assertIn(k, body)
         self.assertEqual(list(body["coins"]), list(decision.SYMBOLS))
         self.assertEqual(list(body["tfs"]), list(decision.TFS))
+        self.assertEqual(body["tfs"][0], "5m")                    # ماتریس 5m را دارد
+        self.assertIn("5m", body["cells"]["BTCUSDT"])
+        self.assertIn("maker_cost_pct", body["scorecard_meta"])
         for sym in decision.SYMBOLS:
             for tf in decision.TFS:
                 self.assertIn(tf, body["cells"][sym])
@@ -111,18 +114,45 @@ class DecisionsEndpointTests(unittest.TestCase):
         self.assertEqual(stub.calls, {("BTCUSDT", "1h"): 1, ("ETHUSDT", "4h"): 1})
 
     def test_background_cycle_records_and_survives_errors(self):
-        with mock.patch.object(main, "get_analysis", _Counter()), \
-                mock.patch.object(decision, "resolve", side_effect=RuntimeError("down")):
-            out = main._decision_cycle()
+        with mock.patch.object(main, "get_analysis", _Counter()),                 mock.patch.dict(main._decision_state, {"last_boundary": None}),                 mock.patch.object(decision, "resolve", side_effect=RuntimeError("down")):
+            out = main._decision_cycle()           # دورِ اول ⇒ همهٔ تایم‌فریم‌ها
         self.assertEqual(out["decisions"], len(decision.SYMBOLS) * len(decision.TFS))
+        self.assertEqual(out["tfs"], list(decision.TFS))
         self.assertEqual(out["recorded"], 1)       # فقط خانهٔ لانگِ BTC 4h ثبت می‌شود
         self.assertIsNone(out["resolved"])         # خطای resolve بلعیده و لاگ شد
 
-    def test_next_run_is_20s_after_each_quarter_hour(self):
-        b = 1_700_000_100 - (1_700_000_100 % 900)
+    def test_next_run_is_20s_after_each_five_minutes(self):
+        self.assertEqual(main.DECISION_PERIOD, 300)
+        b = 1_700_000_100 - (1_700_000_100 % 300)
         self.assertEqual(main._next_decision_run(b + 5), b + main.DECISION_LAG)
-        self.assertEqual(main._next_decision_run(b + main.DECISION_LAG), b + 900 + main.DECISION_LAG)
-        self.assertEqual(main._next_decision_run(b + 500), b + 900 + main.DECISION_LAG)
+        self.assertEqual(main._next_decision_run(b + main.DECISION_LAG), b + 300 + main.DECISION_LAG)
+        self.assertEqual(main._next_decision_run(b + 200), b + 300 + main.DECISION_LAG)
+
+    def test_only_timeframes_whose_bar_just_closed_are_refreshed(self):
+        day = 1_700_000_000 - (1_700_000_000 % 86400)           # نیمه‌شبِ UTC
+        due = main._due_tfs
+        self.assertEqual(due(day, None), tuple(decision.TFS))     # دورِ اول ⇒ همه
+        self.assertEqual(due(day, day - 300), tuple(decision.TFS))          # نیمه‌شب ⇒ همه بسته شدند
+        self.assertEqual(due(day + 300, day), ("5m",))
+        self.assertEqual(due(day + 900, day + 600), ("5m", "15m"))
+        self.assertEqual(due(day + 3600, day + 3300), ("5m", "15m", "1h"))
+        self.assertEqual(due(day + 14400, day + 14100), ("5m", "15m", "1h", "4h"))
+        self.assertEqual(due(day + 3900, day + 3300), ("5m", "15m", "1h"))  # دورِ جاافتاده: مرزِ ساعت گم نمی‌شود
+        self.assertEqual(due(day + 300, day + 300), ())                    # همان مرز ⇒ هیچ
+        self.assertEqual(main._decision_boundary(day + 300 + main.DECISION_LAG + 3), day + 300)
+
+    def test_cycle_collects_only_the_due_timeframes(self):
+        day = 1_700_000_000 - (1_700_000_000 % 86400)
+        stub = _Counter()
+        with mock.patch.object(main, "get_analysis", stub),                 mock.patch.dict(main._decision_state, {"last_boundary": day + 600}),                 mock.patch.object(decision, "resolve", return_value=0) as res:
+            out = main._decision_cycle(now=day + 900 + main.DECISION_LAG)
+            self.assertEqual(main._decision_state["last_boundary"], day + 900)
+            again = main._decision_cycle(now=day + 900 + main.DECISION_LAG + 30)   # همان مرز: فقط داوری
+        self.assertEqual(out["tfs"], ["5m", "15m"])
+        self.assertEqual(out["decisions"], len(decision.SYMBOLS) * 2)
+        self.assertEqual({tf for _, tf in stub.calls}, {"5m", "15m"})
+        self.assertEqual((again["tfs"], again["decisions"]), ([], 0))
+        self.assertEqual(res.call_count, 2)                                   # داوری هر دور برای همه
 
 
 class ErrorTtlTests(unittest.TestCase):

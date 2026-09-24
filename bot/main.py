@@ -43,6 +43,7 @@ import watchlist
 import kucoin_desk
 import notify
 import decision
+import tf_spec
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
@@ -185,7 +186,7 @@ def _suspended_tfs_build():
     pockets, _ = _live_edge_book()
     pocket_tfs = {p["tf"] for p in pockets.values()}
     try:
-        for tf in ("15m", "1h", "4h", "1d"):
+        for tf in tf_spec.MODEL_TFS:                 # 5m سایه/جیب ندارد (فقط ماتریسِ تصمیم)
             if tf in pocket_tfs:
                 continue
             st = shadow.stats(tf, days=30, since_ts=_model_era(tf))
@@ -196,7 +197,7 @@ def _suspended_tfs_build():
     _tf_susp_cache.update(ts=time.time(), map=m)
     return m
 
-HTF_OF = {"15m": "4h", "1h": "4h", "4h": "1d", "1d": None}
+HTF_OF = tf_spec.HTF_OF   # 5m→1h، 15m/1h→4h، 4h→1d
 _rs_cache: dict = {}      # tf -> (ts, {sym: rank01})
 _fz_cache: dict = {}      # sym -> (ts, {"z", "persist", "crowded_long", "crowded_short"})
 _fz_pending: set = set()
@@ -256,6 +257,10 @@ def _macro(tf):
 def _macro_build(tf):
     now = time.time()
     out = {"gold": 0.0}
+    if tf not in tf_spec.MODEL_TFS:
+        # طلا فقط ورودیِ مدل‌های calib است و 5m مدلی ندارد — صفحه‌بندیِ ۳۰۰۰ کندلِ ۵ دقیقه‌ایِ PAXG بی‌فایده است
+        _macro_cache[tf] = (now, out)
+        return out
     try:
         gk = market.get_history("PAXGUSDT", tf, calib.BARS.get(tf, 3000))
         gmap = calib.mom_norm_map(gk["t"], gk["c"])
@@ -372,12 +377,12 @@ def _oi_info(symbol):
     return {"oi": None, "oi_chg_pct": 0.0, "oi_z": 0.0,
             "oi_rising": False, "oi_falling": False, "ok": False}
 app = FastAPI(title="CTP Multi-Coin Bot", version=APP_VERSION)
-TFS = ["15m", "1h", "4h", "1d"]
+TFS = list(tf_spec.TFS)   # 5m | 15m | 1h | 4h | 1d — ثبتِ واحد: bot/tf_spec.py
 TOP_N = 200               # تعداد ارزهای برتر تحت پایش
 CALIB_TOP = 100           # استخر آموزش مدل‌ها (پرحجم‌ترین‌ها) — با آموزشِ موازی، داده بیشتر = مدل قوی‌تر
-ANALYSIS_TTL = {"15m": 60, "1h": 120, "4h": 300, "1d": 900}
+ANALYSIS_TTL = tf_spec.ANALYSIS_TTL
 # حداکثر فاصله مجاز قیمت زنده از کندلِ سیگنال (٪) — متناسب با نوسان طبیعی هر تایم‌فریم
-DRIFT_CAP = {"15m": 1.2, "1h": 2.5, "4h": 5.0, "1d": 9.0}
+DRIFT_CAP = tf_spec.DRIFT_CAP
 
 _an_lock = threading.Lock()
 _an_cache: dict = {}      # (symbol, tf) -> (ts, analysis | {"error": str})
@@ -393,7 +398,7 @@ def _an_fresh(hit, tf, max_age):
     res = hit[1]
     if isinstance(res, dict) and "error" in res:
         return now - hit[0] < (min(max_age, ERROR_TTL) if max_age else ERROR_TTL)
-    boundary = now - (now % (market.TF_MINUTES[tf] * 60))
+    boundary = now - (now % (tf_spec.minutes(tf) * 60))
     # تحلیل تا پایان کندل جاری معتبر است (+۴۵ ثانیه مهلت بعد از بسته‌شدن)
     return hit[0] >= boundary or now - hit[0] < (max_age or 45)
 
@@ -465,10 +470,10 @@ def _compute_analysis(symbol, tf):
         htf_sign = 0
         htf = HTF_OF.get(tf)
         if htf:
-            ha = get_analysis(symbol, htf)             # زنجیره: 15m/1h→4h→1d→پایان
+            ha = get_analysis(symbol, htf)             # زنجیره: 5m→1h→4h→1d→پایان، 15m→4h
             if "error" not in ha and ha.get("zt") is not None:
                 # هم‌ترازی دقیق با آموزش: کندلِ بستهٔ *قبل از* سطلِ تایم‌بالاترِ سیگنال (بدون نشتی/کندلِ در حال شکل‌گیری)
-                htf_p = market.TF_MINUTES[htf] * 60000
+                htf_p = tf_spec.bar_ms(htf)
                 try:
                     ts_now = market.get_klines(symbol, tf)["t"][-1]
                     want = (ts_now // htf_p) * htf_p - htf_p
@@ -511,7 +516,7 @@ def _compute_analysis(symbol, tf):
             extras["session"] = {"tier": "mid", "mult": 0.92}
         kl = market.get_klines(symbol, tf)
         # ⚰️ گاردِ فیدِ مرده: جفتِ حذف‌شده/بی‌معامله چارتِ یخ‌زده دارد و سیگنالش بی‌معناست (درسِ MATIC/DNT)
-        if time.time() * 1000 - kl["t"][-1] > market.TF_MINUTES[tf] * 60000 * 3:
+        if time.time() * 1000 - kl["t"][-1] > tf_spec.bar_ms(tf) * 3:
             age_d = (time.time() * 1000 - kl["t"][-1]) / 86400000
             res = {"symbol": symbol, "tf": tf,
                    "error": f"فیدِ داده مرده است (آخرین کندل {age_d:.0f} روز پیش) — جفتِ حذف‌شده یا بدونِ معامله"}
@@ -854,7 +859,7 @@ def research_status():
 HEALTH_MAX_CANDIDATE_AGE_SEC = 3 * max(ANALYSIS_TTL.values())
 HEALTH_MAX_MODEL_AGE_DAYS = 30
 # پس از بسته‌شدنِ هر کندل این‌قدر مهلت تا کش تازه شود (حلقه‌ها هر ۱ تا ۳۰ دقیقه می‌گیرند)
-KLINE_GRACE_SEC = {"15m": 180, "1h": 300, "4h": 600, "1d": 1800}
+KLINE_GRACE_SEC = tf_spec.KLINE_GRACE_SEC
 
 
 @app.get("/api/health")
@@ -905,9 +910,11 @@ def health():
             # و حتی تازه‌ترین داده آخرین کندلِ بسته‌شده را ندارد. قاعدهٔ قبلی (سن از زمانِ دریافت)
             # هر کندلِ ساعتی را پس از ۶ دقیقه «کهنه» می‌خواند، سلامت را همیشه زرد می‌کرد و گیتِ
             # عملیات (۹۹٪ سبز) را هرگز قبول‌شدنی نمی‌گذاشت.
-            tf_sec = market.TF_MINUTES.get(tf, 60) * 60
+            if not tf_spec.is_known(tf):
+                continue                        # تایم‌فریمِ ناشناخته با فرضِ بی‌صدای ۶۰ دقیقه سنجیده نمی‌شود
+            tf_sec = tf_spec.minutes(tf) * 60
             in_use = (row.get("newest_age_sec") or 1e12) < 2 * tf_sec
-            past_grace = now_s % tf_sec > KLINE_GRACE_SEC.get(tf, 300)
+            past_grace = now_s % tf_sec > KLINE_GRACE_SEC[tf]
             behind = row.get("behind_candles_min") or 0
             if in_use and past_grace and behind >= 1:
                 warnings.append(f"دادهٔ کندلِ {tf} عقب است: تازه‌ترین کش {behind} کندل پشتِ آخرین بسته است")
@@ -1106,7 +1113,7 @@ def overview(tf: str = "1h"):
                 live_px = t.get("price")               # دیررسیده: قیمت زنده از کندل سیگنال دور شده
                 if live_px:
                     dr = abs(live_px - a["price"]) / max(a["price"], 1e-12) * 100
-                    if dr > DRIFT_CAP.get(tf, 2.5):
+                    if dr > DRIFT_CAP[tf]:
                         row["tradeable"] = False
                         row["drift_reject"] = True
                         row["status"] = f"دیررسیده — قیمت {dr:.1f}٪ از کندل سیگنال حرکت کرده؛ با کندل بعدی تازه می‌شود"
@@ -1154,6 +1161,8 @@ def overview(tf: str = "1h"):
     # هیچ ردیفی ثبت نمی‌شد و بدونِ ردیف هیچ لبه‌ای قابلِ کشف نبود.
     logged = 0
     for row in coins:
+        if tf not in tf_spec.MODEL_TFS:
+            break                   # 5m فقط تحلیل/ماتریس است؛ دفترِ رو به جلویش decision_ledger است، نه دفترِ پژوهشی
         if not row.get("side") or row.get("error"):
             continue
         try:
@@ -1216,12 +1225,15 @@ def coin_detail(symbol: str):
 
 # ───────────────────────── میزِ تصمیم (لانگ/شورت/صبر) — فقط تحلیل، هرگز مجوزِ معامله ─────────────────────────
 DECISION_WARM_DELAY = 30.0   # ثانیه پس از راه‌اندازی تا گرم‌کردنِ کارنامهٔ دوساله (در پس‌زمینه)
-DECISION_LAG = 20.0          # ثانیه پس از هر مرزِ ۱۵دقیقه‌ای UTC: کندل بسته شده و کشِ کندل تازه است
-DECISION_PERIOD = 900        # ۱۵ دقیقه
+DECISION_LAG = 20.0          # ثانیه پس از هر مرزِ ۵دقیقه‌ای UTC: کندل بسته شده و کشِ کندل تازه است
+# ۵ دقیقه = کوچک‌ترین تایم‌فریم (با ۹۰۰ ثانیه، decision.record با STALE_BARS=3 فقط ۱ از ۳ کندلِ 5m را می‌دید).
+# هر دور فقط تایم‌فریم‌هایی را تازه می‌کند که کندلشان از دورِ قبل بسته شده (5m همیشه، 1d فقط نیمه‌شبِ UTC).
+DECISION_PERIOD = 300
+_decision_state = {"last_boundary": None}   # آخرین مرزِ ۵دقیقه‌ای که تصمیم‌هایش جمع شد
 
 
 def _decision_lookup(symbols=None, tfs=None):
-    """همهٔ تحلیل‌های ارز × تایم‌فریمِ میزِ تصمیم (۵×۴=۲۰) را موازی روی ``_pool`` می‌سازد
+    """همهٔ تحلیل‌های ارز × تایم‌فریمِ میزِ تصمیم (۵×۵=۲۵) را موازی روی ``_pool`` می‌سازد
     و یک تابعِ جست‌وجوی ``(sym, tf) -> analysis`` برای ``decision.collect/refresh`` برمی‌گرداند.
 
     ترتیب: تایم‌فریمِ بالاتر و BTC اول — پیش‌نیازِ زنجیرهٔ HTF/BTCِ بقیه‌اند، پس منتظرها کمتر معطل می‌شوند.
@@ -1229,7 +1241,7 @@ def _decision_lookup(symbols=None, tfs=None):
     symbols = tuple(symbols or decision.SYMBOLS)
     tfs = tuple(tfs or decision.TFS)
     keys = sorted(((s, tf) for s in symbols for tf in tfs),
-                  key=lambda k: (-market.TF_MINUTES.get(k[1], 0), k[0] != "BTCUSDT"))
+                  key=lambda k: (-tf_spec.MINUTES.get(k[1], 0), k[0] != "BTCUSDT"))
 
     def _one(k):
         try:
@@ -1246,17 +1258,43 @@ def _decision_lookup(symbols=None, tfs=None):
     return lookup
 
 
-def _decision_cycle():
+def _decision_boundary(now):
+    """مرزِ ۵دقیقه‌ایِ UTCِ این دور (ثانیه) — دورِ دیررسیده هم به همان مرزِ خودش نسبت داده می‌شود."""
+    return int((now - DECISION_LAG) // DECISION_PERIOD) * DECISION_PERIOD
+
+
+def _due_tfs(boundary, last_boundary=None):
+    """تایم‌فریم‌هایی که کندلشان در ``(last_boundary, boundary]`` بسته شده.
+
+    دورِ اول (یا ساعتِ عقب‌رفته) ⇒ همه؛ همان مرزِ دورِ قبل ⇒ هیچ. اگر دوری جا بیفتد (دورِ قبلی بیش
+    از ۵ دقیقه طول کشید)، مرزِ ساعتی/۴ساعتی/روزانهٔ وسطِ آن گم نمی‌شود."""
+    if last_boundary is None or boundary < last_boundary:
+        return tuple(decision.TFS)
+    return tuple(tf for tf in decision.TFS if tf_spec.closed_between(tf, last_boundary, boundary))
+
+
+def _decision_cycle(now=None, tfs=None):
     """یک دورِ پس‌زمینه: تصمیم‌ها → ثبت در دفترِ رو-به-جلو → داوریِ ردیف‌های باز → کارنامه (بی‌انتظار).
 
-    هر گام جدا خطاگیری می‌شود تا خرابیِ یکی بقیه را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
-    out = {"decisions": 0, "recorded": None, "resolved": None}
-    decisions = decision.collect(_decision_lookup())
+    فقط تایم‌فریم‌هایی که کندلشان تازه بسته شده دوباره تحلیل و ثبت می‌شوند (``tfs`` برای تست/اجبار)؛
+    داوریِ ردیف‌های باز هر دور برای همه انجام می‌شود. هر گام جدا خطاگیری می‌شود تا خرابیِ یکی بقیه
+    را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
+    now = time.time() if now is None else now
+    boundary = _decision_boundary(now)
+    if tfs is None:
+        tfs = _due_tfs(boundary, _decision_state["last_boundary"])
+    tfs = tuple(tfs)
+    out = {"decisions": 0, "tfs": list(tfs), "recorded": None, "resolved": None}
+    decisions = []
+    if tfs:
+        decisions = decision.collect(_decision_lookup(tfs=tfs), tfs=tfs)
+    _decision_state["last_boundary"] = boundary
     out["decisions"] = len(decisions or [])
-    try:
-        out["recorded"] = decision.record(decisions)
-    except Exception:  # noqa: BLE001
-        log.exc("decision ledger record")
+    if decisions:
+        try:
+            out["recorded"] = decision.record(decisions)
+        except Exception:  # noqa: BLE001
+            log.exc("decision ledger record")
     try:
         out["resolved"] = decision.resolve(market.get_klines)
     except Exception:  # noqa: BLE001
@@ -1269,7 +1307,7 @@ def _decision_cycle():
 
 
 def _next_decision_run(now):
-    """زمانِ اجرای بعدی: DECISION_LAG ثانیه پس از نزدیک‌ترین مرزِ ۱۵دقیقه‌ای UTC که هنوز نگذشته."""
+    """زمانِ اجرای بعدی: DECISION_LAG ثانیه پس از نزدیک‌ترین مرزِ ۵دقیقه‌ای UTC که هنوز نگذشته."""
     base = ((now - DECISION_LAG) // DECISION_PERIOD) * DECISION_PERIOD
     return base + DECISION_PERIOD + DECISION_LAG
 
@@ -1346,6 +1384,8 @@ def _portfolio_guard(new_side, new_risk_usd):
 
 @app.post("/api/positions")
 def open_pos(req: OpenReq):
+    if req.tf not in TFS:
+        raise HTTPException(400, "تایم‌فریم نامعتبر")
     a = get_analysis(req.symbol, req.tf, max_age=90)
     if "error" in a:
         raise HTTPException(502, a["error"])
@@ -1386,10 +1426,10 @@ def open_pos(req: OpenReq):
         if tr.get("entry") is not None and tr.get("sl") is not None:
             r = abs(tr["entry"] - tr["sl"])
         else:                                   # ستاپی نبود: ریسک پیش‌فرض متناسب تایم‌فریم
-            r = entry * {"15m": 0.006, "1h": 0.008, "4h": 0.012, "1d": 0.02}.get(req.tf, 0.01)
+            r = entry * tf_spec.MANUAL_RISK_FRAC[req.tf]
         sl, tp = entry - d * r, entry + d * 1.8 * r
         grade = "دستی"
-        tstop = tr.get("time_stop_min", 40 * {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}.get(req.tf, 60))
+        tstop = tr.get("time_stop_min", 40 * tf_spec.minutes(req.tf))
 
     # ⚠️ رفع باگ ورود: تحلیلْ کش است (کندل بسته قبلی) — ورود باید با قیمت زندهٔ لحظه کلیک باشد
     d = 1 if side == "long" else -1
@@ -1399,7 +1439,7 @@ def open_pos(req: OpenReq):
         live = None
     if live:
         drift_pct = abs(live - entry) / max(entry, 1e-12) * 100
-        cap = DRIFT_CAP.get(req.tf, 2.5)
+        cap = DRIFT_CAP[req.tf]
         if drift_pct > cap and not req.force:
             raise HTTPException(409, f"DRIFT|{drift_pct:.1f}|قیمت از کندلِ سیگنال {drift_pct:.1f}٪ حرکت کرده (حد مجاز {req.tf}: {cap}٪) و شرایط ورود بدتر از بک‌تست است — برای ورود آگاهانه دوباره تأیید کنید")
         r_dist, tp_dist = abs(entry - sl), abs(tp - entry)

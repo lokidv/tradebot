@@ -27,6 +27,7 @@ import gates
 import journal
 import paths
 import stats
+import tf_spec
 
 DATA_DIR = paths.DATA_DIR
 REPORT_DIR = os.path.join(DATA_DIR, "reports")
@@ -247,10 +248,14 @@ def integrity_section():
     results = candidates._read(candidates.RESULT_PATH)
     zero_risk = sum(1 for c in cands if float(c.get("risk_pct") or 0) < candidates.MIN_RISK_PCT)
     extreme = sum(1 for r in results if r.get("net_r") is not None and abs(float(r["net_r"])) > 5)
-    stale = sum(1 for c in cands if (float(c.get("logged_at") or 0) * 1000 - float(c.get("candle_ts") or 0))
-                > candidates.MAX_CANDLE_AGE_BARS * candidates.TF_MINUTES.get(c.get("tf"), 60) * 60000)
+    # تایم‌فریمِ ناشناخته دیگر بی‌صدا «۶۰ دقیقه» خوانده نمی‌شود؛ جدا شمرده و ناسالم حساب می‌شود
+    known = [c for c in cands if tf_spec.is_known(c.get("tf"))]
+    unknown_tf = len(cands) - len(known)
+    stale = sum(1 for c in known if (float(c.get("logged_at") or 0) * 1000 - float(c.get("candle_ts") or 0))
+                > candidates.MAX_CANDLE_AGE_BARS * tf_spec.bar_ms(c["tf"]))
     return {"zero_risk_rows": zero_risk, "extreme_r_rows": extreme, "stale_candle_rows": stale,
-            "ok": zero_risk == 0 and extreme == 0 and stale == 0}
+            "unknown_tf_rows": unknown_tf,
+            "ok": zero_risk == 0 and extreme == 0 and stale == 0 and unknown_tf == 0}
 
 
 def evaluate_ops(now=None, gates_=OPS_GATES):

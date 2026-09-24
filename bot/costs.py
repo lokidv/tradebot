@@ -19,13 +19,15 @@ import math
 
 import numpy as np
 
+import tf_spec
+
 # ردهٔ هزینهٔ رفت‌وبرگشت (٪) بر اساسِ حجمِ دلاریِ ۲۴ ساعته — همان جدولِ main._symbol_cost
 TIERS = ((5e8, 0.08), (1e8, 0.11), (2e7, 0.18), (0.0, 0.30))
 FUNDING_INTERVAL_MS = 8 * 3600 * 1000
 # وقتی تاریخچهٔ فاندینگ نیست: ۰٫۰۱٪ در هر تسویه، همیشه به ضررِ ما (نه به نفع)
 DEFAULT_FUNDING_PER_SETTLEMENT_PCT = 0.01
-BARS_PER_DAY = {"15m": 96, "1h": 24, "4h": 6, "1d": 1}
-TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
+BARS_PER_DAY = tf_spec.BARS_PER_DAY     # ثبتِ واحد: bot/tf_spec.py
+TF_MS = tf_spec.BAR_MS
 
 
 def tier_cost(quote_vol_24h):
@@ -42,7 +44,7 @@ def quote_volume_24h(c, v, i, tf):
 
     ⚠️ حجمِ اسپات است؛ حجمِ فیوچرز معمولاً بیشتر است، پس این برآورد محافظه‌کار است.
     """
-    k = BARS_PER_DAY.get(tf, 24)
+    k = tf_spec.bars_per_day(tf)          # تایم‌فریمِ ناشناخته خطا می‌دهد، نه «۲۴ کندل» بی‌صدا
     lo = max(0, i - k + 1)
     return float(np.sum(np.asarray(c[lo:i + 1], float) * np.asarray(v[lo:i + 1], float)))
 
@@ -87,5 +89,5 @@ def event_cost_pct(side, c, v, i, tf, entry_ts, exit_ts, funding_rows=None):
 
 def expected_funding_pct(tf, bars_held):
     """برآوردِ محافظه‌کارِ فاندینگ برای نمونه‌های جهت‌یاب که مسیرشان ثبت نشده."""
-    hold_ms = float(bars_held) * TF_MS.get(tf, 3_600_000)
+    hold_ms = float(bars_held) * tf_spec.bar_ms(tf)
     return round((hold_ms / FUNDING_INTERVAL_MS) * DEFAULT_FUNDING_PER_SETTLEMENT_PCT, 6)

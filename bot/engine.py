@@ -8,9 +8,10 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 import bracket
 import gates
+import tf_spec
 
-TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
-HORIZON = {"15m": 48, "1h": 36, "4h": 30, "1d": 30}
+TF_MINUTES = tf_spec.MINUTES          # ثبتِ واحد: bot/tf_spec.py
+HORIZON = tf_spec.HORIZON
 EPS = 1e-10
 
 

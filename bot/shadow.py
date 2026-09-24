@@ -9,6 +9,7 @@ import uuid
 
 import bracket
 import paths
+import tf_spec
 
 SHADOW_PATH = paths.data("signals_log.json")
 MIN_RISK_PCT = 0.05        # زیر این فاصله، گردکردنِ قیمت حدضرر را روی ورود می‌آورد و R بی‌معنا می‌شود
@@ -31,7 +32,7 @@ def _save(db):
     os.replace(tmp, SHADOW_PATH)
 
 
-TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+TF_MINUTES = tf_spec.MINUTES   # ثبتِ واحد: bot/tf_spec.py
 # سیگنالِ کندلِ کهنه = فیدِ مرده؛ هرگز حل نمی‌شود و ثبت را قفل می‌کند. سه کندل
 # سخاوتمندانه است (زمانِ ثبت نسبت به زمانِ *باز شدنِ* کندل سنجیده می‌شود) ولی
 # ردیف‌های واقعیِ مسموم ۴۰ تا ۱۳۶۸ روز فاصله داشتند.
@@ -58,7 +59,9 @@ def log_signal(symbol, tf, side, entry, sl, tp, setup, p_win, ev_pct, candle_ts,
     risk_pct = abs(float(entry) - float(sl)) / max(abs(float(entry)), 1e-12) * 100
     if risk_pct < MIN_RISK_PCT:
         return False                               # حدضرر روی ورود گرد شده — R بی‌معنا می‌شود
-    bar_ms = TF_MINUTES.get(tf, 60) * 60000
+    if not tf_spec.is_known(tf):
+        return False                               # تایم‌فریمِ ناشناخته — نه فرضِ بی‌صدای ۶۰ دقیقه
+    bar_ms = tf_spec.bar_ms(tf)
     if candle_ts and time.time() * 1000 - float(candle_ts) > MAX_CANDLE_AGE_BARS * bar_ms:
         return False                               # کندلِ کهنه/فیدِ مرده
     with _lock:
