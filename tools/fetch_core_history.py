@@ -24,7 +24,12 @@
                       t (ms، timepoint = لحظهٔ تسویه)، rate، interval_h (از فاصلهٔ تسویه‌ها با market.infer_interval_h،
                       همان تابعِ مسیرِ زنده). فایلِ موجود فقط با ردیف‌های تازه‌تر ادامه می‌یابد (مگر با --force).
   core_history_audit.json   گزارشِ پوشش: تعداد، اول/آخر، یکنواختی، تکراری، واحدِ ms، شکاف‌های بیش از ۱ ساعت،
-                            و مقایسهٔ ۵m بازنمونه‌شده با فایل‌های 15m/1h/4h/1d (um و spot جداگانه).
+                            کندل‌های تخت و بی‌حجم (flat_zero_volume_bars/days)، و مقایسهٔ ۵m بازنمونه‌شده با فایل‌های
+                            15m/1h/4h/1d (um و spot جداگانه، با mismatch_days).
+
+روزِ «کامل ولی خراب»: آرشیوِ ماهانه گاهی کندل‌های یخ‌زده (o=h=l=c، v=0) دارد که فایلِ روزانهٔ همان روز ندارد
+(BTCUSDT 5m/15m ۲۰۲۳-۱۱-۱۰). ساختِ فایل و --fill-gaps (و اسپات همیشه) چنین روزی را از آرشیوِ روزانه دوباره می‌گیرند
+و گزارش می‌دهند: تعمیرشده، یا «روزانه هم تخت» (توقفِ واقعی/ناسازگاریِ خودِ آرشیو که از این‌جا تعمیر نمی‌شود).
 
 liquidationSnapshot برای um در آرشیو وجود ندارد (فقط cm). قطعه‌های ماهانهٔ عمق در micro/_parts/depth/ می‌مانند
 تا اجرای قطع‌شده از همان‌جا ادامه دهد.
@@ -77,7 +82,8 @@ STEP_MS = {"5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d
 DEPTH_AVG = (1, 2, 5)                  # سطوحی که میانگینِ بازه هم دارند
 HOUR = 3_600_000
 
-STATS = {"requests": 0, "bytes": 0, "missing": [], "failed": []}
+STATS = {"requests": 0, "bytes": 0, "missing": [], "failed": [],
+         "repaired": [], "daily_also_flat": [], "no_daily": [], "daily_worse": []}   # روزهای کندلِ تخت و بی‌حجم
 
 
 # ---------------------------------------------------------------- شبکه
@@ -144,20 +150,65 @@ def _span_days(span):
     return [d0 + dt.timedelta(i) for i in range((d1 - d0).days)]
 
 
-def _fill(cli, pool, a, day_url, parse, step, span):
-    """روزهای ناقص/غایب در آرشیوِ ماهانه از آرشیوِ روزانه پر می‌شوند (مثلاً SOL و TRX در ۲۰۲۲-۰۲-۲۶..۲۸)."""
+def _flat_mask(a):
+    """کندلِ «تخت و بی‌حجم» (o=h=l=c و v=0) در آرایهٔ ستون‌های ``KLINE_KEYS``: یا توقفِ واقعیِ صرافی است یا کندلِ یخ‌زدهٔ
+    آرشیوِ ماهانه (ممیزی DATA-3: BTCUSDT 5m/15m در ۲۰۲۳-۱۱-۱۰ که فایلِ روزانه‌اش سالم است)."""
+    a = np.asarray(a, float)
+    if a.ndim != 2 or a.shape[1] < 6 or not len(a):
+        return np.zeros(len(a), bool)
+    o, h, l, c, v = (a[:, i] for i in range(1, 6))
+    return (o == h) & (h == l) & (l == c) & (v == 0)
+
+
+def _fill(cli, pool, a, day_url, parse, step, span, check_flat=False):
+    """روزهای ناقص/غایب در آرشیوِ ماهانه از آرشیوِ روزانه پر می‌شوند (مثلاً SOL و TRX در ۲۰۲۲-۰۲-۲۶..۲۸).
+
+    ``check_flat`` (فقط کندل): روزی که ردیف‌هایش کامل است ولی کندلِ تخت و بی‌حجم دارد هم از آرشیوِ روزانه دوباره
+    گرفته می‌شود (ممیزی DATA-3: پیش‌تر فقط روزِ کم‌ردیف دوباره گرفته می‌شد، پس کندل‌های یخ‌زدهٔ فایلِ ماهانه
+    هرگز جایگزین نمی‌شدند). ردیف‌های روزانه جای ردیف‌های هم‌زمانِ ماهانه را می‌گیرند، مگر فایلِ روزانه کندلِ تختِ
+    بیشتری داشته باشد. خروجی ``(a, ردیف‌های تازه, گزارش)``؛ گزارش = فهرستِ روزها با «تعدادِ تخت ماهانه→روزانه»:
+    ``repaired`` (روزانه سالم‌تر بود و جایگزین شد)، ``daily_also_flat`` (روزانه هم همان کندل‌های تخت را دارد: توقفِ
+    واقعی یا ناسازگاریِ خودِ آرشیو — از این‌جا قابلِ تعمیر نیست)، ``daily_worse`` (ماهانه نگه داشته شد) و
+    ``no_daily`` (فایلِ روزانه نیست).
+    """
+    fix = {"repaired": [], "daily_also_flat": [], "daily_worse": [], "no_daily": []}
     have = dict(zip(*np.unique(a[:, 0].astype(np.int64) // DAY, return_counts=True))) if len(a) else {}
     epoch = dt.date(1970, 1, 1)
     first = int(a[0, 0]) // DAY if len(a) else -1       # پیش از فهرست‌شدنِ نماد (SOL اسپات ۲۰۲۰-۰۸) روزی نیست
-    miss = [d for d in _span_days(span)
-            if (d - epoch).days >= first and have.get((d - epoch).days, 0) < DAY // step]
-    if not miss:
-        return a, 0
+    days = _span_days(span)
+    miss = [d for d in days if (d - epoch).days >= first and have.get((d - epoch).days, 0) < DAY // step]
+    flat = {}
+    if check_flat and len(a):
+        fm = _flat_mask(a)
+        in_span = {(d - epoch).days: d for d in days}
+        k, cnt = np.unique(a[fm, 0].astype(np.int64) // DAY, return_counts=True)
+        flat = {in_span[int(x)]: int(n) for x, n in zip(k, cnt) if int(x) in in_span and in_span[int(x)] not in miss}
+    todo = miss + sorted(flat)
+    if not todo:
+        return a, 0, fix
     n0 = len(a)
-    rows = [r for part in pool.map(lambda d: parse(cli, day_url.format(d=d.isoformat())), miss) for r in part]
+    parts = list(pool.map(lambda d: parse(cli, day_url.format(d=d.isoformat())), todo))
+    rows = []
+    for d, part in zip(todo, parts):
+        if d in flat:
+            if not part:
+                fix["no_daily"].append(d.isoformat())
+                continue
+            after = int(_flat_mask(np.asarray(part, float)).sum())
+            key = "repaired" if after < flat[d] else "daily_also_flat" if after == flat[d] else "daily_worse"
+            fix[key].append(f"{d.isoformat()} ({flat[d]}->{after} flat bars)")
+            if key == "daily_worse":
+                continue
+        rows.extend(part)
     if rows:
         a = _dedup_sorted(np.vstack([a, np.asarray(rows, float)]) if len(a) else np.asarray(rows, float))
-    return a, len(a) - n0                                # فقط ردیف‌های واقعاً تازه (روزِ قطعیِ صرافی = ۰)
+    return a, len(a) - n0, fix                           # فقط ردیف‌های واقعاً تازه (روزِ قطعیِ صرافی = ۰)
+
+
+def _fix_note(fix):
+    """متنِ کوتاهِ گزارشِ روزهای تخت برای خروجیِ کنسول (خالی اگر چیزی نبود)."""
+    out = [f"{k} {', '.join(v)}" for k, v in fix.items() if v]
+    return ("; flat zero-volume days: " + "; ".join(out)) if out else ""
 
 
 # ---------------------------------------------------------------- کندل، پرمیوم، فاندینگ
@@ -176,24 +227,34 @@ def _kline_month(cli, url):
 
 
 def _series(cli, pool, path, keys, month_url, day_url, parse, step, span, force, fill):
-    """ماهانه + پر کردنِ روزهای غایب از روزانه. فایلِ موجود فقط با fill (پر کردنِ شکاف) یا force دست می‌خورد."""
+    """ماهانه + پر کردنِ روزهای غایب از روزانه. فایلِ موجود فقط با fill (پر کردنِ شکاف) یا force دست می‌خورد.
+    برای کندل روزهای دارای کندلِ تخت و بی‌حجم هم از روزانه دوباره گرفته می‌شوند (``_fill``) و در STATS گزارش می‌شوند."""
+    check_flat = tuple(keys) == KLINE_KEYS
+    name = os.path.basename(path)
     if os.path.exists(path) and not force:
         if not fill:
             return "cached"
         with np.load(path) as d:                       # ویندوز: فایلِ باز جایگزین نمی‌شود
             a = np.column_stack([d[k].astype(float) for k in keys])
-        a, added = _fill(cli, pool, a, day_url, parse, step, span)
-        if added:
+        a, added, fix = _fill(cli, pool, a, day_url, parse, step, span, check_flat)
+        _record(name, fix)
+        if added or fix["repaired"]:
             _save(path, **{k: (a[:, i].astype(np.int64) if k == "t" else a[:, i]) for i, k in enumerate(keys)})
-        return f"cached, gap-fill +{added} rows -> {len(a)}"
+        return f"cached, gap-fill +{added} rows -> {len(a)}" + _fix_note(fix)
     urls = [month_url.format(y=y, m=m) for y, m in months(*span)]
     rows = [r for part in pool.map(lambda u: parse(cli, u), urls) for r in part]
     a = _dedup_sorted(np.asarray(rows, float)) if rows else np.zeros((0, len(keys)))
-    a, added = _fill(cli, pool, a, day_url, parse, step, span)
+    a, added, fix = _fill(cli, pool, a, day_url, parse, step, span, check_flat)
+    _record(name, fix)
     if not len(a):
         return "empty"
     _save(path, **{k: (a[:, i].astype(np.int64) if k == "t" else a[:, i]) for i, k in enumerate(keys)})
-    return f"{len(a)} rows (+{added} from daily files)"
+    return f"{len(a)} rows (+{added} from daily files)" + _fix_note(fix)
+
+
+def _record(name, fix):
+    for k, v in fix.items():
+        STATS[k].extend(f"{name} {x}" for x in v)
 
 
 def klines(cli, pool, sym, iv, span, force, fill=False):
@@ -443,6 +504,11 @@ def audit_file(path, step, gap_ms=HOUR):
         rep["nan_pct"] = nan
     if "ns" in d.files:
         rep["median_snapshots_per_bucket"] = float(np.median(d["ns"]))
+    if set(KLINE_KEYS) <= set(d.files):                  # کندلِ تخت و بی‌حجم: توقفِ صرافی یا خرابیِ آرشیو (DATA-3)
+        fm = _flat_mask(np.column_stack([d[k].astype(float) for k in KLINE_KEYS]))
+        days = sorted({time.strftime("%Y-%m-%d", time.gmtime(int(x) // 1000)) for x in t[fm]})
+        rep["flat_zero_volume_bars"] = int(fm.sum())
+        rep["flat_zero_volume_days"] = days[:40]
     return rep
 
 
@@ -461,6 +527,8 @@ def resample(d, step):
 
 
 def crosscheck(sym, market_="um"):
+    """۵ دقیقهٔ بازنمونه‌شده در برابرِ فایل‌های 15m/1h/4h/1d. ``mismatch_days`` = روزهای ناسازگارِ OHLC (برای یافتنِ
+    روزِ خرابِ آرشیوِ ماهانه؛ تعمیرش با ``--fill-gaps`` که روزِ دارای کندلِ تخت و بی‌حجم را از فایلِ روزانه می‌گیرد)."""
     p5 = os.path.join(OUT, f"{market_}_{sym}_5m.npz")
     if not os.path.exists(p5):
         return {}
@@ -474,9 +542,16 @@ def crosscheck(sym, market_="um"):
         common, i, j = np.intersect1d(r["t"], d["t"], return_indices=True)
         rel = {k: float(np.nanmax(np.abs(r[k][i] - d[k][j]) / np.maximum(np.abs(d[k][j]), 1e-12)))
                for k in ("o", "h", "l", "c", "v", "tbv")} if len(common) else {}
-        bad = int(sum((np.abs(r[k][i] - d[k][j]) > 1e-6 * np.maximum(np.abs(d[k][j]), 1)).sum() for k in ("o", "h", "l", "c")))
+        mism = np.zeros(len(common), bool)
+        bad = 0
+        for k in ("o", "h", "l", "c"):
+            m = np.abs(r[k][i] - d[k][j]) > 1e-6 * np.maximum(np.abs(d[k][j]), 1)
+            bad += int(m.sum())
+            mism |= m
+        days =sorted({time.strftime("%Y-%m-%d", time.gmtime(int(x) // 1000)) for x in common[mism]})
         res[iv] = {"common_bars": int(len(common)), "bars_only_in_file": int(len(d["t"]) - len(common)),
-                   "ohlc_mismatches": bad, "max_rel_diff": {k: round(v, 9) for k, v in rel.items()}}
+                   "ohlc_mismatches": bad, "mismatch_days": days[:40],
+                   "max_rel_diff": {k: round(v, 9) for k, v in rel.items()}}
     return res
 
 
@@ -521,7 +596,8 @@ def main():
     ap.add_argument("--depth-start", default="2023-01-01", help="آرشیوِ bookDepth از 2023-01-01 شروع می‌شود")
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--force", action="store_true", help="فایلِ موجود را دوباره بساز")
-    ap.add_argument("--fill-gaps", action="store_true", help="روزهای غایبِ فایل‌های موجودِ 5m/1h/4h/1d را از آرشیوِ روزانه پر کن")
+    ap.add_argument("--fill-gaps", action="store_true",
+                    help="روزهای غایبِ فایل‌های موجودِ 5m/1h/4h/1d و روزهای دارای کندلِ تخت و بی‌حجم را از آرشیوِ روزانه بگیر")
     a = ap.parse_args()
     spot = a.market == "spot"
     a.only = a.only or (["klines", "audit"] if spot else ["klines", "premium", "funding", "depth", "audit"])
@@ -561,6 +637,12 @@ def main():
         print("404:", STATS["missing"][:40], flush=True)
     if STATS["failed"]:
         print("FAILED (rerun to retry):", STATS["failed"][:40], flush=True)
+    for k, what in (("repaired", "repaired from the daily file (flat zero-volume bars in the monthly file)"),
+                    ("daily_also_flat", "flat zero-volume bars also in the daily file (real halt or upstream; kept)"),
+                    ("daily_worse", "daily file had more flat bars (monthly kept)"),
+                    ("no_daily", "flat zero-volume day without a daily file (kept)")):
+        if STATS[k]:
+            print(f"{what}:", STATS[k][:40], flush=True)
     if "audit" in a.only:
         audit(a.symbols)
 
