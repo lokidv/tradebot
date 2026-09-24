@@ -314,6 +314,8 @@
   .dm-na{font-size:10px; color:var(--faint); line-height:1.4}
   .dm-rec .na{opacity:.6}
   .dm-scm{margin-top:6px; font-size:11.5px; color:var(--dim); line-height:1.9}
+  .dm-var:empty{display:none}
+  .dm-var{border-top:1px dashed var(--line2); padding-top:6px}
   .dd-verdict{margin-top:8px; padding:8px 10px; border-radius:9px; font-size:12.5px; line-height:1.8; color:var(--ink);
               border:1px solid var(--line2); background:var(--surface2)}
   .dd-verdict.vb-loss{border-color:var(--dn); background:var(--dn-dim)}
@@ -442,6 +444,7 @@
     </div>
     <div id="dmGrid"><div class="dm-state">🧠 در حالِ ساختنِ ماتریسِ تصمیم…</div></div>
     <div class="dm-scm" id="dmScMeta"></div>
+    <div class="dm-scm dm-var" id="dmVariants"></div>
     <p class="dm-honest">⚠️ این‌ها تحلیلِ ترکیبیِ اندیکاتورها و هوش مصنوعی‌اند، نه سیگنالِ تأییدشده. در بک‌تستِ دوساله پس از کارمزد، تصمیم‌های ۱۵ دقیقه و ۱ ساعت روی هر پنج ارز زیان‌ده بوده‌اند و ۴ ساعته حدودِ سربه‌سر؛ روزانه نمونهٔ کافی ندارد. کارنامهٔ هر خانه را ببینید.
       <br><small>خطِ زیرِ هر خانه = کارنامهٔ بک‌تستِ همان تصمیم (درصدِ برد · میانگینِ R پس از کارمزد · حکم): <span class="v-loss">قرمز = زیان‌ده</span>، <span class="v-pos">کهربایی = مثبت ولی تأییدنشده</span>، <span class="v-neu">خاکستری = نامشخص یا نمونهٔ کم</span>. نوار = امتیازِ فنی (۰ تا ۱۰۰؛ احتمالِ برد نیست). «صبر» یعنی شرطِ ورود کامل نیست؛ فلش = تمایل، «آمادگی» = چه مقدار از شرط‌های ورود پر است. ⚠ = هشدارِ موتور (در جزئیاتِ خانه).</small><span id="dmNote"></span></p>
   </section>
@@ -2090,7 +2093,32 @@ function dmCell(sym, tf, x){
     ${meter}
     <small class="dm-rec">${recLine(x)}</small>
     ${x.scorecard_applies === false ? `<small class="dm-na" title="${esc(SC_NA)}">کارنامهٔ قاعدهٔ پایه، نه این تصمیم</small>` : ""}
+    ${poOf(x) ? `<small class="dm-na" title="${esc(poOf(x).note || "")}">نظرِ جدای سیاست: ${callLabel(poOf(x).side)}</small>` : ""}
   </button>`;
+}
+// calib-F6: جهتِ «سیاستِ انتخابِ عمل» هرگز تصمیمِ خانه نیست؛ فقط نظرِ جدا (رتبه‌بندی‌نشده، ثبت‌نشده)
+const poOf = x => (x && x.policy_opinion && (x.policy_opinion.side === "long" || x.policy_opinion.side === "short")) ? x.policy_opinion : null;
+// آزمونِ رو-به-جلوی دو گونهٔ پیش‌ثبت‌شده (prereg_rule_variants_forward.json) — فقط برچسب، هرگز مجوز
+function variantsHtml(D){
+  const V = D && D.variants;
+  if(!V || !Array.isArray(V.items) || !V.items.length) return "";
+  const st = {pass:"v-pos", fail:"v-loss"};
+  const since = V.started_at ? ` · از ${tsFa(V.started_at, true)} · ${faN(V.weeks || 0, 1)} هفته` : " · هنوز چیزی ثبت نشده";
+  const rows = V.items.map(it => {
+    const p = it.pooled || {}, a = p.variant || {}, b = p.rule || {}, g = it.progress || {};
+    const need = [`${faN(g.weeks || 0, 1)} از ${faN(g.min_weeks)} هفته`,
+                  g.min_trades ? `${faN(g.trades || 0)} از ${faN(g.min_trades)} معامله` : "",
+                  g.min_differs ? `${faN(it.differs || 0)} از ${faN(g.min_differs)} کندلِ متفاوت` : ""].filter(Boolean).join(" · ");
+    const cmp = a.n ? `${faN(a.n)} معامله · ${bR(a.avg_r)} در برابرِ قاعده ${b.n ? bR(b.avg_r) : "—"}${p.diff != null ? ` (تفاوت ${bR(p.diff)})` : ""}`
+                    : "هنوز معاملهٔ داوری‌شده‌ای ندارد";
+    const tip = Object.entries(it.tfs || {}).map(([tf, c]) => `${TF_FA[tf] || tf}: گونه n=${faN((c.variant||{}).n || 0)}` +
+                `${(c.variant||{}).avg_r != null ? ` ${faS(c.variant.avg_r, 2)}R` : ""} · قاعده n=${faN((c.rule||{}).n || 0)}` +
+                `${(c.rule||{}).avg_r != null ? ` ${faS(c.rule.avg_r, 2)}R` : ""}`).join("\n");
+    return `• <b title="${esc(tip)}">${esc(it.fa)}</b> <small class="mid">[داوری روی ${esc((it.judge_tfs || []).join("، "))}]</small>: ${cmp}` +
+           ` — <span class="${st[it.status] || "v-neu"}">${esc(it.status_fa || it.status)}</span> <small class="mid">(${need})</small>`;
+  }).join("<br>");
+  return `🧪 آزمونِ رو-به-جلوی دو گونهٔ قاعده <small class="mid">(پیش‌ثبت ۲۰۲۶-۰۹-۲۴${since})</small><br>${rows}` +
+         `<br><small class="mid">${esc(V.note || "")}</small>`;
 }
 function srcFa(s){                                   // منبعِ دادهٔ کارنامه
   const t = Array.isArray(s) ? s.join(",") : String(s==null ? "" : s);
@@ -2115,9 +2143,13 @@ function scMetaHtml(D){                              // یک بار زیرِ م�
            ` <small class="mid">(حجمِ دو بازار فرق دارد؛ بخشی از سیگنال‌ها یکی نیست)</small></span>`);
   const lo = D.live_overall;
   if(lo && lo.n > 0)
-    out.push(`📡 کارنامهٔ زنده (رو-به-جلو، همهٔ خانه‌ها، پس از کارمزد): n=${faN(lo.n)}` +
+    out.push(`📡 کارنامهٔ زنده (رو-به-جلو، همهٔ خانه‌ها، فقط تصمیم‌های قاعده، پس از کارمزد): n=${faN(lo.n)}` +
              `${lo.win_rate!=null ? ` · ${faN(n100(lo.win_rate),0)}٪ برد` : ""}${lo.avg_r!=null ? ` · میانگین ${bR(lo.avg_r)}` : ""}` +
              `${lo.total_r!=null ? ` · جمع ${bR(lo.total_r,1)}` : ""}${lo.open ? ` · ${faN(lo.open)} در انتظارِ داوری` : ""}`);
+  const lp = D.live_policy_overall;
+  if(lp && (lp.n > 0 || lp.open > 0))
+    out.push(`<small class="mid">ردیف‌های قدیمیِ «سیاستِ انتخابِ عمل» جدا شمرده می‌شوند (با قاعده آمیخته نمی‌شوند): n=${faN(lp.n || 0)}` +
+             `${lp.avg_r != null ? ` · میانگین ${bR(lp.avg_r)}` : ""}</small>`);
   return out.join("<br>");
 }
 function renderMatrix(){
@@ -2131,6 +2163,7 @@ function renderMatrix(){
       : `<div class="dm-state">🧠 در حالِ ساختنِ ماتریسِ تصمیم…<div class="prog" style="max-width:220px;margin:10px auto 0"><i style="width:100%"></i></div></div>`;
     $("#dmMeta").textContent = "";
     setSL("dmScMeta", "");
+    setSL("dmVariants", "");
     return;
   }
   const srvTfs = Array.isArray(D.tfs) && D.tfs.length ? D.tfs : TFS_ALL;
@@ -2148,6 +2181,7 @@ function renderMatrix(){
   const gen = tsFa(D.generated_at, true);
   $("#dmMeta").textContent = gen ? `به‌روزرسانی: ${gen}` : "";
   setSL("dmScMeta", scMetaHtml(D));
+  setSL("dmVariants", variantsHtml(D));
   setSL("dmNote", D.note ? `<br><small>${esc(D.note)}</small>` : "");
 }
 async function loadDecisions(force){
@@ -2224,6 +2258,12 @@ function ddHtml(sym, tf, x){
     : `<div class="dd-verdict"><b class="v-neu">${S.st === "building" ? "کارنامه در حال ساخت…" : "کارنامه ساخته نشد"}</b> — دربارهٔ سودآوریِ این تصمیم هیچ ادعایی نمی‌شود کرد.</div>`;
   const warnBox = warns.length
     ? `<div class="dd-caution"><b>⚠ هشدارهای موتور (${faN(warns.length)})</b><ul class="dd-reasons">${warns.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
+  const po = poOf(x);
+  const poBox = po ? `<div class="dd-caution"><b>ℹ️ نظرِ جدای «سیاستِ انتخابِ عمل»: <span class="${po.side==="long"?"up":"dn"}">${callLabel(po.side)}</span></b>` +
+    ` — ${po.same_as_rule ? "هم‌جهت با قاعده" : "تصمیمِ این خانه همان قاعده است، نه این"}<br><small>${esc(po.note || "")}</small></div>` : "";
+  const vr = x.variants;
+  const varLine = vr ? `<div class="divider"></div><div class="kv"><span>گونه‌های پیش‌ثبت‌شده <small class="mid">(آزمونِ رو-به-جلو، فقط ثبت)</small></span>` +
+    `<b>فقط z/رأی: ${callLabel(vr.z_only)}${tf === "1d" ? ` · بی‌شورت با RSI زیرِ ۳۰: ${callLabel(vr.d1_no_short_rsi30)}` : ""}</b></div>` : "";
   const liveHtml = lv && (lv.n || lv.open) ? `
       <div class="kv"><span>داوری‌شده · درصدِ برد</span><b class="num">n=${faN(lv.n||0)} · ${lv.win_rate!=null ? faN(n100(lv.win_rate),0) + "٪" : "—"}</b></div>
       <div class="kv"><span>میانگین R</span><b class="num ${(lv.n||0) >= 30 ? cls(lv.avg_r) : ""}">${lv.avg_r!=null ? faS(lv.avg_r,2) + "R" : "—"}</b></div>
@@ -2252,6 +2292,7 @@ function ddHtml(sym, tf, x){
     <div class="note" style="margin-top:6px">⚠️ تحلیلِ ترکیبیِ اندیکاتورها و هوش مصنوعی است، نه سیگنالِ تأییدشده. ورودِ خودکار فقط با قفلِ ایمنی.</div>
     ${verdictBox}
     ${warnBox}
+    ${poBox}
     <div class="dd-grid">
       <div class="tfcard"><h4><span>اجزا و رأی‌ها</span><span class="num" style="font-size:12px"><span class="up">▲${faN(x.votes_bull||0)}</span> <span class="dn">▼${faN(x.votes_bear||0)}</span>${x.z!=null ? ` · z ${fmt(x.z,2)}` : ""}</span></h4>
         ${comps}
@@ -2260,6 +2301,7 @@ function ddHtml(sym, tf, x){
           ? `<div class="kv"><span>آمادگی <small class="mid">(چه مقدار از شرط‌های ورود پر است)</small></span><b class="num">${rd!=null ? faN(rd,0) + "٪" : "—"}</b></div>`
           : `<div class="kv"><span>امتیازِ فنی <small class="mid">(۰ تا ۱۰۰ — شدتِ هم‌سویی، نه احتمالِ برد)</small></span><b class="num">${st!=null ? faN(st,0) : "—"}</b></div>`}
         ${reasons ? `<div class="divider"></div><b style="font-size:12.5px">چرا این تصمیم</b>${reasons}` : ""}
+        ${varLine}
       </div>
       <div class="tfcard"><h4>${a === "wait" ? "⏳ صبر" : "📍 معامله"}</h4>
         ${levels}
