@@ -5,6 +5,7 @@ import os
 import time
 import threading
 import httpx
+import numpy as np
 
 import paths
 
@@ -33,10 +34,19 @@ def _is_pegged(last, high, low):
     except (TypeError, ZeroDivisionError):
         return False
 
-TF_BINANCE = {"15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
-TF_OKX = {"15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
-TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
-KLINE_TTL = {"15m": 60, "1h": 120, "4h": 300, "1d": 900}
+TF_BINANCE = {"5m": "5m", "15m": "15m", "1h": "1h", "4h": "4h", "1d": "1d"}
+TF_OKX = {"5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
+TF_MINUTES = {"5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+KLINE_TTL = {"5m": 30, "15m": 60, "1h": 120, "4h": 300, "1d": 900}
+# دورهٔ OI در rubikِ OKX (هر پنج تایم‌فریم را مستقیم دارد؛ سنجیده ۲۰۲۶-۰۹-۲۴)
+TF_OKX_OI = {"5m": "5m", "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
+
+# کلیدهای کندل، هم‌شکلِ آرشیوِ spot_/um_<SYM>_<tf>.npz: qv حجمِ دلاری (فیلدِ ۷)، n تعدادِ معامله (۸)،
+# tbv حجمِ پایهٔ خریدِ تهاجمی (۹). پشتیبانِ OKX/کوکوین این سه را ندارد → NaN، هرگز عددِ ساختگی مثلِ نصف.
+KLINE_KEYS = ("t", "o", "h", "l", "c", "v", "qv", "n", "tbv")
+NAN = float("nan")
+SPOT_DATA = "https://data-api.binance.vision"      # تنها میزبانِ کندلِ بلند (get_klines_long)
+KUCOIN_FUT = "https://api-futures.kucoin.com"
 
 # مهلتِ اتصال کوتاه‌تر از مهلتِ خواندن: میزبانِ فیلترشده SYN را بی‌پاسخ می‌گذارد و هر
 # تلاش ۱۲ ثانیه می‌سوخت؛ ۴ میزبانِ fapi پشتِ هم یعنی ~۵۰ ثانیه برای یک فاندینگ.
@@ -277,34 +287,239 @@ def get_klines(symbol, tf, limit=420):
         return _fetch_klines(symbol, tf, limit)
 
 
+def _binance_row(r):
+    """ردیفِ کندلِ بایننس → (t, o, h, l, c, v, qv, n, tbv). ردیفِ کوتاه (بی‌فیلدِ ۷..۹) NaN می‌گیرد."""
+    ext = (float(r[7]), float(r[8]), float(r[9])) if len(r) > 9 else (NAN, NAN, NAN)
+    return (int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])) + ext
+
+
 def _fetch_klines(symbol, tf, limit):
     key = (symbol, tf)
     now = time.time()                              # پس از انتظار برای قفل — مرزِ کندلِ باز دقیق بماند
     data = None
+    src = "binance"
     try:
         raw = _binance_json("/api/v3/klines", {"symbol": symbol, "interval": TF_BINANCE[tf], "limit": limit + 1})
-        rows = [(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])) for r in raw]
+        rows = [_binance_row(r) for r in raw]
         if rows and rows[-1][0] + TF_MINUTES[tf] * 60000 > now * 1000:
             rows = rows[:-1]                       # حذف کندل باز
         data = rows[-limit:]
     except Exception:
+        src = "okx"                                # بی‌جریانِ خرید/فروش: qv و n و tbv = NaN
         inst = symbol[:-4] + "-USDT"
         raw = _get_json(OKX + "/api/v5/market/candles", {"instId": inst, "bar": TF_OKX[tf], "limit": str(min(limit + 1, 300))})["data"]
         rows = []
         for r in reversed(raw):                    # OKX جدیدترین اول است
             if len(r) >= 9 and r[8] == "0":
                 continue                           # کندل تأییدنشده
-            rows.append((int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])))
+            rows.append((int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), NAN, NAN, NAN))
         data = rows[-limit:]
     if not data or len(data) < 220:
         raise RuntimeError(f"داده کافی برای {symbol} {tf} دریافت نشد ({len(data or [])} کندل)")
-    out = {
-        "t": [r[0] for r in data], "o": [r[1] for r in data], "h": [r[2] for r in data],
-        "l": [r[3] for r in data], "c": [r[4] for r in data], "v": [r[5] for r in data],
-    }
+    out = {k: [r[i] for r in data] for i, k in enumerate(KLINE_KEYS)}
+    out["src"] = src
     with _lock:
         _kline_cache[key] = (now, out)
     return out
+
+
+# ── کندلِ بلندِ اسپات برای گرم‌شدنِ پنجره‌های هستهٔ v2 (z تا ۲۰۱۶ کندل در ۵m) ──
+LONG_PAGE = 1000                 # سقفِ هر درخواستِ /api/v3/klines
+_long_cache: dict = {}           # (symbol, tf) -> (ts شروعِ دریافت, data)
+
+
+def _long_fresh(hit, tf, bars, now):
+    """کش تا بسته‌شدنِ کندلِ بعد معتبر است، ولی نه بیش از KLINE_TTL[tf] ثانیه."""
+    if not hit or len(hit[1]["t"]) < bars:
+        return False
+    step = TF_MINUTES[tf] * 60
+    return hit[0] >= now - (now % step) and now - hit[0] < KLINE_TTL[tf]
+
+
+def _long_arrays(rows, src):
+    a = {k: np.array([r[i] for r in rows], dtype=np.int64 if k == "t" else float) for i, k in enumerate(KLINE_KEYS)}
+    a["src"] = src
+    return a
+
+
+def _spot_page(symbol, tf, limit, end=None):
+    params = {"symbol": symbol, "interval": TF_BINANCE[tf], "limit": limit}
+    if end is not None:
+        params["endTime"] = end
+    return [_binance_row(r) for r in _get_json(SPOT_DATA + "/api/v3/klines", params)]
+
+
+def get_klines_long(symbol, tf, bars):
+    """دست‌کم ``bars`` کندلِ **بسته‌شدهٔ** اسپات از data-api.binance.vision (صفحه‌بندیِ ۱۰۰۰تایی رو به عقب).
+
+    خروجی آرایهٔ numpy با کلیدهای آرشیوِ spot_<SYM>_<tf>.npz (t به ms و int64؛ o..tbv اعشاری) و ``src``.
+    کندلِ در حالِ شکل‌گیری حذف می‌شود. بی‌پشتیبان: OKX/کوکوین جریانِ خرید/فروش ندارند و ویژگی‌ها را عوض
+    می‌کنند — خطا بالا می‌رود تا فراخوان «نامعلوم» نشان دهد. نمادی که تاریخچه‌اش کوتاه‌تر است همهٔ موجودی را
+    برمی‌گرداند. کش و تک‌پروازی به ازای (symbol, tf)؛ پس از انقضا فقط دنبالهٔ تازه گرفته و وصل می‌شود.
+    """
+    key = (symbol, tf)
+    now = time.time()
+    with _lock:
+        hit = _long_cache.get(key)
+    if _long_fresh(hit, tf, bars, now):
+        return hit[1]
+    with _flight_lock(("kll", symbol, tf)):
+        now = time.time()
+        with _lock:
+            hit = _long_cache.get(key)
+        if _long_fresh(hit, tf, bars, now):
+            return hit[1]
+        data = None
+        if hit and len(hit[1]["t"]) >= bars:
+            data = _extend_long(symbol, tf, hit[1], now)
+        if data is None:
+            data = _fetch_klines_long(symbol, tf, bars, now)
+        with _lock:
+            _long_cache[key] = (now, data)
+        return data
+
+
+def _closed(rows, tf, now):
+    step = TF_MINUTES[tf] * 60000
+    return [r for r in rows if r[0] + step <= now * 1000]
+
+
+def _extend_long(symbol, tf, old, now):
+    """فقط کندل‌های بسته‌شدهٔ پس از آخرین کندلِ کش؛ اگر صفحه به آخرین کندلِ کش نرسد None (دریافتِ کامل)."""
+    step = TF_MINUTES[tf] * 60000
+    last = int(old["t"][-1])
+    missing = int((now * 1000 - last) // step) + 2
+    if missing > LONG_PAGE:
+        return None
+    page = _spot_page(symbol, tf, missing)
+    if not page or page[0][0] > last:
+        return None
+    new = [r for r in _closed(page, tf, now) if r[0] > last]
+    if not new:
+        return old
+    add = _long_arrays(new, old["src"])
+    keep = len(old["t"])                              # پنجرهٔ غلتان با همان طول
+    return {k: (old[k] if k == "src" else np.concatenate([old[k], add[k]])[-keep:]) for k in old}
+
+
+def _fetch_klines_long(symbol, tf, bars, now):
+    rows, end = [], None
+    for _ in range(bars // LONG_PAGE + 2):            # +۱ برای کندلِ باز، +۱ حاشیه
+        chunk = _spot_page(symbol, tf, LONG_PAGE, end)
+        if not chunk:
+            break
+        rows = chunk + rows
+        end = chunk[0][0] - 1
+        if len(chunk) < LONG_PAGE or len(_closed(rows, tf, now)) >= bars:
+            break                                     # ابتدای تاریخچهٔ نماد یا به اندازهٔ کافی
+    rows = _closed(rows, tf, now)
+    t = [r[0] for r in rows]
+    if any(b <= a for a, b in zip(t, t[1:])):          # صفحه‌ها نباید هم‌پوشانی/بی‌نظمی داشته باشند
+        rows = sorted({r[0]: r for r in rows}.values())
+    if not rows:
+        raise RuntimeError(f"کندلِ بلندِ {symbol} {tf} دریافت نشد")
+    return _long_arrays(rows, "binance-spot")
+
+
+# ── فاندینگِ کوکوین فیوچرز (همان منبع در تاریخچه و زنده؛ ویژگی‌های kfund_* هسته) ──
+KFUND_TTL = 600.0
+KFUND_ROWS = 181                 # z روی ۹۰ تسویهٔ قبلی برای هر یک از ۹۰ تسویهٔ آخر + آخرین
+KFUND_LOOKBACK_MS = 400 * 86_400_000
+FUND_INTERVALS_H = (1.0, 2.0, 4.0, 8.0)
+_kfund_cache: dict = {}          # symbol -> (ts, data)
+
+
+def kucoin_contract(symbol):
+    """BTCUSDT → XBTUSDTM (قراردادِ دائمیِ USDT کوکوین)."""
+    base = symbol[:-4] if symbol.endswith("USDT") else symbol
+    return ("XBT" if base == "BTC" else base) + "USDTM"
+
+
+def kucoin_funding_pages(contract, start_ms, end_ms, max_pages=None, get=None):
+    """نرخ‌های تسویه‌شدهٔ [start_ms, end_ms] به‌صورتِ [(timepoint_ms, rate)] صعودی.
+
+    /api/v1/contract/funding-rates با from و to (هر دو شامل، ms) حداکثر ۱۰۰ ردیفِ **جدیدترِ** بازه را
+    جدید→قدیم می‌دهد (بی‌این دو پارامتر ۴۰۰). پس to هر بار به قدیمی‌ترین timepoint منهای ۱ می‌رود تا پاسخِ خالی.
+    خطای منطقی با HTTP 200 می‌آید (مثلاً 404000 برای قراردادِ ناموجود) و بالا می‌رود.
+    """
+    get = get or _get_json
+    seen = {}
+    to, pages = int(end_ms), 0
+    while to >= start_ms and (max_pages is None or pages < max_pages):
+        j = get(KUCOIN_FUT + "/api/v1/contract/funding-rates",
+                {"symbol": contract, "from": int(start_ms), "to": to})
+        pages += 1
+        if str(j.get("code")) != "200000":
+            raise RuntimeError(f"کوکوین فاندینگ {contract}: {j.get('code')} {j.get('msg')}")
+        rows = j.get("data") or []
+        if isinstance(rows, dict):
+            rows = rows.get("dataList") or []
+        if not rows:
+            break
+        for r in rows:
+            seen[int(r["timepoint"])] = float(r["fundingRate"])
+        oldest = min(int(r["timepoint"]) for r in rows)
+        if oldest > to:
+            break
+        to = oldest - 1
+    return sorted(seen.items())
+
+
+def infer_interval_h(t):
+    """فاصلهٔ فاندینگ (ساعت) از فاصلهٔ تسویه‌ها — یک مسیرِ مشترک برای آرشیوِ kfund و زنده.
+
+    فاصله تا تسویهٔ قبلی اگر یکی از ۱/۲/۴/۸ ساعت باشد؛ وگرنه (اولین ردیف یا تسویهٔ غایب) فاصله تا بعدی؛
+    وگرنه مقدارِ ردیفِ قبل؛ وگرنه ۸.
+    """
+    t = np.asarray(t, dtype=np.int64)
+    n = len(t)
+    d = np.rint(np.diff(t) / 3_600_000.0)
+    d = np.where(np.isin(d, FUND_INTERVALS_H), d, np.nan)
+    prev = np.r_[np.nan, d] if n else np.zeros(0)
+    nxt = np.r_[d, np.nan] if n else np.zeros(0)
+    iv = np.where(np.isfinite(prev), prev, nxt)
+    for i in range(n):
+        if not np.isfinite(iv[i]):
+            iv[i] = iv[i - 1] if i else 8.0
+    return iv.astype(float)
+
+
+def kfund_arrays(rows):
+    """[(t, rate)] → {t, rate, interval_h} هم‌شکلِ kfund_<SYM>.npz."""
+    t = np.array([r[0] for r in rows], dtype=np.int64)
+    return {"t": t, "rate": np.array([r[1] for r in rows], dtype=float), "interval_h": infer_interval_h(t)}
+
+
+def _kfund_fresh(hit, rows):
+    """کش تازه است و درخواستِ قبلی دست‌کم همین‌قدر ردیف خواسته بود (یا همین‌قدر دارد)."""
+    return bool(hit) and time.time() - hit[0] < KFUND_TTL and (rows <= hit[2] or len(hit[1]["t"]) >= rows)
+
+
+def get_kucoin_funding(symbol, rows=KFUND_ROWS):
+    """تاریخچهٔ اخیرِ فاندینگِ تسویه‌شدهٔ کوکوین (دست‌کم ``rows`` تسویه اگر موجود باشد) — کش ۱۰ دقیقه، تک‌پروازی.
+
+    خروجی: t (ms، زمانِ تسویه)، rate، interval_h، src. خطا بالا می‌رود (فراخوان «نامعلوم» نشان می‌دهد)."""
+    with _lock:
+        hit = _kfund_cache.get(symbol)
+    if _kfund_fresh(hit, rows):
+        return hit[1]
+    with _flight_lock(("kfund", symbol)):
+        with _lock:
+            hit = _kfund_cache.get(symbol)
+        if _kfund_fresh(hit, rows):
+            return hit[1]
+        now = time.time()
+        end = int(now * 1000)
+        got = kucoin_funding_pages(kucoin_contract(symbol), end - KFUND_LOOKBACK_MS, end,
+                                   max_pages=-(-rows // 100))
+        got = [r for r in got if r[0] <= end]
+        if not got:
+            raise RuntimeError(f"فاندینگِ کوکوین برای {symbol} خالی بود")
+        data = kfund_arrays(got)
+        data["src"] = "kucoin"
+        with _lock:
+            _kfund_cache[symbol] = (now, data, rows)
+        return data
 
 
 HIST_DIR = paths.data("hist")
@@ -468,10 +683,28 @@ def get_oi_history(symbol, period="1h", limit=48):
     with _flight_lock(("oi", path)):
         if os.path.exists(path) and time.time() - os.path.getmtime(path) < 3600:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                cached = json.load(f)
+            if cached:                             # «[]»ِ قدیمیِ روی دیسک (باگِ instId) کش نیست
+                return cached
         if _neg_hit(path):
             return []
         return _fetch_oi_history(symbol, period, limit, path)
+
+
+def _okx_oi_rows(symbol, period, limit):
+    """OI از rubikِ OKX: instId مثلِ BTC-USDT-SWAP لازم است (بی‌آن ۴۰۰ «instId can't be empty»).
+    ردیف‌ها [ts, oi (قرارداد), oiCcy (ارزِ پایه), oiUsd] جدید→قدیم؛ oiCcy هم‌واحدِ sumOpenInterestِ بایننس است."""
+    inst = symbol[:-4] + "-USDT-SWAP"
+    raw = _get_json(
+        OKX + "/api/v5/rubik/stat/contracts/open-interest-history",
+        {"instId": inst, "period": TF_OKX_OI.get(period, "1H"), "limit": str(min(int(limit), 100))},
+    ).get("data") or []
+    parsed = []
+    for r in raw:
+        if len(r) >= 2:
+            parsed.append([int(r[0]), float(r[2] if len(r) >= 3 else r[1])])
+    parsed.sort(key=lambda x: x[0])
+    return parsed[-limit:]
 
 
 def _fetch_oi_history(symbol, period, limit, path):
@@ -483,33 +716,17 @@ def _fetch_oi_history(symbol, period, limit, path):
         )
         rows = [[int(r["timestamp"]), float(r["sumOpenInterest"])] for r in raw]
         rows.sort(key=lambda x: x[0])
-        answered = True
-    except Exception as e:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         rows = []
-        answered = _answered(e)
     if not rows:
         try:
-            # OKX: uly مثل BTC-USDT ، period مثل 1H
-            base = symbol.replace("USDT", "")
-            uly = f"{base}-USDT"
-            okx_period = {"15m": "5m", "1h": "1H", "4h": "4H", "1d": "1D"}.get(period, "1H")
-            raw = _get_json(
-                OKX + "/api/v5/rubik/stat/contracts/open-interest-history",
-                {"instType": "SWAP", "uly": uly, "period": okx_period},
-            ).get("data") or []
-            # data: [ts, oi, oiCcy] جدید→قدیم
-            parsed = []
-            for r in raw:
-                if len(r) >= 2:
-                    parsed.append([int(r[0]), float(r[1])])
-            parsed.sort(key=lambda x: x[0])
-            rows = parsed[-limit:]
-            answered = True
-        except Exception as e:  # noqa: BLE001
+            rows = _okx_oi_rows(symbol, period, limit)
+        except Exception:  # noqa: BLE001
             rows = []
-            answered = answered or _answered(e)
-    if not answered:
-        _neg_until[path] = time.time() + NEG_TTL   # شبکه قطع بود — «خالی» را روی دیسک کش نکن
+    if not rows:
+        # ۴xx (مثلِ درخواستِ بی‌instId که ماه‌ها «[]» را یک ساعت روی دیسک نگه می‌داشت و وتوی OI را
+        # بی‌صدا خاموش می‌کرد)، قطعی یا پاسخِ خالی: «خالی» هرگز روی دیسک نمی‌ماند، فقط NEG_TTL در حافظه
+        _neg_until[path] = time.time() + NEG_TTL
         return rows
     # ⚠️ پشتیبانِ «EMAِ حجمِ اسپات به‌جای OI» حذف شد: متا-گیت آن را اهرم می‌خواند و
     # بلاکِ سخت می‌زد. نبودِ داده = «نامعلوم»، نه عددِ ساختگی.

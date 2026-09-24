@@ -14,8 +14,17 @@
                       ns (تعدادِ عکس‌ها در بازه), bid1..bid5 و ask1..ask5 (ارزشِ دلاریِ تجمعیِ سفارش‌ها تا x٪
                       زیر/بالای قیمت، از آخرین عکسِ بازه), bid1_avg, ask1_avg, bid2_avg, ask2_avg, bid5_avg, ask5_avg
                       (میانگینِ همان بازه). علّی: مقدارِ ردیفِ t تا پایانِ کندلِ t معلوم است (ts_last < t + 5m).
+  spot_<SYM>_<iv>.npz --market spot: کندلِ اسپاتِ بایننس (data/spot در همان آرشیو) با همان کلیدها
+                      (t,o,h,l,c,v,qv,n,tbv). 5m و 15m از --start (۲۰۲۲-۰۱)، 1h/4h/1d از --slow-start (۲۰۱۹-۰۱) برای
+                      گرم‌شدن و آموزشِ بلندترِ تایم‌فریم‌های کند. آرشیوِ اسپات از ۲۰۲۵ میکروثانیه است → ms.
+                      فایلِ موجود اگر سالم باشد (کلیدها، یکنواخت، بی‌تکرار، روی شبکهٔ زمانی، ms، تا آخرین کندلِ بازه)
+                      نگه داشته و فقط روزهای ناقصش از آرشیوِ روزانه پر می‌شود؛ وگرنه از نو ساخته می‌شود.
+  kfund_<SYM>.npz     --only kfund: فاندینگِ تسویه‌شدهٔ کوکوین فیوچرز (api-futures.kucoin.com
+                      /api/v1/contract/funding-rates، XBTUSDTM..TRXUSDTM) از --kfund-start تا اکنون:
+                      t (ms، timepoint = لحظهٔ تسویه)، rate، interval_h (از فاصلهٔ تسویه‌ها با market.infer_interval_h،
+                      همان تابعِ مسیرِ زنده). فایلِ موجود فقط با ردیف‌های تازه‌تر ادامه می‌یابد (مگر با --force).
   core_history_audit.json   گزارشِ پوشش: تعداد، اول/آخر، یکنواختی، تکراری، واحدِ ms، شکاف‌های بیش از ۱ ساعت،
-                            و مقایسهٔ ۵m بازنمونه‌شده با فایل‌های 15m/1h/1d.
+                            و مقایسهٔ ۵m بازنمونه‌شده با فایل‌های 15m/1h/4h/1d (um و spot جداگانه).
 
 liquidationSnapshot برای um در آرشیو وجود ندارد (فقط cm). قطعه‌های ماهانهٔ عمق در micro/_parts/depth/ می‌مانند
 تا اجرای قطع‌شده از همان‌جا ادامه دهد.
@@ -25,6 +34,8 @@ liquidationSnapshot برای um در آرشیو وجود ندارد (فقط cm).
   python tools/fetch_core_history.py --only klines funding  # فقط بخشی
   python tools/fetch_core_history.py --only audit           # فقط گزارشِ پوشش
   python tools/fetch_core_history.py --depth-start 2024-01-01
+  python tools/fetch_core_history.py --market spot           # کندلِ اسپات 5m..1d + گزارش
+  python tools/fetch_core_history.py --only kfund audit      # فاندینگِ کوکوین + گزارش
 """
 import argparse
 import csv
@@ -43,6 +54,7 @@ import pandas as pd
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "bot"))
+import market  # noqa: E402  — صفحه‌بندی و interval_hِ فاندینگِ کوکوین: یک مسیر با زنده
 import paths  # noqa: E402
 import watchlist  # noqa: E402
 
@@ -56,6 +68,10 @@ KLINE_DAY = BASE + "/daily/klines/{s}/{iv}/{s}-{iv}-{d}.zip"         # روزه�
 PREM_DAY = BASE + "/daily/premiumIndexKlines/{s}/{iv}/{s}-{iv}-{d}.zip"
 DAY = 86_400_000
 DEPTH = BASE + "/daily/bookDepth/{s}/{s}-bookDepth-{d}.zip"
+SPOT = "https://data.binance.vision/data/spot"
+SPOT_KLINE = SPOT + "/monthly/klines/{s}/{iv}/{s}-{iv}-{y}-{m:02d}.zip"
+SPOT_KLINE_DAY = SPOT + "/daily/klines/{s}/{iv}/{s}-{iv}-{d}.zip"
+SLOW_IVS = ("1h", "4h", "1d")          # اسپاتِ این‌ها از --slow-start
 KLINE_KEYS = ("t", "o", "h", "l", "c", "v", "qv", "n", "tbv")
 STEP_MS = {"5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
 DEPTH_AVG = (1, 2, 5)                  # سطوحی که میانگینِ بازه هم دارند
@@ -132,13 +148,16 @@ def _fill(cli, pool, a, day_url, parse, step, span):
     """روزهای ناقص/غایب در آرشیوِ ماهانه از آرشیوِ روزانه پر می‌شوند (مثلاً SOL و TRX در ۲۰۲۲-۰۲-۲۶..۲۸)."""
     have = dict(zip(*np.unique(a[:, 0].astype(np.int64) // DAY, return_counts=True))) if len(a) else {}
     epoch = dt.date(1970, 1, 1)
-    miss = [d for d in _span_days(span) if have.get((d - epoch).days, 0) < DAY // step]
+    first = int(a[0, 0]) // DAY if len(a) else -1       # پیش از فهرست‌شدنِ نماد (SOL اسپات ۲۰۲۰-۰۸) روزی نیست
+    miss = [d for d in _span_days(span)
+            if (d - epoch).days >= first and have.get((d - epoch).days, 0) < DAY // step]
     if not miss:
         return a, 0
+    n0 = len(a)
     rows = [r for part in pool.map(lambda d: parse(cli, day_url.format(d=d.isoformat())), miss) for r in part]
     if rows:
         a = _dedup_sorted(np.vstack([a, np.asarray(rows, float)]) if len(a) else np.asarray(rows, float))
-    return a, len(rows)
+    return a, len(a) - n0                                # فقط ردیف‌های واقعاً تازه (روزِ قطعیِ صرافی = ۰)
 
 
 # ---------------------------------------------------------------- کندل، پرمیوم، فاندینگ
@@ -218,6 +237,93 @@ def funding(cli, pool, sym, span, force):
     a = _dedup_sorted(np.asarray(rows, float))
     _save(path, t=a[:, 0].astype(np.int64), rate=a[:, 1], interval_h=a[:, 2])
     return f"{len(a)} rows"
+
+
+# ---------------------------------------------------------------- کندلِ اسپات
+
+def _span_last_bar(span, step):
+    (y1, m1) = span[1]
+    return int(dt.datetime(y1 + (m1 == 12), m1 % 12 + 1, 1, tzinfo=dt.timezone.utc).timestamp() * 1000) - step
+
+
+def spot_check(path, step, span):
+    """فایلِ اسپاتِ موجود سالم است؟ (دلیل یا None). شکافِ درونی این‌جا خرابی نیست — از آرشیوِ روزانه پر می‌شود."""
+    try:
+        with np.load(path) as d:
+            if not set(KLINE_KEYS) <= set(d.files):
+                return f"keys {sorted(d.files)}"
+            t = d["t"].astype(np.int64)
+            finite = all(np.isfinite(d[k]).all() for k in KLINE_KEYS if k != "t")
+    except Exception as e:  # noqa: BLE001 — فایلِ خراب/نیمه‌نوشته
+        return f"unreadable {e}"
+    if not len(t):
+        return "empty"
+    dtt = np.diff(t)
+    if not (dtt > 0).all():
+        return "not strictly increasing"
+    if not ((t > 1.5e12) & (t < 2.1e12)).all():
+        return "not ms"
+    if (t % step).any():
+        return "off grid"
+    if not finite:
+        return "NaN/inf values"
+    if t[-1] < _span_last_bar(span, step):
+        return f"ends {_utc(t[-1])}"
+    return None
+
+
+def spot_klines(cli, pool, sym, iv, span, force):
+    path = os.path.join(OUT, f"spot_{sym}_{iv}.npz")
+    why = None
+    if os.path.exists(path) and not force:
+        why = spot_check(path, STEP_MS[iv], span)
+        if why:
+            print(f"  {os.path.basename(path)} rebuilt: {why}", flush=True)
+    urls = (SPOT_KLINE.replace("{s}", sym).replace("{iv}", iv), SPOT_KLINE_DAY.replace("{s}", sym).replace("{iv}", iv))
+    return _series(cli, pool, path, KLINE_KEYS, urls[0], urls[1], _kline_month, STEP_MS[iv], span,
+                   force or bool(why), fill=True)
+
+
+# ---------------------------------------------------------------- فاندینگِ کوکوین
+
+def _kucoin_get(cli):
+    """getter برای market.kucoin_funding_pages با تلاشِ دوباره روی خطای شبکه/429/5xx."""
+    def g(url, params):
+        for k in range(6):
+            try:
+                r = cli.get(url, params=params)
+                STATS["requests"] += 1
+                if r.status_code == 200:
+                    STATS["bytes"] += len(r.content)
+                    return r.json()
+                if r.status_code not in (429, 500, 502, 503, 504):
+                    r.raise_for_status()
+            except httpx.TransportError:
+                pass
+            time.sleep(min(2 ** k, 20))
+        raise RuntimeError(f"kucoin {params} failed")
+    return g
+
+
+def kfund(cli, sym, start_ms, force):
+    """فاندینگِ تسویه‌شدهٔ کوکوین از start_ms تا اکنون؛ فایلِ موجود فقط از آخرین ردیفش ادامه می‌یابد."""
+    path = os.path.join(OUT, f"kfund_{sym}.npz")
+    old = []
+    if os.path.exists(path) and not force:
+        with np.load(path) as d:
+            old = list(zip(d["t"].astype(np.int64).tolist(), d["rate"].tolist()))
+    contract = market.kucoin_contract(sym)
+    now = int(time.time() * 1000)
+    since = old[-1][0] + 1 if old else start_ms
+    new = market.kucoin_funding_pages(contract, since, now, get=_kucoin_get(cli))
+    rows = sorted(dict(old + new).items())
+    if not rows:
+        return "empty"
+    cols = market.kfund_arrays(rows)                   # interval_h با همان تابعِ مسیرِ زنده
+    _save(path, **cols)
+    iv = {float(x): int(n) for x, n in zip(*np.unique(cols["interval_h"], return_counts=True))}
+    return (f"{contract}: {len(rows)} rows (+{len(new)}), {_utc(rows[0][0])} .. {_utc(rows[-1][0])}, "
+            f"interval_h {iv}")
 
 
 # ---------------------------------------------------------------- عمقِ دفترِ سفارش
@@ -354,14 +460,14 @@ def resample(d, step):
     return {k: v[full] for k, v in out.items()}
 
 
-def crosscheck(sym):
-    p5 = os.path.join(OUT, f"um_{sym}_5m.npz")
+def crosscheck(sym, market_="um"):
+    p5 = os.path.join(OUT, f"{market_}_{sym}_5m.npz")
     if not os.path.exists(p5):
         return {}
     d5 = np.load(p5)
     res = {}
     for iv in ("15m", "1h", "4h", "1d"):
-        p = os.path.join(OUT, f"um_{sym}_{iv}.npz")
+        p = os.path.join(OUT, f"{market_}_{sym}_{iv}.npz")
         if not os.path.exists(p):
             continue
         r, d = resample(d5, STEP_MS[iv]), np.load(p)
@@ -375,16 +481,18 @@ def crosscheck(sym):
 
 
 def audit(symbols):
-    rep = {"generated_utc": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), "files": {}, "resample_check": {}}
-    specs = [(f"um_{{s}}_{iv}.npz", STEP_MS[iv]) for iv in ("5m", "15m", "1h", "4h", "1d")]
+    rep = {"generated_utc": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), "files": {}, "resample_check": {},
+           "resample_check_spot": {}}
+    specs = [(f"{m}_{{s}}_{iv}.npz", STEP_MS[iv]) for m in ("um", "spot") for iv in ("5m", "15m", "1h", "4h", "1d")]
     specs += [("pos_{s}.npz", 300_000), ("prem_{s}_5m.npz", 300_000), ("prem_{s}_15m.npz", 900_000),
-              ("fund_{s}.npz", None), ("depth_{s}.npz", 300_000)]
+              ("fund_{s}.npz", None), ("kfund_{s}.npz", None), ("depth_{s}.npz", 300_000)]
     for s in symbols:
         for pat, step in specs:
             p = os.path.join(OUT, pat.format(s=s))
             if os.path.exists(p):
                 rep["files"][os.path.basename(p)] = audit_file(p, step)
         rep["resample_check"][s] = crosscheck(s)
+        rep["resample_check_spot"][s] = crosscheck(s, "spot")
     with open(os.path.join(OUT, "core_history_audit.json"), "w", encoding="utf-8") as f:
         json.dump(rep, f, indent=1)
     for name, r in rep["files"].items():
@@ -398,18 +506,31 @@ def audit(symbols):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--only", nargs="+", default=["klines", "premium", "funding", "depth", "audit"],
-                    choices=["klines", "premium", "funding", "depth", "audit"])
+    ap.add_argument("--market", default="um", choices=["um", "spot"],
+                    help="um = فیوچرزِ USDT-M (پیش‌فرض)؛ spot = کندلِ اسپات با tbv (فقط klines)")
+    ap.add_argument("--only", nargs="+", default=None,
+                    choices=["klines", "premium", "funding", "kfund", "depth", "audit"],
+                    help="پیش‌فرض: um → klines premium funding depth audit؛ spot → klines audit")
     ap.add_argument("--symbols", nargs="+", default=list(watchlist.SYMBOLS))
-    ap.add_argument("--intervals", nargs="+", default=["5m", "1h", "4h", "1d"])
+    ap.add_argument("--intervals", nargs="+", default=None, help="پیش‌فرض: um → 5m 1h 4h 1d؛ spot → 5m 15m 1h 4h 1d")
     ap.add_argument("--start", default="2022-01", help="اولین ماه (YYYY-MM)")
+    ap.add_argument("--slow-start", default="2019-01", help="اولین ماهِ اسپاتِ 1h/4h/1d (گرم‌شدن و آموزشِ بلندتر)")
+    ap.add_argument("--kfund-start", default="2021-10-01",
+                    help="اولین روزِ فاندینگِ کوکوین (سه ماه پیش از ۲۰۲۲ برای گرم‌شدنِ z روی ۹۰ تسویه)")
     ap.add_argument("--end", default="2026-08", help="آخرین ماهِ کامل (YYYY-MM)")
     ap.add_argument("--depth-start", default="2023-01-01", help="آرشیوِ bookDepth از 2023-01-01 شروع می‌شود")
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--force", action="store_true", help="فایلِ موجود را دوباره بساز")
     ap.add_argument("--fill-gaps", action="store_true", help="روزهای غایبِ فایل‌های موجودِ 5m/1h/4h/1d را از آرشیوِ روزانه پر کن")
     a = ap.parse_args()
+    spot = a.market == "spot"
+    a.only = a.only or (["klines", "audit"] if spot else ["klines", "premium", "funding", "depth", "audit"])
+    a.intervals = a.intervals or (["5m", "15m", "1h", "4h", "1d"] if spot else ["5m", "1h", "4h", "1d"])
+    if spot and set(a.only) & {"premium", "funding", "depth"}:
+        print("--market spot: premium/funding/depth فقط فیوچرز است — رد شد", flush=True)
     span = (tuple(map(int, a.start.split("-"))), tuple(map(int, a.end.split("-"))))
+    slow = (tuple(map(int, a.slow_start.split("-"))), span[1])
+    kfund_ms = int(dt.datetime.fromisoformat(a.kfund_start).replace(tzinfo=dt.timezone.utc).timestamp() * 1000)
     ey, em = span[1]
     d1 = dt.date(ey + (em == 12), em % 12 + 1, 1) - dt.timedelta(1)
     d0 = dt.date.fromisoformat(a.depth_start)
@@ -419,12 +540,20 @@ def main():
         for s in a.symbols:
             if "klines" in a.only:
                 for iv in a.intervals:
-                    print(s, iv, klines(cli, pool, s, iv, span, a.force, a.fill_gaps), flush=True)
-            if "premium" in a.only:
+                    if spot:
+                        print(s, "spot", iv, spot_klines(cli, pool, s, iv, slow if iv in SLOW_IVS else span, a.force),
+                              f"{time.time() - t0:.0f}s", flush=True)
+                    else:
+                        print(s, iv, klines(cli, pool, s, iv, span, a.force, a.fill_gaps), flush=True)
+            if spot:
+                pass
+            elif "premium" in a.only:
                 print(s, "prem 5m", premium(cli, pool, s, "5m", span, a.force, a.fill_gaps), flush=True)
-            if "funding" in a.only:
+            if "funding" in a.only and not spot:
                 print(s, "funding", funding(cli, pool, s, span, a.force), flush=True)
-            if "depth" in a.only:
+            if "kfund" in a.only:
+                print(s, "kfund", kfund(cli, s, kfund_ms, a.force), f"{time.time() - t0:.0f}s", flush=True)
+            if "depth" in a.only and not spot:
                 print(s, "depth", depth(cli, pool, s, d0, d1, a.force), f"{time.time() - t0:.0f}s", flush=True)
     print(f"http: {STATS['requests']} ok-or-404 responses, {STATS['bytes'] / 1e6:.1f} MB, "
           f"404={len(STATS['missing'])} failed={len(STATS['failed'])} in {time.time() - t0:.0f}s", flush=True)
