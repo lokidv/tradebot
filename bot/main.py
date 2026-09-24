@@ -469,6 +469,32 @@ def get_analysis(symbol: str, tf: str, max_age=None):
     return res
 
 
+_htf_z_cache: dict = {}   # (symbol, htf) -> (آخرین کندل, {ts: z خام})
+
+
+def _htf_sign_live(symbol, htf, tk):
+    """جهتِ تایم‌بالاتر با **همان** تابعِ آموزش (``calib._htf_sign``) روی zِ خام.
+
+    قبلاً zِ گردشدهٔ خروجیِ تحلیل (۲ رقم؛ z_prev ۳ رقم) با آستانهٔ ±۰٫۳ مقایسه می‌شد و zِ خامِ
+    (0.3, 0.305) به 0.30 می‌افتاد: htf_sign یک‌طرفه ±۱→۰ روی ~۰٫۲۴-۰٫۳۳٪ کندل‌ها (calib-F10).
+    z از همان کندل‌های تایم‌بالاتر که تحلیلش دید، یک‌بار برای هر کندلِ تازه حساب و کش می‌شود.
+    """
+    try:
+        hk = market.get_klines(symbol, htf)
+        last = int(hk["t"][-1])
+        hit = _htf_z_cache.get((symbol, htf))
+        if hit and hit[0] == last:
+            zmap = hit[1]
+        else:
+            cs = engine.component_series(*[np.asarray(hk[k], float) for k in ("o", "h", "l", "c", "v")])
+            zmap = {int(t): float(z) for t, z in zip(hk["t"], cs["z"])}
+            _htf_z_cache[(symbol, htf)] = (last, zmap)
+        return calib._htf_sign(zmap, tk, htf)
+    except Exception:  # noqa: BLE001
+        log.exc(f"htf_sign {symbol} {htf}")
+        return 0
+
+
 def _compute_analysis(symbol, tf):
     try:
         btc_z = None
@@ -485,14 +511,7 @@ def _compute_analysis(symbol, tf):
             ha = get_analysis(symbol, htf)             # زنجیره: 5m→1h→4h→1d→پایان، 15m→4h
             if "error" not in ha and ha.get("zt") is not None:
                 # هم‌ترازی دقیق با آموزش: کندلِ بستهٔ *قبل از* سطلِ تایم‌بالاترِ سیگنال (بدون نشتی/کندلِ در حال شکل‌گیری)
-                htf_p = tf_spec.bar_ms(htf)
-                try:
-                    ts_now = market.get_klines(symbol, tf)["t"][-1]
-                    want = (ts_now // htf_p) * htf_p - htf_p
-                    hz = ha.get("z_prev", 0.0) if ha["zt"] > want else ha.get("z", 0.0)
-                except Exception:  # noqa: BLE001
-                    hz = ha.get("z", 0.0)
-                htf_sign = 1 if (hz or 0) > 0.3 else -1 if (hz or 0) < -0.3 else 0
+                htf_sign = _htf_sign_live(symbol, htf, tk)
         finfo = _funding_info(symbol)
         oinfo = _oi_info(symbol)
         extras = {# ویژگیِ مدل با فرمولِ آموزش ساخته می‌شود، نه با z شلوغیِ متا-گیت

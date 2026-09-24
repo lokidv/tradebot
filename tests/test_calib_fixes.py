@@ -527,6 +527,39 @@ class LiveGoldTests(unittest.TestCase):
             self.assertEqual(self.main._macro("1h", live["t"][-1]), {"gold": 0.0})
 
 
+class HtfSignRawZTests(unittest.TestCase):
+    """calib-F10: htf_sign با zِ خام و همان تابعِ آموزش، نه zِ گردشدهٔ خروجیِ تحلیل."""
+
+    def setUp(self):
+        import main
+        self.main = main
+        main._htf_z_cache.clear()
+        self.hk = _klines(420, seed=8, start_bar=120_000, bar_ms=calib.TF_MS["4h"])
+
+    def _run(self, z_at_t0, tk):
+        z = np.zeros(len(self.hk["t"]))
+        t0 = (tk // calib.TF_MS["4h"]) * calib.TF_MS["4h"] - calib.TF_MS["4h"]
+        z[self.hk["t"].index(t0)] = z_at_t0
+        with mock.patch.object(market, "get_klines", return_value=self.hk), \
+                mock.patch.object(self.main.engine, "component_series", return_value={"z": z}):
+            return self.main._htf_sign_live("AUSDT", "4h", tk)
+
+    def test_z_just_above_the_threshold_is_not_rounded_away(self):
+        tk = self.hk["t"][-1] + calib.TF_MS["4h"] + 3 * calib.TF_MS["1h"]   # 1hِ آخرِ سطلِ بعدی
+        self.assertEqual(round(0.3021, 2) > 0.3, False)                   # رفتارِ قبلی: ۰
+        self.assertEqual(self._run(0.3021, tk), 1)
+        self.main._htf_z_cache.clear()
+        self.assertEqual(self._run(-0.3021, tk), -1)
+
+    def test_same_function_as_training(self):
+        tk = self.hk["t"][-1] + calib.TF_MS["4h"]
+        cs = calib.engine.component_series(*[np.asarray(self.hk[k], float) for k in "ohlcv"])
+        zmap = {t: float(z) for t, z in zip(self.hk["t"], cs["z"])}
+        with mock.patch.object(market, "get_klines", return_value=self.hk):
+            self.assertEqual(self.main._htf_sign_live("AUSDT", "4h", tk),
+                             calib._htf_sign(zmap, tk, "4h"))
+
+
 T0_4H = 1_640_995_200_000          # 2022-01-01، مرزِ کندلِ 4h
 BAR_4H = 14_400_000
 
