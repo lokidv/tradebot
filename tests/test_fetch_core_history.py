@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -105,6 +106,43 @@ class FlatDayRefetchTests(unittest.TestCase):
         out, _, fix = self.fill(bad, worse)
         self.assertEqual(fix["daily_worse"], ["2023-11-10 (20->100 flat bars)"])
         self.assertTrue(np.array_equal(out, bad))
+
+    def test_daily_file_without_the_frozen_rows_is_not_called_a_repair(self):
+        # فایلِ روزانه‌ای که در زمان‌های یخ‌زده ردیف ندارد: ادغام کندل‌های تختِ ماهانه را نگه می‌دارد
+        bad, per = freeze(self.good, 10, 180, 200), DAY // STEP
+
+        def parse_without(skip):
+            def parse(cli, url):
+                self.calls.append(url)
+                return [tuple(r) for j, r in enumerate(self.good[9 * per:10 * per]) if j not in skip]
+            return parse
+        url = "https://x/BTCUSDT-5m-{d}.zip"
+        out, added, fix = self.fch._fill(None, _Pool(), bad.copy(), url, parse_without(set(range(180, 200))),
+                                         STEP, SPAN, True)
+        self.assertEqual(fix["repaired"], [])
+        self.assertEqual(fix["daily_missing_rows"], ["2023-11-10 (20->20 flat bars)"])
+        self.assertEqual((added, int(self.fch._flat_mask(out).sum())), (0, 20))
+        out, _, fix = self.fch._fill(None, _Pool(), bad.copy(), url, parse_without(set(range(195, 200))),
+                                     STEP, SPAN, True)
+        self.assertEqual(fix["repaired"], ["2023-11-10 (20->5 flat bars)"])       # تعمیرِ جزئی، عددِ واقعی
+        self.assertEqual(int(self.fch._flat_mask(out).sum()), 5)
+
+    def test_series_does_not_rewrite_a_file_the_daily_file_cannot_repair(self):
+        fch, per = self.fch, DAY // STEP
+        bad = freeze(self.good, 10, 180, 200)
+
+        def parse(cli, url):
+            return [tuple(r) for j, r in enumerate(self.good[9 * per:10 * per]) if not 180 <= j < 200]
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "um_BTCUSDT_5m.npz")
+            fch._save(path, **{k: (bad[:, i].astype(np.int64) if k == "t" else bad[:, i])
+                               for i, k in enumerate(fch.KLINE_KEYS)})
+            with mock.patch.object(fch, "_save") as save:
+                msg = fch._series(None, _Pool(), path, fch.KLINE_KEYS, "unused", "https://x/BTCUSDT-5m-{d}.zip",
+                                  parse, STEP, SPAN, force=False, fill=True)
+            save.assert_not_called()
+            self.assertIn("daily_missing_rows 2023-11-10", msg)
+            self.assertNotIn("repaired", msg)
 
     def test_healthy_month_makes_no_request_and_flat_check_is_opt_in(self):
         out, added, fix = self.fill(self.good, self.good)

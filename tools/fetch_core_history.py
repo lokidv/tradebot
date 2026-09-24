@@ -83,7 +83,8 @@ DEPTH_AVG = (1, 2, 5)                  # سطوحی که میانگینِ باز
 HOUR = 3_600_000
 
 STATS = {"requests": 0, "bytes": 0, "missing": [], "failed": [],
-         "repaired": [], "daily_also_flat": [], "no_daily": [], "daily_worse": []}   # روزهای کندلِ تخت و بی‌حجم
+         "repaired": [], "daily_also_flat": [], "daily_missing_rows": [], "no_daily": [],
+         "daily_worse": []}                                                    # روزهای کندلِ تخت و بی‌حجم
 
 
 # ---------------------------------------------------------------- شبکه
@@ -166,18 +167,19 @@ def _fill(cli, pool, a, day_url, parse, step, span, check_flat=False):
     ``check_flat`` (فقط کندل): روزی که ردیف‌هایش کامل است ولی کندلِ تخت و بی‌حجم دارد هم از آرشیوِ روزانه دوباره
     گرفته می‌شود (ممیزی DATA-3: پیش‌تر فقط روزِ کم‌ردیف دوباره گرفته می‌شد، پس کندل‌های یخ‌زدهٔ فایلِ ماهانه
     هرگز جایگزین نمی‌شدند). ردیف‌های روزانه جای ردیف‌های هم‌زمانِ ماهانه را می‌گیرند، مگر فایلِ روزانه کندلِ تختِ
-    بیشتری داشته باشد. خروجی ``(a, ردیف‌های تازه, گزارش)``؛ گزارش = فهرستِ روزها با «تعدادِ تخت ماهانه→روزانه»:
-    ``repaired`` (روزانه سالم‌تر بود و جایگزین شد)، ``daily_also_flat`` (روزانه هم همان کندل‌های تخت را دارد: توقفِ
-    واقعی یا ناسازگاریِ خودِ آرشیو — از این‌جا قابلِ تعمیر نیست)، ``daily_worse`` (ماهانه نگه داشته شد) و
-    ``no_daily`` (فایلِ روزانه نیست).
+    بیشتری داشته باشد. خروجی ``(a, ردیف‌های تازه, گزارش)``؛ گزارش = فهرستِ روزها با «تعدادِ تخت ماهانه→پس از ادغام»
+    (شمارش روی ردیف‌های ادغام‌شدهٔ همان روز: کندلِ تختِ ماهانه‌ای که فایلِ روزانه ردیفی برایش ندارد می‌ماند):
+    ``repaired`` (کندلِ تخت کم شد)، ``daily_also_flat`` (روزانه هم همان کندل‌های تخت را دارد: توقفِ واقعی یا
+    ناسازگاریِ خودِ آرشیو — از این‌جا قابلِ تعمیر نیست)، ``daily_missing_rows`` (روزانه ردیفِ آن زمان‌ها را ندارد؛
+    کندل‌های تخت ماندند)، ``daily_worse`` (ماهانه نگه داشته شد) و ``no_daily`` (فایلِ روزانه نیست).
     """
-    fix = {"repaired": [], "daily_also_flat": [], "daily_worse": [], "no_daily": []}
+    fix = {"repaired": [], "daily_also_flat": [], "daily_missing_rows": [], "daily_worse": [], "no_daily": []}
     have = dict(zip(*np.unique(a[:, 0].astype(np.int64) // DAY, return_counts=True))) if len(a) else {}
     epoch = dt.date(1970, 1, 1)
     first = int(a[0, 0]) // DAY if len(a) else -1       # پیش از فهرست‌شدنِ نماد (SOL اسپات ۲۰۲۰-۰۸) روزی نیست
     days = _span_days(span)
     miss = [d for d in days if (d - epoch).days >= first and have.get((d - epoch).days, 0) < DAY // step]
-    flat = {}
+    flat, fm = {}, None
     if check_flat and len(a):
         fm = _flat_mask(a)
         in_span = {(d - epoch).days: d for d in days}
@@ -194,8 +196,12 @@ def _fill(cli, pool, a, day_url, parse, step, span, check_flat=False):
             if not part:
                 fix["no_daily"].append(d.isoformat())
                 continue
-            after = int(_flat_mask(np.asarray(part, float)).sum())
-            key = "repaired" if after < flat[d] else "daily_also_flat" if after == flat[d] else "daily_worse"
+            pa = np.asarray(part, float)
+            on_day = (a[:, 0].astype(np.int64) // DAY) == (d - epoch).days
+            left = len(set(a[on_day & fm, 0].astype(np.int64).tolist()) - set(pa[:, 0].astype(np.int64).tolist()))
+            after = int(_flat_mask(pa).sum()) + left            # ردیفِ روزانه جای ماهانهٔ هم‌زمان را می‌گیرد، نه بیشتر
+            key = ("repaired" if after < flat[d] else "daily_worse" if after > flat[d]
+                   else "daily_missing_rows" if left else "daily_also_flat")
             fix[key].append(f"{d.isoformat()} ({flat[d]}->{after} flat bars)")
             if key == "daily_worse":
                 continue
@@ -639,6 +645,7 @@ def main():
         print("FAILED (rerun to retry):", STATS["failed"][:40], flush=True)
     for k, what in (("repaired", "repaired from the daily file (flat zero-volume bars in the monthly file)"),
                     ("daily_also_flat", "flat zero-volume bars also in the daily file (real halt or upstream; kept)"),
+                    ("daily_missing_rows", "daily file has no rows at the flat zero-volume bars (kept)"),
                     ("daily_worse", "daily file had more flat bars (monthly kept)"),
                     ("no_daily", "flat zero-volume day without a daily file (kept)")):
         if STATS[k]:
