@@ -131,7 +131,7 @@ def _market_state_build(tf, tk):
     except Exception:  # noqa: BLE001
         log.exc()
     # سبدِ ناقص (خطای شبکه) فقط ۶۰ ثانیه کش می‌شود تا در همان کندل دوباره ساخته شود
-    for k in [k for k in _mstate_cache if k[0] == tf and k[1] < tk]:
+    for k in [k for k in list(_mstate_cache) if k[0] == tf and k[1] < tk]:   # کلیدهای کندل‌های قبل
         _mstate_cache.pop(k, None)
     _mstate_cache[(tf, tk)] = (time.time(), complete, out)
     return out
@@ -274,7 +274,7 @@ def _macro_build(tf, tk):
             out["gold"] = float(gmap.get(tk, 0.0))          # همان gold_map.get(ts, 0.0) ِ آموزش
     except Exception:  # noqa: BLE001
         log.exc()
-    for k in [k for k in _macro_cache if k[0] == tf and k[1] < tk]:
+    for k in [k for k in list(_macro_cache) if k[0] == tf and k[1] < tk]:   # کلیدهای کندل‌های قبل
         _macro_cache.pop(k, None)
     _macro_cache[(tf, tk)] = (time.time(), found, out)   # بی‌کندلِ tk فقط ۶۰ ثانیه
     return out
