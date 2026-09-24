@@ -189,6 +189,60 @@ class DenseGridTests(unittest.TestCase):
         self.assertGreaterEqual(calib.CALIB_VERSION, 23)
 
 
+class LiveCostAdjustmentTests(unittest.TestCase):
+    """calib-F2: تعدیلِ زنده = هزینهٔ همین معامله در R − میانگینِ هزینهٔ R که مدل یاد گرفته."""
+
+    def test_delta_uses_live_cost_over_live_risk_minus_the_trained_mean(self):
+        m = {"trained_cost_r": 0.16, "live_funding_pct": 0.025}
+        got = calib._live_cost_delta_r(m, 0.08, 0.634)
+        self.assertAlmostEqual(got, (0.08 + 0.025) / 0.634 - 0.16, places=12)
+        # معامله‌ای با هزینه/ریسکِ برابرِ میانگینِ آموزش هیچ تعدیلی نمی‌گیرد
+        self.assertAlmostEqual(calib._live_cost_delta_r(m, 0.16 - 0.025, 1.0), 0.0, places=12)
+
+    def test_old_tables_keep_the_old_formula(self):
+        m = {"trained_cost_pct": 0.15}
+        self.assertAlmostEqual(calib._live_cost_delta_r(m, 0.30, 1.5), 0.10, places=12)
+
+    def test_edge_model_stores_the_pooled_cost_in_r(self):
+        rng = np.random.RandomState(17)
+        events = []
+        for i in range(1500):
+            x = rng.normal(size=6)
+            risk = 0.5 if i % 2 else 2.0
+            events.append({"ts": i * calib.TF_MS["1h"], "feats": x.tolist(), "risk_pct": risk,
+                           "r": 0.6 * x[0] + 0.1 * rng.normal(), "cost_pct": 0.10, "regime": "trend"})
+        m = calib._fit_edge_model(events, "1h", calib.COST_PCT)
+        self.assertIsNotNone(m)
+        self.assertAlmostEqual(m["trained_cost_r"], (0.10 / 0.5 + 0.10 / 2.0) / 2, delta=0.005)
+        self.assertAlmostEqual(m["trained_cost_pct"], 0.10, places=6)
+        self.assertEqual(m["live_funding_pct"],
+                         calib.costs.expected_funding_pct("1h", calib.bracket.MAX_BARS / 2))
+        # زنده: ریسکِ کم (۰٫۵٪) گران‌تر از میانگین است، ریسکِ زیاد (۲٪) ارزان‌تر
+        feats = [0.0] * 6
+        lo = calib._score_edge(m, feats, 0.5, 0.10)["edge_r"]
+        hi = calib._score_edge(m, feats, 2.0, 0.10)["edge_r"]
+        self.assertAlmostEqual(hi - lo, (0.10 + m["live_funding_pct"]) * (1 / 0.5 - 1 / 2.0), delta=0.002)
+
+    def test_action_policy_stores_the_cost_meta(self):
+        rng = np.random.RandomState(37)
+        dx, dy, dr = [], [], []
+        for i in range(8_000):
+            x = rng.normal(size=6)
+            long_x, short_x = x.copy(), x.copy()
+            short_x[0] *= -1
+            dx.append((long_x.tolist(), short_x.tolist()))
+            dy.append(((i // 10) * calib.TF_MS["1h"], 1.0))
+            dr.append((float(0.72 * long_x[0] + 0.15), float(0.72 * short_x[0] + 0.15), 1.0, 0.2))
+        with mock.patch.object(calib, "HAS_LGBM", False):
+            m = calib._fit_action_policy(dx, dy, dr, "1h", calib.COST_PCT)
+        self.assertIsNotNone(m)
+        self.assertAlmostEqual(m["trained_cost_r"], 0.2, places=6)
+        s1 = calib._score_action_policy(m, [2, 0, 0, 0, 0, 0], [-2, 0, 0, 0, 0, 0], 1.0, 0.2)
+        s2 = calib._score_action_policy(m, [2, 0, 0, 0, 0, 0], [-2, 0, 0, 0, 0, 0], 1.0, 0.4)
+        self.assertEqual(s1["side"], s2["side"])                      # هزینه سمت را عوض نمی‌کند
+        self.assertAlmostEqual(s1["edge_r"] - s2["edge_r"], 0.2, delta=0.002)
+
+
 T0_4H = 1_640_995_200_000          # 2022-01-01، مرزِ کندلِ 4h
 BAR_4H = 14_400_000
 

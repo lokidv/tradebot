@@ -695,6 +695,38 @@ def _edge_lift(pred, actual):
     return float(actual[th[1]].mean() - actual[th[0]].mean())
 
 
+def _trained_cost_meta(tf, cost_pct, risk_pct, rows):
+    """هزینه‌ای که مدل **واقعاً** یاد گرفته، برای تعدیلِ زنده (calib-F2).
+
+    برچسب‌ها ``r − هزینهٔ هر ردیف/ریسکِ همان ردیف`` هستند، ولی مدل‌ها بینِ نمادها تجمیعی‌اند و
+    هیچ ویژگی‌ای نقدشوندگی یا نوسانِ مطلق را نمی‌بیند؛ پس خروجیِ کالیبره فقط **میانگینِ**
+    هزینه در واحدِ R را کم می‌کند — روی ردیف‌های calibration، جایی که intercept تنظیم شد.
+    قبلاً ``trained_cost_pct=0.15`` ذخیره می‌شد و زنده ``(ردهٔ نماد − ۰٫۱۵)/ریسک`` کم می‌شد؛
+    خطایی تا ±۰٫۱۵R، هم‌اندازهٔ آستانه‌های اعتماد (TRX 1h باد می‌کرد، SOL فرو می‌رفت).
+    """
+    cost_pct = np.asarray(cost_pct, float)[rows]
+    risk_pct = np.asarray(risk_pct, float)[rows]
+    return {
+        "trained_cost_pct": round(float(np.mean(cost_pct)), 6) if len(cost_pct) else float(COST_PCT),
+        "trained_cost_r": round(float(np.mean(cost_pct / risk_pct)), 6) if len(cost_pct) else 0.0,
+        # فاندینگِ برآوردیِ زنده — همان تعریفِ هزینهٔ نمونه‌های متراکم (نیمِ براکت)
+        "live_funding_pct": costs.expected_funding_pct(tf, bracket.MAX_BARS / 2),
+    }
+
+
+def _live_cost_delta_r(m, cost_pct, risk_pct):
+    """چند R باید از خروجیِ کالیبرهٔ مدل کم شود تا هزینهٔ **همین** معامله را ببیند.
+
+    ``(ردهٔ زنده + فاندینگِ برآوردی)/ریسکِ زنده − میانگینِ هزینهٔ R ِ آموزش``. جدولِ
+    پیش از v23 (بی ``trained_cost_r``) همان فرمولِ قدیمی را می‌گیرد.
+    """
+    risk = max(float(risk_pct), 0.05)
+    if m.get("trained_cost_r") is None:
+        return (float(cost_pct) - float(m.get("trained_cost_pct", COST_PCT))) / risk
+    live = float(cost_pct) + float(m.get("live_funding_pct") or 0.0)
+    return live / risk - float(m["trained_cost_r"])
+
+
 def _fit_edge_model(events, tf, cost_pct=COST_PCT):
     """مدل بازدهِ خالص با دادگاه زمانی مستقل و کالیبراسیون affine روی پنجرهٔ جدا."""
     if len(events) < 500:
@@ -780,7 +812,7 @@ def _fit_edge_model(events, tf, cost_pct=COST_PCT):
         "kind": best_kind, "n_feat": X.shape[1],
         "mu": mu.tolist(), "sd": sd.tolist(),
         "calibration": [slope, intercept], "trained_ts": time.time(),
-        "trained_cost_pct": float(cost_pct),
+        **_trained_cost_meta(tf, ev_cost, risk, cal_rows),
         "n_train": len(idx), "n_oos": len(test_rows),
         "oos_rank_ic": round(rank_ic, 4),
         "oos_lift_r": round(lift_r, 4),
@@ -820,8 +852,8 @@ def _score_edge(m, feats, risk_pct, cost_pct, regime=None):
         raw = float(_ridge_pred(model, x)[0])
     slope, intercept = m.get("calibration", [1.0, 0.0])
     edge_r = float(np.clip(float(slope) * raw + float(intercept), -1.5, 2.2))
-    # اگر هزینهٔ نماد از هزینهٔ آموزش بیشتر است، اختلاف در واحد R کم می‌شود.
-    edge_r -= (float(cost_pct) - float(m.get("trained_cost_pct", COST_PCT))) / max(risk_pct, 0.05)
+    # هزینهٔ همین نماد/ریسک به‌جای میانگینِ هزینه‌ای که مدل یاد گرفته (calib-F2)
+    edge_r -= _live_cost_delta_r(m, cost_pct, risk_pct)
     n_oos = max(int(m.get("n_oos") or 1), 1)
     # خطای یک پیش‌بینی تازه نباید مثل خطای میانگین با sqrt(n) تقریباً صفر شود.
     # n/20 یک اندازه‌نمونهٔ مؤثر محافظه‌کارانه برای پنجره‌های زمانی هم‌بسته است.
@@ -1050,7 +1082,7 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
     feat_sd = np.where(feat_sd < 1e-9, 1.0, feat_sd)
     meta = {
         "n_feat": X.shape[1], "trained_ts": time.time(),
-        "trained_cost_pct": float(cost_pct),
+        **_trained_cost_meta(tf, ev_cost, risk, cal_rows),
         "prob_kind": prob_kind, "prob_model": _ser(prob_kind, prob_fit),
         "edge_kind": edge_kind,
         "edge_model": ({"lgbm": edge_fit.model_to_string()} if edge_kind == "lgb_edge"
@@ -1126,7 +1158,7 @@ def _score_policy(m, feats, risk_pct, cost_pct, regime=None):
         raw_edge = float(_ridge_pred(edge_model, x)[0])
     es, ei = m.get("edge_calibration", [1.0, 0.0])
     edge_r = float(np.clip(float(es) * raw_edge + float(ei), -1.5, 2.2))
-    edge_r -= (float(cost_pct) - float(m.get("trained_cost_pct", COST_PCT))) / max(float(risk_pct), 0.05)
+    edge_r -= _live_cost_delta_r(m, cost_pct, risk_pct)
     norm = m["live_norm"]
     pz = (p - float(norm["p_mu"])) / max(float(norm["p_sd"]), 1e-6)
     ez = (edge_r - float(norm["edge_mu"])) / max(float(norm["edge_sd"]), 1e-6)
@@ -1350,7 +1382,7 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     feat_sd = np.where(feat_sd < 1e-9, 1.0, feat_sd)
     return {
         "kind": best_kind, "n_feat": d, "trained_ts": time.time(),
-        "trained_cost_pct": float(cost_pct),
+        **_trained_cost_meta(tf, sample_cost, risks, cal_rows),
         "model": ({"lgbm": fitted.model_to_string()} if fit_kind == "lgb_edge"
                   else {"w": fitted["w"].tolist(), "mu": fitted["mu"].tolist(), "sd": fitted["sd"].tolist()}),
         "rolling_groups": rolling_window,
@@ -1410,7 +1442,7 @@ def _score_action_policy(m, long_feats, short_feats, risk_pct, cost_pct):
     slope, intercept = m.get("calibration", [1.0, 0.0])
     long_r = float(np.clip(float(slope) * _action_edge(m, xl) + float(intercept), -1.5, 2.2))
     short_r = float(np.clip(float(slope) * _action_edge(m, xs) + float(intercept), -1.5, 2.2))
-    cost_delta = (float(cost_pct) - float(m.get("trained_cost_pct", COST_PCT))) / max(float(risk_pct), 0.05)
+    cost_delta = _live_cost_delta_r(m, cost_pct, risk_pct)      # هر دو سمت یکسان ⇒ سمت عوض نمی‌شود
     long_r -= cost_delta
     short_r -= cost_delta
     side = "long" if long_r >= short_r else "short"
