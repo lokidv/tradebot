@@ -1,0 +1,27 @@
+{
+ "title": "Core v2.1: the same features with a mean-regression model spec, tested on data no model has seen",
+ "registered_at_utc": "2026-09-24",
+ "why": "Core v2 (prereg_core2.json, report core2_validation_20260924_120620.json) adopted no timeframe. The audit showed the null at 5m-4h was built into the spec: huber loss plus l2 early stopping kept every prediction near the (negative) median label, so the model never traded. Its validation window 2024-07..2025-06 is now used. v2.1 changes only the model spec and decision threshold, and is tested on later data. This is the last model spec that will be tried on these windows; after it, only forward data can test anything new.",
+ "state_at_registration": "No v2.1 model has been fitted. No v2 or v2.1 statistic has been computed on 2025-07-01 or later. The current matrix rule's descriptive scorecards (2024-08-31..2026-08-31, all timeframes) are displayed in the UI and overlap the windows below; they describe the old rule and were not used to design v2.1.",
+ "features": "Identical to core v2: bot/core_feats.py at commit b982f84 (FEATURES[tf], 64/64/64/63/59 features for 5m/15m/1h/4h/1d, the same dropped list). No feature is added, removed or changed. Its sha256 is written into the report.",
+ "target": "Identical to core v2: bracket net R after 0.14% round-trip cost, clipped to [-2, 1.8], separate long and short labels.",
+ "model": "LightGBM regressor, objective regression (l2, predicts the mean), learning_rate 0.02, num_leaves 15, max_depth 5, min_data_in_leaf max(500, n/400) at 5m/15m, 200 at 1h, 100 at 4h, feature_fraction 0.5, bagging_fraction 0.7, bagging_freq 1, lambda_l2 50, max_bin 63, deterministic, seed 42, a FIXED 300 boosting rounds with no early stopping. 1d: num_leaves 7, min_data_in_leaf 60, 150 rounds. Five coins pooled with equal total weight per coin; every second row at 5m.",
+ "walk_forward": "Refit at the start of every calendar month of the validation window (and of the holdout only for adopted timeframes). Training rows: all bars from 2022-01 with t_i <= month start - 81 bars and label exit closed before the month start.",
+ "decision_rule_fixed": "long if E_L > 0 and E_L > E_S; short if E_S > 0 and E_S > E_L; otherwise wait. Margins 0.05 and 0.10 reported as sensitivity only.",
+ "trade_simulation": "As decision.replay: one open trade per coin and timeframe, entry at next open, 0.14% cost (0.10% reported only).",
+ "baseline": "decision.replay of the current matrix rule on the same bars and window.",
+ "windows": {
+  "design_only": ["2022-01-01", "2025-06-30"],
+  "validation": ["2025-07-01", "2025-12-31"],
+  "holdout_one_shot": ["2026-01-01", "2026-08-31"]
+ },
+ "adopt_rule_per_timeframe_on_validation": [
+  "pooled mean net R of v2.1 >= current rule + 0.05R, and the weekly-block bootstrap 95% CI of the difference is above 0",
+  "pooled mean net R of v2.1 > 0 with n >= 60 trades (1d: n >= 20); one-sided weekly-block bootstrap p-value of mean <= 0, Holm-corrected across the 5 timeframes at alpha 0.10",
+  "at least 3 of 5 coins with mean net R > 0",
+  "no single coin contributes more than 50% of total net R"
+ ],
+ "holdout": "Run once, only for adopted timeframes: pass if mean net R > 0 with n >= 30 (1d: n >= 10). Before any holdout computation, an append-only record is committed in bot/data/research/core2_holdout_log.jsonl, and the holdout code refuses unless the validation report's sha256 equals the one pinned in bot/data/research/core2_1_validation_pin.json (committed right after validation) and the code/prereg hashes match. Pass -> the matrix uses v2.1 for that timeframe, labelled 'passed validation and holdout; live test pending'. Fail -> the current rule stays.",
+ "authority": "v2.1 never sets tradeable, never writes gates.json and is never read by the autotrader.",
+ "no_changes_after_seeing_results": "everything above is fixed"
+}
