@@ -317,6 +317,57 @@ class KnnLabelTests(unittest.TestCase):
         self.assertNotIn("هوش مصنوعی", texts)
 
 
+# ───────────────────────── سپرِ آمارِ ورودِ دستی (‎/api/positions) ─────────────────────────
+class ManualOpenWeakGateTests(unittest.TestCase):
+    """«اطمینانِ جهت‌یاب … ٪ (آستانهٔ ۵۸٪)» فقط برای p_upِ مدلِ کالیبره؛ امتیازِ اکتشافی احتمال نیست."""
+
+    @staticmethod
+    def _an(p_up, kind, trade_side=None):
+        return {"symbol": "SOLUSDT", "tf": "1h", "price": 100.0, "p_up": p_up, "p_up_kind": kind,
+                "p_calibrated": kind == "model",
+                "trade": {"side": trade_side, "entry": None, "sl": None, "tp": None, "reasons": []}}
+
+    def _open(self, a, side):
+        import main
+        from fastapi import HTTPException
+        opened = []
+
+        def fake_open(*args, **kw):
+            opened.append(args)
+            return {"id": 1, "side": args[2]}
+        with mock.patch.object(main, "get_analysis", return_value=a), \
+                mock.patch.object(main.market, "last_price", side_effect=RuntimeError("stub: بی‌شبکه")), \
+                mock.patch.object(main.broker, "load_cfg", return_value={}), \
+                mock.patch.object(main.broker, "make_broker", return_value=None), \
+                mock.patch.object(main, "_portfolio_guard", return_value=None), \
+                mock.patch.object(main, "_symbol_cost", return_value=0.1), \
+                mock.patch.object(main.paper, "open_position", fake_open):
+            try:
+                return main.open_pos(main.OpenReq(symbol="SOLUSDT", tf="1h", side=side)), opened
+            except HTTPException as e:
+                return e, opened
+
+    def test_heuristic_score_is_not_reported_as_direction_model_confidence(self):
+        for side in ("long", "short"):
+            out, opened = self._open(self._an(54.4, "heuristic"), side)
+            self.assertIsInstance(out, dict, getattr(out, "detail", out))
+            self.assertEqual(len(opened), 1)
+            self.assertEqual(opened[0][2], side)
+
+    def test_calibrated_model_still_gets_the_58_percent_gate(self):
+        out, opened = self._open(self._an(54.4, "model"), "long")
+        self.assertEqual(getattr(out, "status_code", None), 409)
+        self.assertIn("اطمینانِ جهت‌یاب برای این سمت فقط 54٪", out.detail)
+        self.assertEqual(opened, [])
+
+    def test_opposite_to_setup_warning_is_kept_for_the_heuristic(self):
+        out, opened = self._open(self._an(70.8, "heuristic", trade_side="long"), "short")
+        self.assertEqual(getattr(out, "status_code", None), 409)
+        self.assertIn("خلافِ ستاپِ پیشنهادیِ فعلی", out.detail)
+        self.assertNotIn("اطمینانِ جهت‌یاب", out.detail)
+        self.assertNotIn("۵۸٪", out.detail)
+        self.assertEqual(opened, [])
+
 # ───────────────────────── UI: برچسب‌ها ─────────────────────────
 class UiLabelTests(unittest.TestCase):
     @classmethod

@@ -1593,7 +1593,9 @@ def open_pos(req: OpenReq):
             elif pw is not None and pw < 45:
                 weak.append(f"احتمال بردِ مدل فقط {pw:.0f}٪ است")
         else:
-            p_up = a.get("p_up")
+            # فقط p_upِ مدلِ جهت‌یابِ کالیبره «اطمینان» است و آستانهٔ ۵۸٪ دارد؛ امتیازِ اکتشافی
+            # (p_up_kind="heuristic") احتمال نیست و نباید با «٪» و «آمار علیه» به کاربر نشان داده شود
+            p_up = advisor.model_p_up(a)
             conf = None if p_up is None else (p_up if side == "long" else 100 - p_up)
             if conf is not None and conf < 58:
                 weak.append(f"اطمینانِ جهت‌یاب برای این سمت فقط {conf:.0f}٪ است (آستانهٔ اطمینان ۵۸٪)")
