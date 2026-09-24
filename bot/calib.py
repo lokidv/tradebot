@@ -1997,7 +1997,8 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             # dxy_dir دقیقاً همین بود و کسی متوجه نشد. حالا در جدول ثبت می‌شود.
             feat_health = features.health([e["feats"] for e in all_events],
                                           expected=features.expected_constant(tf))
-            dense_health = features.health([row[0] for row in dx],
+            # ماتریسِ متراکم (تا صدها هزار ردیف) با نمونهٔ یکنواختِ ≤ ۵۰هزار ردیف سنجیده می‌شود
+            dense_health = features.health([row[0] for row in dx[::max(1, len(dx) // 50_000)]],
                                            expected=features.expected_constant(tf, dense=True))
             dead_any = sorted(set(feat_health["dead"]) | set(dense_health["dead"]))
             if dead_any:
