@@ -370,6 +370,11 @@ def event_features(cs, c, i, sig, setup, ts_ms, funding_z=0.0, rs_rank=0.5, htf_
 
 
 # ───────────────────────── kNN لورنتزی (نقطه آخر) ─────────────────────────
+# برچسبِ نمایشیِ رأیِ kNN: کلیدِ components در analyze و برچسبِ decision.COMPONENTS (قبلاً «هوش مصنوعی»)
+KNN_LABEL = "الگوی مشابه (kNN)"
+KNN_LABEL_LEGACY = "هوش مصنوعی"      # خروجی‌های قدیمیِ کش‌شده/آزمون‌ها هنوز با این کلید خوانده می‌شوند
+
+
 def knn_ml(h, l, c, cs, k=10, stride=2, max_samples=1500):
     n = len(c)
     hlc3 = (h + l + c) / 3
@@ -978,7 +983,9 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             "مومنتوم": round(float(cs["s_mom"][-1]), 2),
             "حجم": round(float(cs["s_vol"][-1]), 2),
             "ساختار": round(float(cs["s_struct"][-1]), 2),
-            "هوش مصنوعی": round(s_ml, 2),
+            # رأیِ kNN روی ~۱۷۸ نمونهٔ پنجرهٔ ۴۲۰ کندلی — در 5m..4h مهارتی نداشت؛ «هوش مصنوعی» خواندنش
+            # تأییدی نشان می‌داد که وجود ندارد. فقط برچسب عوض شد؛ رأی و شمارش دست‌نخورده‌اند (decision.COMPONENTS).
+            KNN_LABEL: round(s_ml, 2),
         },
         "regime": regime, "adx": round(adx_l, 1), "chop": round(chop_l, 1), "atr_pct": round(atr_pct, 0),
         "p_up": round(p_up, 1),

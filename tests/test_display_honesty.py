@@ -285,5 +285,36 @@ class ReadinessTests(unittest.TestCase):
                 self.assertEqual(d["action"], "wait")
                 self.assertLessEqual(d["strength"], 99)
 
+
+# ───────────────────────── RULE-2: برچسبِ kNN ─────────────────────────
+class KnnLabelTests(unittest.TestCase):
+    def test_analysis_labels_the_knn_vote_honestly(self):
+        comp = engine.analyze(synthetic_klines(seed=11), "1h")["components"]
+        self.assertIn(engine.KNN_LABEL, comp)
+        self.assertNotIn("هوش مصنوعی", comp)
+        self.assertEqual(len(comp), 5)
+
+    def test_votes_are_identical_under_the_new_and_the_legacy_label(self):
+        base = {"روند": 0.5, "مومنتوم": 0.3, "حجم": 0.1, "ساختار": -0.6}
+        for v in (-0.4, -0.2, 0.0, 0.1, 0.2, 0.6):
+            new = decision._component_votes(dict(base, **{engine.KNN_LABEL: v}))
+            old = decision._component_votes(dict(base, **{"هوش مصنوعی": v}))
+            self.assertEqual(new, old)
+            ai = [r for r in new[0] if r["key"] == "ai"][0]
+            self.assertEqual(ai["fa"], engine.KNN_LABEL)
+            self.assertEqual(ai["vote"], 1 if v >= 0.2 else -1 if v <= -0.2 else 0)
+
+    def test_user_texts_do_not_call_it_ai(self):
+        a = {"symbol": "BTCUSDT", "tf": "1h", "zt": 0, "price": 100.0, "z": 1.8,
+             "votes_bull": 4, "votes_bear": 1, "regime": "رونددار",
+             "components": {"روند": 0.5, "مومنتوم": 0.3, "حجم": 0.3, "ساختار": 0.6, engine.KNN_LABEL: -0.4},
+             "trade": {"side": "long", "grade": "A", "entry": 100.0, "sl": 98.7, "tp": 102.34, "atr14": 1.0,
+                       "rr": 1.8, "risk_pct": 1.3, "setup": None, "setup_observed": False}}
+        d = decision.from_analysis(a)
+        self.assertEqual((d["votes_bull"], d["votes_bear"]), (4, 1))
+        self.assertTrue(any("الگوی مشابه (kNN)" in r for r in d["reasons"]), d["reasons"])
+        texts = " ".join(d["reasons"]) + decision.NOTE_FA + " ".join(c[1] for c in decision.COMPONENTS)
+        self.assertNotIn("هوش مصنوعی", texts)
+
 if __name__ == "__main__":
     unittest.main()
