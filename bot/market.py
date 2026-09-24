@@ -717,7 +717,8 @@ def _read_funding_doc(path):
 
 
 def _write_funding_doc(path, doc):
-    tmp = path + ".tmp"
+    # نامِ موقتِ یکتا: برنامه و زیرفرایندِ rebuild_models (و دو نخ) هم‌زمان همین فایل را می‌نویسند
+    tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(doc, f)
     os.replace(tmp, path)
@@ -783,44 +784,89 @@ def get_funding_history(symbol, max_rows=1000, since_ms=None):
     return rows[-int(max_rows):] if max_rows else rows
 
 
+def _funding_stale(ts, end_ms):
+    """آخرین تسویهٔ ``ts`` (زمان‌های صعودی) از دو فاصلهٔ تسویه + مهلتِ انتشار کهنه‌تر است.
+
+    منبعِ سالم همیشه تسویه‌ای در همین فاصله دارد؛ کهنگی یعنی منبع دیگر برای این نماد به‌روز
+    نمی‌شود (مسدود، قطعِ طولانی، قراردادِ برچیده) — نه یک تأخیرِ عادیِ انتشار.
+    """
+    if not ts:
+        return True
+    step_h = 8 if len(ts) < 2 else min(max(round((ts[-1] - ts[-2]) / 3_600_000), 1), 8)
+    return end_ms - ts[-1] > 2 * step_h * 3_600_000 + FUNDING_PUBLISH_GRACE_MS
+
+
+def _funding_switch(symbol, path, failed, want_from, end, newest):
+    """منبعِ کش کهنه ماند: بقیهٔ زنجیره (بی ``failed``) به ترتیب. اولین منبعی که تسویهٔ تازه‌تر از
+    ``newest`` دارد **کلِ** سند را جایگزین می‌کند (فقط ردیف‌های خودش، from_ms = want_from) — دو
+    صرافی آمیخته نمی‌شوند. هیچ‌کدام تازه‌تر نبود ⇒ None (فراخوان همان کشِ قبلی را نگه می‌دارد)."""
+    for alt in FUNDING_CHAIN:
+        if alt == failed:
+            continue
+        try:
+            got = _FUNDING_SOURCES[alt](symbol, want_from, end)
+        except Exception:  # noqa: BLE001 — منبعِ بعدی
+            continue
+        if got and (newest is None or max(int(t) for t, _ in got) > newest):
+            new = {"src": alt, "from_ms": want_from,
+                   "rows": sorted([int(t), float(v)] for t, v in got)}
+            _write_funding_doc(path, new)
+            return new
+    return None
+
+
 def _fetch_funding_history(symbol, path, doc, want_from):
-    """ردیف‌های تازه (و در صورتِ نیاز، پرکردنِ عقب تا ``want_from``) از منبعِ کش، وگرنه زنجیره."""
+    """ردیف‌های تازه (و در صورتِ نیاز، پرکردنِ عقب تا ``want_from``) از منبعِ کش، وگرنه زنجیره.
+
+    منبعِ کش که از کار افتاد (قطع، ۴۵۱، ۴۰۰/۴۰۴) یا دیگر تسویهٔ تازه نداد و آخرین ردیفِ کش از
+    دو فاصلهٔ تسویه کهنه‌تر است، بقیهٔ زنجیره امتحان می‌شود و منبعِ تازه‌تر کلِ سند را جایگزین
+    می‌کند. قبلاً سندِ هم‌منبع هرگز منبع عوض نمی‌کرد: با ۴۵۱ شدنِ fapi یا قطعیِ کوکوین، فاندینگِ
+    زنده، متا-گیت و فاندینگِ پیپر بی‌صدا روی ردیف‌های یخ‌زده می‌ماندند. ردیف‌های هنوز تازه منبع را
+    عوض نمی‌کنند: خطای گذرا فقط کشِ منفیِ حافظه می‌سازد.
+    """
     end = int(time.time() * 1000)
     rows = {int(t): float(v) for t, v in ((doc or {}).get("rows") or [])}
     src = old_src = (doc or {}).get("src")
     from_ms = (doc or {}).get("from_ms")
     if src == "okx" and (from_ms is None or want_from < from_ms):
         src = None                     # OKX فقط ~۳ ماه دارد: برای پرکردنِ عقب اول منبعِ عمیق‌تر
-    answered = False
-    try:
-        if src in _FUNDING_SOURCES:
-            fetch = _FUNDING_SOURCES[src]
-            if from_ms is None or want_from < from_ms:        # پرکردنِ عقب
-                lo_end = (min(rows) - 1) if rows else end
-                for t, v in fetch(symbol, want_from, lo_end):
-                    rows[t] = v
-                from_ms = want_from
-            start = (max(rows) + 1) if rows else want_from
-            for t, v in fetch(symbol, start, end):
-                rows[t] = v
-            answered = True
-        else:
+    if src not in _FUNDING_SOURCES:
+        try:
             src, got = _funding_chain(symbol, want_from, end)
-            if src != old_src:
-                rows = {}                  # منبعِ تازه: سری‌های دو صرافی آمیخته نمی‌شوند
-            for t, v in got:
-                rows[int(t)] = float(v)
-            from_ms, answered = want_from, True
-    except Exception as e:  # noqa: BLE001 — منبعِ کش در دسترس نیست: همان کشِ قبلی، بدونِ آمیختنِ منبع
-        answered = _answered(e)
-        if not answered:
+        except Exception:  # noqa: BLE001
+            # هیچ منبعی در دسترس نبود: «خالی» به‌جای ۱۲ ساعت روی دیسک فقط NEG_TTL در حافظه می‌ماند
             _neg_until[path] = time.time() + NEG_TTL
             return doc
-    if not answered:
-        # هیچ منبعی در دسترس نبود: «خالی» به‌جای ۱۲ ساعت روی دیسک فقط NEG_TTL در حافظه می‌ماند
+        if src != old_src:
+            rows = {}                      # منبعِ تازه: سری‌های دو صرافی آمیخته نمی‌شوند
+        for t, v in got:
+            rows[int(t)] = float(v)
+        new = {"src": src, "from_ms": want_from, "rows": sorted([t, v] for t, v in rows.items())}
+        _write_funding_doc(path, new)
+        return new
+    err = None
+    try:
+        fetch = _FUNDING_SOURCES[src]
+        if from_ms is None or want_from < from_ms:            # پرکردنِ عقب
+            lo_end = (min(rows) - 1) if rows else end
+            for t, v in fetch(symbol, want_from, lo_end):
+                rows[t] = v
+            from_ms = want_from
+        start = (max(rows) + 1) if rows else want_from
+        for t, v in fetch(symbol, start, end):
+            rows[t] = v
+    except Exception as e:  # noqa: BLE001 — منبعِ کش جواب نداد
+        err = e
+    ts = sorted(rows)
+    if _funding_stale(ts, end):
+        new = _funding_switch(symbol, path, src, want_from, end, ts[-1] if ts else None)
+        if new is not None:
+            return new
+    if err is not None and not _answered(err):
+        # منبعِ کش در دسترس نیست و منبعِ تازه‌تری هم نبود: همان کشِ قبلی، بدونِ آمیختنِ منبع
         _neg_until[path] = time.time() + NEG_TTL
         return doc
-    new = {"src": src, "from_ms": from_ms, "rows": sorted([t, v] for t, v in rows.items())}
+    new = {"src": src, "from_ms": from_ms, "rows": [[t, rows[t]] for t in ts]}
     _write_funding_doc(path, new)
     return new
 

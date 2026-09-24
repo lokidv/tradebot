@@ -416,6 +416,144 @@ class FundingHistoryPagingTests(unittest.TestCase):
             self.assertEqual(json.load(f)["src"], "kucoin")
 
 
+class _FakeKucoinFunding:
+    """/api/v1/contract/funding-rates با from/to — ۱۰۰ ردیفِ جدیدترِ بازه، جدید→قدیم."""
+
+    def __init__(self, rows):
+        self.rows, self.calls = rows, []
+
+    def __call__(self, url, params):
+        self.calls.append(dict(params))
+        lo, hi = params["from"], params["to"]
+        got = [r for r in self.rows if lo <= r[0] <= hi][-100:][::-1]
+        return {"code": "200000", "data": [{"timepoint": t, "fundingRate": v} for t, v in got]}
+
+
+class FundingSourceFailoverTests(unittest.TestCase):
+    """منبعِ کشِ فاندینگ که از کار افتاد و ردیف‌هایش کهنه شد به منبعِ بعدیِ زنجیره می‌رود
+    (قبلاً سندِ هم‌منبع هرگز منبع عوض نمی‌کرد و فاندینگ بی‌صدا یخ می‌زد)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.now_ms = 1_790_000_000_000
+        start = self.now_ms - 1500 * H8 - 3_600_000                     # آخرین تسویه یک ساعت پیش
+        # بایننس ۲ms پس از ساعت، کوکوین سرِ ساعت — دو سریِ جدا که نباید آمیخته شوند
+        self.binance = [[start + k * H8 + 2, float(1e-4 * np.sin(k))] for k in range(1501)]
+        self.kucoin = [[start + k * H8, float(2e-4 * np.cos(k))] for k in range(1501)]
+        self.path = os.path.join(self.tmp.name, "funding_BTCUSDT.json")
+        self.pats = [mock.patch.object(market, "HIST_DIR", self.tmp.name),
+                     mock.patch.object(market, "FUNDING_PAGE_GAP", {}),
+                     mock.patch.object(market.time, "time", lambda: self.now_ms / 1000.0)]
+        for p in self.pats:
+            p.start()
+        market._neg_until.clear()
+
+    def tearDown(self):
+        for p in reversed(self.pats):
+            p.stop()
+        market._neg_until.clear()
+        self.tmp.cleanup()
+
+    def _cache(self, newest_age_ms, mtime_age_s):
+        """سندِ بایننسی که آخرین تسویه‌اش ``newest_age_ms`` پیش بوده و ``mtime_age_s`` پیش نوشته شده."""
+        rows = [r for r in self.binance if r[0] <= self.now_ms - newest_age_ms]
+        doc = {"src": "binance", "from_ms": 0, "rows": rows}
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(doc, f)
+        t = self.now_ms / 1000.0 - mtime_age_s
+        os.utime(self.path, (t, t))
+        return rows
+
+    def _doc(self):
+        with open(self.path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_blocked_source_with_stale_rows_hands_over_to_kucoin(self):
+        self._cache(newest_age_ms=20 * 3_600_000, mtime_age_s=market.FUNDING_TTL + 60)
+        fapi = mock.Mock(side_effect=RuntimeError("HTTP 451"))
+        kc = _FakeKucoinFunding(self.kucoin)
+        with mock.patch.object(market, "_fapi_json", fapi), \
+                mock.patch.object(market, "_get_json", side_effect=kc):
+            rows = market.get_funding_history("BTCUSDT")
+        self.assertEqual(fapi.call_count, 1)
+        self.assertTrue(kc.calls)
+        want_from = self.now_ms - 1000 * H8
+        expect = [r for r in self.kucoin if r[0] >= want_from]
+        self.assertEqual(rows, expect[-1000:])
+        doc = self._doc()
+        self.assertEqual(doc["src"], "kucoin")
+        self.assertEqual(doc["from_ms"], want_from)
+        self.assertEqual(doc["rows"], expect)                       # فقط ردیف‌های کوکوین، نه آمیخته
+        self.assertFalse(market._neg_hit(self.path))
+        # بارِ بعد از خودِ کوکوین تازه می‌شود، نه دوباره از بایننسِ مسدود
+        self.now_ms += H8 + 120_000
+        with mock.patch.object(market, "_fapi_json", side_effect=AssertionError("بایننس")), \
+                mock.patch.object(market, "_get_json", side_effect=_FakeKucoinFunding(self.kucoin)):
+            market.get_funding_history("BTCUSDT")
+        self.assertEqual(self._doc()["src"], "kucoin")
+
+    def test_fresh_rows_keep_the_cached_source_and_only_back_off(self):
+        old = self._cache(newest_age_ms=5 * 3_600_000, mtime_age_s=600)   # آخرین تسویه ۹ ساعت پیش
+        self.assertLess(self.now_ms - old[-1][0], 10 * 3_600_000)   # موعد گذشته، هنوز کهنه نیست
+        fapi = mock.Mock(side_effect=RuntimeError("HTTP 451"))
+        other = mock.Mock(side_effect=RuntimeError("نباید منبعِ دیگری خوانده شود"))
+        with mock.patch.object(market, "_fapi_json", fapi), \
+                mock.patch.object(market, "_get_json", other):
+            rows = market.get_funding_history("BTCUSDT")
+        self.assertEqual(fapi.call_count, 1)
+        self.assertEqual(other.call_count, 0)
+        self.assertEqual(rows, old[-1000:])
+        self.assertEqual(self._doc()["src"], "binance")
+        self.assertTrue(market._neg_hit(self.path))
+
+    def test_source_that_answers_but_stopped_publishing_hands_over(self):
+        self._cache(newest_age_ms=20 * 3_600_000, mtime_age_s=market.FUNDING_TTL + 60)
+        stopped = [r for r in self.binance if r[0] <= self.now_ms - 20 * 3_600_000]
+        with mock.patch.object(market, "_fapi_json", side_effect=_FakeBinanceFunding(stopped)), \
+                mock.patch.object(market, "_get_json", side_effect=_FakeKucoinFunding(self.kucoin)):
+            rows = market.get_funding_history("BTCUSDT")
+        self.assertEqual(rows[-1], self.kucoin[-1])
+        self.assertEqual(self._doc()["src"], "kucoin")
+
+    def test_source_answering_no_contract_with_stale_rows_hands_over(self):
+        import httpx
+        self._cache(newest_age_ms=20 * 3_600_000, mtime_age_s=market.FUNDING_TTL + 60)
+        req = httpx.Request("GET", "https://fapi.example/fapi/v1/fundingRate")
+        gone = httpx.HTTPStatusError("400", request=req, response=httpx.Response(400, request=req))
+        with mock.patch.object(market, "_fapi_json", side_effect=gone), \
+                mock.patch.object(market, "_get_json", side_effect=_FakeKucoinFunding(self.kucoin)):
+            rows = market.get_funding_history("BTCUSDT")
+        self.assertEqual(rows[-1], self.kucoin[-1])
+        self.assertEqual(self._doc()["src"], "kucoin")
+
+    def test_no_fresher_source_keeps_the_old_rows_and_backs_off(self):
+        old = self._cache(newest_age_ms=20 * 3_600_000, mtime_age_s=market.FUNDING_TTL + 60)
+        down = mock.Mock(side_effect=RuntimeError("down"))
+        with mock.patch.object(market, "_fapi_json", down), \
+                mock.patch.object(market, "_get_json", down):
+            rows = market.get_funding_history("BTCUSDT")
+            self.assertEqual(rows, old[-1000:])
+            n = down.call_count
+            self.assertEqual(n, 3)                                     # بایننس، کوکوین، OKX
+            market.get_funding_history("BTCUSDT")                      # کشِ منفی: بی شبکه
+            self.assertEqual(down.call_count, n)
+        self.assertEqual(self._doc()["src"], "binance")
+
+    def test_cache_writes_use_a_per_process_temp_name(self):
+        seen = []
+        real = os.replace
+
+        def rec(a, b):
+            seen.append(a)
+            real(a, b)
+        with mock.patch.object(market.os, "replace", side_effect=rec):
+            market._write_funding_doc(self.path, {"src": "binance", "from_ms": 0, "rows": []})
+        self.assertEqual(len(seen), 1)
+        self.assertIn(str(os.getpid()), os.path.basename(seen[0]))
+        self.assertNotEqual(seen[0], self.path + ".tmp")
+        self.assertEqual(self._doc()["src"], "binance")
+
+
 class LowCoverageFeatureTests(unittest.TestCase):
     """calib-F4: «۰ = نبود» با پوششِ ناچیز در آموزش و اجرا صفر؛ ثابت‌های طبیعی «مرده» نیستند."""
 
