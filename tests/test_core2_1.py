@@ -283,21 +283,37 @@ class RunWindowTests(unittest.TestCase):
         shutil.rmtree(cls.micro, True)
 
     def test_validation_run_end_to_end_without_looking_past_the_window(self):
+        """ممیزی DATA-5: نه اسپات و نه فیوچرز (دیگر دُمِ ۴۵ کندلی نیست)؛ فاندینگِ کوکوین تا خودِ w1 (model-5)."""
         w0, w1 = core2_1.window_ms("validation")
-        tail = w1 + core2_1.LABEL_TAIL_BARS * D_MS
+        self.assertEqual(core2_1.LABEL_TAIL_BARS, 0)
         seen = []
-        real_load = core2.load_bars
+        real_load, real_kf = core2.load_bars, core2.load_kfund
 
         def spy(prefix, sym, tf, t_end=None, micro_dir=None):
             seen.append((prefix, t_end))
             return real_load(prefix, sym, tf, t_end, micro_dir)
 
-        with mock.patch.object(core2, "load_bars", side_effect=spy):
+        def spy_kf(sym, t_end=None, micro_dir=None):
+            seen.append(("kfund", t_end))
+            return real_kf(sym, t_end, micro_dir)
+
+        with mock.patch.object(core2, "load_bars", side_effect=spy), \
+                mock.patch.object(core2, "load_kfund", side_effect=spy_kf):
             res, oos = core2_1.run_window(self.TF, "validation", threads=2)
         self.assertTrue(seen)
+        self.assertIn("um", {p for p, _ in seen})
         for prefix, t_end in seen:
             self.assertIsNotNone(t_end)
-            self.assertLessEqual(t_end, w1 if prefix == "spot" else tail)
+            self.assertLessEqual(t_end, w1 + 1 if prefix == "kfund" else w1)
+        self.assertEqual(res["label_tail_bars"], 0)
+        self.assertGreater(res["oos_rows_label_unresolved"], 0)              # براکت‌های بازِ پایان ⇒ NaN
+        self.assertTrue(np.isnan(oos["yL"][oos["t"] == w1 - D_MS]).all())
+        for k in ("always_long", "always_short", "random_side"):
+            self.assertIn("mean", res["baselines"][k])
+        self.assertTrue({"v21", "rule", "always_long"} <= set(res["funding_kucoin"]))
+        self.assertIsNotNone(res["ic"]["gross_label"])
+        self.assertIsNotNone(res["ic"]["partial_given_cost"])
+        self.assertIn("gL", oos)
         self.assertEqual(len(res["months"]), 6)
         self.assertTrue(all(m["rounds"] == 150 for m in res["months"]))
         self.assertTrue(all(m["train_t_min"] >= "2022-01-01" for m in res["months"]))
@@ -314,6 +330,71 @@ class RunWindowTests(unittest.TestCase):
     def test_coverage_refuses_short_data(self):
         with self.assertRaises(RuntimeError):
             core2_1._coverage(self.TF, core2_1._ms("2027-01-01"), core2_1._ms("2027-01-01"))
+
+
+class ReportFilesTests(unittest.TestCase):
+    def test_latest_report_ignores_pin_and_erratum(self):
+        """سنجاق و اِراتا همان پیشوند را دارند و در مرتب‌سازی پس از گزارشِ زمان‌دار می‌آیند."""
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("core2_1_validation_20260924_135542.json", "core2_1_validation_pin.json",
+                         "core2_1_validation_erratum.json"):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    json.dump({"name": name}, f)
+            rep, path = core2_1.latest_validation_report(d)
+            self.assertEqual(os.path.basename(path), "core2_1_validation_20260924_135542.json")
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "core2_1_validation_erratum.json"), "w", encoding="utf-8") as f:
+                f.write("{}")
+            self.assertEqual(core2_1.latest_validation_report(d), (None, None))
+
+    def test_summary_has_a_descriptive_line(self):
+        r = {"v21": {"n": 1, "mean": 0.1, "coins_positive": 1, "max_coin_share": 1.0}, "rule": {"n": 1, "mean": 0.0},
+             "bootstrap": {"ci95": [0, 1], "diff_ci95": [0, 1], "p_one_sided": 0.5}, "holm_p": 1.0, "adopted": False,
+             "timings_s": {"wall": 1}, "baselines": {"random_side": {"mean": -0.03, "n": 9}},
+             "funding_kucoin": {"v21": {"mean_funding_r": -0.001}}}
+        lines = core2_1.summary_lines({"timeframes": {"1d": r}})
+        self.assertEqual(len(lines), 2)
+        self.assertIn("random_side=-0.030", lines[1])
+        self.assertIn("v21=-0.001", lines[1])
+
+
+class ErratumTests(unittest.TestCase):
+    """اِراتای اعتبارسنجیِ v2.1: فایلی تازه؛ گزارش، سنجاق و پیش‌ثبت دست نخورده‌اند."""
+    PATH = os.path.join(ROOT, "bot", "data", "research", "core2_1_validation_erratum.json")
+
+    def test_erratum_is_complete_and_changes_no_verdict(self):
+        with open(self.PATH, encoding="utf-8") as f:
+            er = json.load(f)
+        self.assertEqual(er["report"], "core2_1_validation_20260924_135542.json")
+        self.assertEqual(er["adopted_before"], [])
+        self.assertEqual(er["adopted_after"], [])
+        self.assertFalse(er["any_verdict_changes"])
+        self.assertIn("holdout_touched", er["holdout_touched_claim"]["field"])
+        for tf in ("1d", "4h", "1h", "15m", "5m"):
+            self.assertIn(tf, er["holdout_bars_used_by_validation"]["table"])
+            self.assertIn(tf, er["corrected_numbers_cut_at_2026_01_01"])
+            cut = er["corrected_numbers_cut_at_2026_01_01"][tf]["cut"]["v21"]
+            self.assertTrue(cut["mean"] is None or cut["mean"] <= 0)             # هیچ نتیجه‌ای مثبت نمی‌شود
+        self.assertEqual(er["holdout_bars_used_by_validation"]["max_days_of_2026_used"]["labels"], 28)
+        self.assertEqual(er["holdout_bars_used_by_validation"]["max_days_of_2026_used"]["trades"], 14)
+        ids = [d["id"] for d in er["deferred_to_next_spec"]]
+        for key in ("DATA-1", "DATA-2", "DATA-4", "feat_ind-1", "feat_flow-2", "feat_flow-3", "feat_flow-5",
+                    "feat_ind-2", "feat_ind-3", "labels-2/model-2"):
+            self.assertIn(key, ids)
+        for key in ("kucoin_funding_regime_break_2023_10_18", "kucoin_schedule_change_2025_06_17",
+                    "zero_volume_halt_bars", "btc_identity_channel"):
+            self.assertIn(key, er["data_caveats"])
+        self.assertIn("2025-06-17", er["min_to_fund_1d_drop_reason"]["correction"])
+        self.assertIn("holdout_guard", er["holdout_guard_after_this_fix"])
+        with open(os.path.join(ROOT, "bot", "data", "research", "core2_1_validation_pin.json"), encoding="utf-8") as f:
+            self.assertEqual(er["report_sha256_lf"], json.load(f)["report_sha256_lf"])
+
+    def test_the_pinned_report_still_matches_its_pin(self):
+        with open(os.path.join(ROOT, "bot", "data", "research", "core2_1_validation_pin.json"), encoding="utf-8") as f:
+            pin = json.load(f)
+        rpath = os.path.join(ROOT, "bot", "data", "research", pin["report"])
+        self.assertEqual(core2_1.sha256_lf(rpath), pin["report_sha256_lf"])
+        self.assertEqual(core2_1.sha256_lf(PREREG), pin["prereg_sha256_lf"])
 
 
 def _git(d, *args):

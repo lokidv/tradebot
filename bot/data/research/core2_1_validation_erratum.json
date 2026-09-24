@@ -1,0 +1,100 @@
+{
+ "what": "Erratum to the core v2.1 validation report. The pinned report, the pin, the pre-registration and the holdout log are NOT edited; this file records what the audit of 2026-09-24 found about that report and what was changed in code for future specs.",
+ "created_utc": "2026-09-24",
+ "report": "core2_1_validation_20260924_135542.json",
+ "report_sha256_lf": "0ab7678c70794e755705632d70e37674c17eaf5050413648a6ca618317920f84",
+ "pin": "core2_1_validation_pin.json",
+ "prereg": "prereg_core2_1.json",
+ "audit_findings": ["DATA-5", "labels-3", "model-4", "model-1", "combos-1", "model-5", "labels-4", "RULE-6", "labels-5", "feat_flow-4", "DATA-1", "DATA-2", "DATA-3", "DATA-4", "feat_ind-1", "feat_flow-2", "feat_flow-3", "feat_flow-5", "feat_ind-2", "feat_ind-3", "labels-2", "model-2", "model-6"],
+ "adopted_before": [],
+ "adopted_after": [],
+ "any_verdict_changes": false,
+ "verdict_note": "No timeframe was adopted and none would be after any correction below. Every v2.1 validation mean stays at or below zero, no Holm test rejects (one-sided p after the cut: 5m 1.0, 15m 0.51, 1h 0.995, 4h 0.98, 1d 0.93), and no correction moves a result by more than seed-to-seed noise. Under this pre-registration the 2026 holdout is never run.",
+ "holdout_bars_used_by_validation": {
+  "findings": ["DATA-5", "labels-3", "model-4"],
+  "mechanism": "run_window loaded futures bars up to w1 + LABEL_TAIL_BARS (45) bars, with w1 = 2026-01-01 = the start of the pre-registered one-shot holdout, so that the brackets of the last validation signals could close. Validation labels (used by the IC tables) and trades opened near the end of 2025 were therefore resolved on bars from 2026. Features and training never used a 2026 bar (train_mask requires exit_close <= month start).",
+  "max_days_of_2026_used": {"labels": 28, "trades": 14, "note": "45 bars were loaded but at most 40 can be used; in practice labels used at most 28 days of 2026 at 1d (up to about 2026-01-28) and trades at most 14 days."},
+  "table": {
+   "1d": {"labels_depending_on_2026_bars": "163 / 920 (17.7%)", "v21_trades_exiting_in_2026": "5 / 112 (3 of them enter at or after the 2026-01-01 open)", "rule_trades_exiting_in_2026": "4 / 82"},
+   "4h": {"labels_depending_on_2026_bars": "63 / 5520", "v21_trades_exiting_in_2026": "5 / 591", "rule_trades_exiting_in_2026": "1 / 402"},
+   "1h": {"labels_depending_on_2026_bars": "44 / 22080", "v21_trades_exiting_in_2026": "1 / 850", "rule_trades_exiting_in_2026": "2 / 1548"},
+   "15m": {"labels_depending_on_2026_bars": "106 / 88320", "v21_trades_exiting_in_2026": "0 / 190", "rule_trades_exiting_in_2026": "2 / 6204"},
+   "5m": {"labels_depending_on_2026_bars": "161 / 264960", "v21_trades_exiting_in_2026": "0 / 0 (no v2.1 trades)", "rule_trades_exiting_in_2026": "4 / 15930"}
+  },
+  "same_mechanism_in_v2": "core2.run_window (v2 validation end 2025-07-01) did the same: 52 of the 1825 v2 1d IC labels use July-August 2025 bars, which later became the v2.1 validation window; none of its 100 v2 trades or 139 rule trades cross that date. So the prereg_core2_1 sentence 'No v2 or v2.1 statistic has been computed on 2025-07-01 or later' is slightly inexact for the v2 IC only.",
+  "code_fix": "core2.run_window and core2_1.run_window now load futures only up to the window end (fut_end = w1, LABEL_TAIL_BARS = 0), and core2.window_bars cuts the replay bars at w1. A label whose bracket has not closed by w1 is NaN (kept out of IC), and a trade still open at w1 is not counted. The validation and holdout paths use the same rule."
+ },
+ "holdout_touched_claim": {
+  "field": "report fields holdout_touched=False and note_fa 'no statistic computed on the holdout (2026-01..2026-08)'",
+  "status": "Inaccurate for this report: the validation IC and the few trades in the table above were resolved on 2026-01-01..2026-01-28 bars. No statistic of the holdout's own signals (t >= 2026-01-01) was computed, the holdout was never run, and prereg_core2_1 already notes that the current rule's descriptive UI scorecards overlap the holdout. Reports built with the fixed code make the claim true."
+ },
+ "corrected_numbers_cut_at_2026_01_01": {
+  "method": "Stored val_oos predictions (core2_1/<tf>_val_oos.npz), futures bars cut at 2026-01-01, brackets still open at the cut dropped; recomputed with the fixed core2_1.evaluate and core2.block_bootstrap. Only bars before 2026-01-01 are used. These match the audit's independent reproduction.",
+  "1d": {"reported": {"v21": {"n": 112, "mean": -0.1216}, "rule": {"n": 82, "mean": 0.1315}}, "cut": {"v21": {"n": 107, "mean": -0.1837, "ci95": [-0.400, 0.075], "p_one_sided": 0.927}, "rule": {"n": 78, "mean": 0.1910}}},
+  "4h": {"reported": {"v21": {"n": 591, "mean": -0.1008}, "rule": {"n": 402, "mean": 0.0358}}, "cut": {"v21": {"n": 586, "mean": -0.1113, "ci95": [-0.209, -0.006], "p_one_sided": 0.980}, "rule": {"n": 401, "mean": 0.0319}}},
+  "1h": {"reported": {"v21": {"n": 850, "mean": -0.1372}, "rule": {"n": 1548, "mean": -0.1735}}, "cut": {"v21": {"n": 849, "mean": -0.1359, "ci95": [-0.233, -0.035], "p_one_sided": 0.995}, "rule": {"n": 1546, "mean": -0.1722}}},
+  "15m": {"reported": {"v21": {"n": 190, "mean": -0.0022}, "rule": {"n": 6204, "mean": -0.2960}}, "cut": {"v21": {"n": 190, "mean": -0.0022, "ci95": [-0.249, 0.257], "p_one_sided": 0.512}, "rule": {"n": 6202, "mean": -0.2961}}},
+  "5m": {"reported": {"v21": {"n": 0, "mean": null}, "rule": {"n": 15930, "mean": -0.4331}}, "cut": {"v21": {"n": 0, "mean": null}, "rule": {"n": 15926, "mean": -0.4332}}},
+  "ic_rows_resolved_before_2026": {"1d": 757, "4h": 5457, "1h": 22036, "15m": 88214, "5m": 264799},
+  "data_free_bound": "Using only the reported means and the counts (per-trade net R lies in [-1.56, +1.8]), the 1d v2.1 mean without the 2026-touching trades is at most -0.054 and the 1d rule mean at least +0.046, so neither adoption test could flip."
+ },
+ "ic_tables_measure_cost": {
+  "findings": ["model-1", "combos-1"],
+  "what": "The report's ic.pooled (and per_coin, deciles) is Spearman against the NET label = gross - 0.14/risk_pct. 58-66% of rows are exactly -1R (stop) and 31-39% exactly +1.8R (target); inside those tie groups the net rank is set only by the cost term, which is known at entry. So the positive 5m/15m/1h ICs mostly measure cost/volatility ranking, not direction. IC is descriptive only: adopt_checks never reads it.",
+  "numbers_on_rows_resolved_before_2026": {
+   "columns": "net E_L~yL / E_S~yS | gross E_L~gL / E_S~gS | directional (E_L-E_S)~(gL-gS) | partial given cost E_L / E_S | model-free (-cost)~yL / yS",
+   "5m": [0.201, 0.217, 0.001, -0.003, 0.027, 0.018, -0.015, 0.386, 0.427],
+   "15m": [0.250, 0.277, 0.020, 0.007, 0.016, 0.033, -0.011, 0.471, 0.528],
+   "1h": [0.117, 0.094, -0.045, 0.002, -0.029, -0.028, -0.008, 0.438, 0.570],
+   "4h": [0.031, -0.063, -0.023, -0.019, -0.027, -0.018, -0.022, 0.447, 0.589],
+   "1d": [-0.191, -0.174, -0.193, -0.136, -0.209, -0.203, -0.101, 0.405, 0.601]
+  },
+  "caution": "Do not rebuild gross as float32 y + 0.14/risk_pct: float noise breaks the exact -1R ties into values correlated with cost and gives false negative gross ICs (the audit finder's -0.07/-0.10 at 15m).",
+  "code_fix": "core2.ic_stats keeps the old keys (pooled = net_label) and adds net_label, gross_label (gross R taken from the bracket via core2.gross_labels, rounded), directional, partial_given_cost, cost_only, gross/cost means per decile, and a note. build_dataset/walk_forward/save_oos now carry gL, gS and risk_pct."
+ },
+ "min_to_fund_1d_drop_reason": {
+  "findings": ["feat_flow-4", "DATA-2"],
+  "recorded_reason": "DROPPED['1d']['min_to_fund'] in bot/core_feats.py and dropped_features['1d'] of both validation reports: 'constant at 1d - always 4 of 8 hours (0.5)'.",
+  "correction": "True only under KuCoin's old 04/12/20 UTC schedule. KuCoin moved settlements to 00/08/16 UTC on 2025-06-17 (BNB 2025-06-10); from then on a settlement falls exactly on the 1d close and min_to_fund is 1.0 at every 1d close, i.e. constant 1.0 over the whole v2.1 validation window. The drop was decided on the v2 discovery window, where the feature really was constant, and is harmless (it would only act as a schedule-regime dummy). Correct text: 'near-constant in the design window (0.5 under the 04/12/20 schedule); 1.0 at every 1d close after KuCoin's 2025-06-17 schedule change - a regime dummy, not information'. The text lives in core_feats.py, whose hash is pinned, so it is corrected here and deferred to the next spec."
+ },
+ "data_caveats": {
+  "kucoin_funding_regime_break_2023_10_18": "DATA-1: before 2023-10-18, 31-64% of KuCoin settled rates are exactly 1e-4 (a clamp) and only 0.2-3.3% exceed 1 bp; after it the exact 1.0 bp value almost disappears (0-0.9%) and 37-48% exceed 1 bp. About 51% of v2.1 training rows predate the break, and the trees split around the 1.0 mass point (at 4h, 30-54% of kfund_bp split gain), which means little in validation/holdout/live. Counterfactuals move 15m -0.002 -> -0.033/-0.002, 1h -0.136 -> -0.080/-0.169/-0.142, 4h -0.111 -> -0.131/-0.079/-0.086: within about 1.2 SE, all at or below zero.",
+  "kucoin_schedule_change_2025_06_17": "DATA-2/feat_flow-3: settlements moved from 04/12/20 to 00/08/16 UTC (effective 2025-06-17 08:00; BNB 2025-06-10), so the hour -> min_to_fund mapping shifts by 4h at 5m/15m/1h and inverts at 4h, two weeks before the validation window. A phase-consistent recompute changes at most 0.8% of bar decisions (4h -0.101 -> -0.109, 1h -0.137 -> -0.159, 15m -0.002 -> -0.005).",
+  "zero_volume_halt_bars": "DATA-4/feat_ind-1/feat_flow-2: the Binance spot halt of 2023-03-24 (14 bars at 5m, 5 at 15m, 1 at 1h per coin; none at 4h/1d) becomes log(1e-12) = -27.6 in vol_z/tsize_z and 0 in ntrades_z/stbr1_z: vol_z about -12 to -78 and tsize_z about -100 to -192 at the halt bars, and a compressed z-scale for the next z-window (7 days at 5m, 10 at 15m, 30 at 1h); rv_ratio -21 on 3 rows at 5m. Training rows only (2.35% at 1h, 0.78% at 15m, 0.55% at 5m); the validation window is clean. Counterfactual: 1h -0.136 -> -0.111..-0.118, 15m -0.002 -> -0.031/+0.004.",
+  "flat_futures_bars": "DATA-3: Binance's monthly um archive BTCUSDT 5m/15m 2023-11 has frozen zero-volume bars on 2023-11-10 (at 5m 19 flat bars plus a partial 15:05 bar, 20 bars differ from the daily zip, which is correct); they changed 79 BTC 5m and 136 BTC 15m training labels. Other flat runs (e.g. 2025-08-29, which touches 42 validation 5m label rows per coin; v2.1 made no 5m trades) are real futures halts. tools/fetch_core_history.py now re-fetches such days from the daily zip and reports them; the local archive is repaired only when it is re-run with --fill-gaps (e.g. --only klines --intervals 5m 15m --fill-gaps).",
+  "btc_identity_channel": "feat_flow-5: for BTC rows compute() copies BTC's own series into the btc_* context, so rs_btc_m is exactly 0 on every BTC row and on no other coin's row - an exact BTC indicator although the prereg lists coin id as not used. The model uses it a little (up to 0.5% of split gain at 1h); masking it moves 1d -0.18 -> -0.17, 4h -0.11 -> -0.13, 1h -0.14 -> -0.11, inside seed noise. Setting it to NaN on BTC rows would still single BTC out.",
+  "last_row_kucoin_funding": "model-5: build_dataset loaded KuCoin funding with t < spot_end while _kfund treats a settlement at the bar close as known, so the last validation row per coin (a settlement exists at exactly 2026-01-01 00:00) differed from the full-history value in kfund_bp/kfund_z/kfund_persist. Exactly one v2.1 decision changes (4h BTCUSDT 2025-12-31 20:00, wait -> long); that trade enters on 2026-01-01 and is not counted after the cut. Fixed: load_kfund(s, spot_end + 1)."
+ },
+ "descriptive_baselines_and_funding": {
+  "findings": ["labels-4", "RULE-6", "labels-5"],
+  "what": "History (labels, decision.replay, replay_sides) charges only the pre-registered 0.14% round trip with exact stop fills and no perpetual funding; the paper simulator also charges tier cost, stop slippage and funding. Future reports now carry, next to every result, always-long / always-short / seeded random-side baselines on the same bars and a KuCoin settled-funding line (keys 'baselines' and 'funding_kucoin'). They are descriptive only and never used in adoption.",
+  "validation_window_cut_at_2026_01_01": {
+   "1d": {"always_long": [107, 0.157], "always_short": [117, -0.169], "random_side": [114, -0.062], "funding_r_per_trade": {"rule": -0.0184, "rule_longs": -0.0345, "v21": -0.0006, "always_long": -0.0252}, "rule_net_after_funding": 0.1726},
+   "4h": {"always_long": [649, -0.047], "always_short": [668, -0.116], "random_side": [662, -0.011], "funding_r_per_trade": {"rule": -0.0065, "rule_longs": -0.0161, "v21": -0.0010, "always_long": -0.0103}, "rule_net_after_funding": 0.0254},
+   "1h": {"always_long": [2543, -0.155], "always_short": [2632, -0.183], "random_side": [2584, -0.129], "funding_r_per_trade": {"rule": -0.0030, "v21": 0.0006, "always_long": -0.0057}},
+   "15m": {"always_long": [9999, -0.322], "always_short": [9966, -0.321], "random_side": [9928, -0.322], "funding_r_per_trade": {"rule": -0.0008, "v21": -0.0005, "always_long": -0.0030}},
+   "5m": {"always_long": [25102, -0.438], "always_short": [24877, -0.427], "random_side": [24822, -0.422], "funding_r_per_trade": {"rule": -0.0002, "always_long": -0.0017}},
+   "format": "[n, mean net R]; random_side seed 42 + coin index",
+   "reading": "The rule's positive 1d result sits next to always-long +0.157 in the same window (long market exposure); at 5m-15m every baseline loses about the cost. Funding makes the rule's 1d/4h lead over v2.1 about 0.018R / 0.0055R smaller. None of this changes a verdict."
+  },
+  "paper_vs_history": "Re-pricing the validation trades with the paper simulator's full cost model (tier cost, tier stop slippage, realised funding) moves the aggregate means by -0.016 to +0.005 R per trade; per coin TRX is 0.05-0.07R worse and BTC 0.02-0.03R better at 4h (labels-4)."
+ },
+ "power": "model-6: with a 6-month window, 27 weekly blocks, Holm over 5 timeframes and the difference CI above 0, adoption has ~50% probability only at true edges of about +0.11R (1h), +0.25R (4h), +0.25R (15m) and +0.55R (1d); a 'no' is informative at 1h and 4h (CIs at or below 0) and weak at 15m and 1d.",
+ "holdout_guard_after_this_fix": "bot/core2.py and bot/core2_1.py changed after the pin, so core2_1.holdout_guard now refuses with \"کد پس از سنجاق تغییر کرده: ['bot/core2.py', 'bot/core2_1.py']\" (code changed after the pin). This is intended: the pinned report adopted nothing, so the holdout would never run anyway, and the corrected code is a template for the next pre-registered spec, not a re-judging of v2.1.",
+ "file_naming": "This file shares the prefix core2_1_validation_; core2_1.latest_validation_report (and core2's) now only pick timestamped reports (<prefix>YYYYMMDD_HHMMSS.json), so neither this erratum nor the pin is taken for a report.",
+ "deferred_to_next_spec": [
+  {"id": "DATA-1", "needs": "core_feats.py", "what": "KuCoin funding regime break 2023-10-18", "next_spec": "build funding features only from rows after 2023-10-18, or use a regime-invariant transform (sign, or rank against a trailing window that starts after the break)"},
+  {"id": "DATA-2", "needs": "core_feats.py", "what": "KuCoin schedule change 2025-06-17 flips min_to_fund against hour of day", "next_spec": "drop min_to_fund or define it from the actual next settlement time; check every feature for exchange schedule changes before fitting"},
+  {"id": "DATA-4", "needs": "core_feats.py", "what": "zero-volume spot halt bars become log(1e-12) inputs", "next_spec": "treat v==0 or n==0 bars as missing (NaN) before the logs, ratios and z-scores, in history and live; cover rv_ratio too"},
+  {"id": "feat_ind-1", "needs": "core_feats.py", "what": "vol_z on outage bars", "next_spec": "lv = where(v > 0, log(v), NaN); zs already skips NaN"},
+  {"id": "feat_flow-2", "needs": "core_feats.py", "what": "tsize_z/ntrades_z/stbr1_z on outage bars", "next_spec": "qv/n/tbv set to NaN on v==0 or n==0 bars before the z-scores"},
+  {"id": "feat_flow-3", "needs": "core_feats.py", "what": "min_to_fund duplicates hour of day and shifts with the schedule", "next_spec": "drop it or make it schedule-aware"},
+  {"id": "feat_flow-4", "needs": "core_feats.py", "what": "wrong DROPPED['1d']['min_to_fund'] reason", "next_spec": "record the corrected reason given in min_to_fund_1d_drop_reason"},
+  {"id": "feat_flow-5", "needs": "core_feats.py", "what": "BTC identity channel via rs_btc_m == 0 (and the btc_* copies)", "next_spec": "drop btc_* and rs_btc_m or use a context that does not single BTC out; NaN is not enough"},
+  {"id": "feat_ind-2", "needs": "core_feats.py", "what": "setup_code drops direction and is ordinal", "next_spec": "signed code or long/short one-hot families, or declare it categorical"},
+  {"id": "feat_ind-3", "needs": "core_feats.py", "what": "vwap_dist not scaled for window length (19% of 5m rows at the +-8 clip); ichi_cloud at its +-5 clip on 11-13% of rows", "next_spec": "normalise by ATR*sqrt(VWAP_N) or widen the clips"},
+  {"id": "labels-2/model-2", "needs": "core_feats.py", "what": "the net label contains a known cost term (-0.14/risk_pct) that no feature exposes; the model mostly learns cost/volatility", "next_spec": "model gross R (or win probability) and subtract the known cost at decision time, or add log(risk_pct); tested here it creates no edge, and 5m/15m stay infeasible under 0.14% taker cost with a 0.25%-floor stop"},
+  {"id": "DATA-3 (labels/replay)", "needs": "core_feats.py (labels) and the rule's replay", "what": "labels and replays may enter on flat zero-volume futures bars (real halts)", "next_spec": "mask entries on v==0 futures bars; the rule's replay is not changed now (rule invariance)"}
+ ],
+ "note_fa": "اِراتای گزارشِ اعتبارسنجیِ v2.1 (گزارش، سنجاق، پیش‌ثبت و دفترِ holdout دست نخورده‌اند). ممیزی نشان داد برچسب‌ها و چند معاملهٔ پایانِ اعتبارسنجی با کندل‌های ۲۰۲۶ (holdout) بسته شده‌اند (برچسب تا ۲۸ روز، معامله تا ۱۴ روز)، پس holdout_touched=False دقیق نیست؛ اعدادِ اصلاح‌شده با برش در ۲۰۲۶-۰۱-۰۱ و IC روی R ناخالص بالا آمده‌اند. دلیلِ حذفِ min_to_fund در 1d پس از ۲۰۲۵-۰۶-۱۷ نادرست است؛ جدول‌های IC بیشتر هزینه را می‌سنجند؛ فاندینگِ کوکوین در ۲۰۲۳-۱۰-۱۸ رژیم عوض کرده و در ۲۰۲۵-۰۶-۱۷ ساعتِ تسویه‌اش؛ کندل‌های بی‌حجمِ توقفِ صرافی و کانالِ شناساییِ BTC با rs_btc_m هم ثبت شدند. هیچ حکمی عوض نمی‌شود و هیچ تایم‌فریمی پذیرفته نمی‌شود. کدِ core2/core2_1 پس از سنجاق عوض شد، پس نگهبانِ holdout رد می‌کند — عمداً، چون چیزی پذیرفته نشده بود. مواردی که به تغییرِ core_feats.py نیاز دارند به مشخصهٔ بعدی موکول شدند."
+}

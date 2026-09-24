@@ -7,8 +7,13 @@
   * آموزش فقط از سطرهای ``t ≥ 2022-01-01``؛ اعتبارسنجی ۲۰۲۵-۰۷..۲۰۲۵-۱۲؛ holdoutِ یک‌بارمصرف ۲۰۲۶-۰۱..۲۰۲۶-۰۸.
 
 ساختِ داده، برشِ بی‌نشت (``core2.train_mask``)، وزنِ برابرِ ارزها، بازپخشِ معامله، بوت‌استرپِ هفتگی و Holm از
-``core2`` می‌آیند؛ ``core2.py`` دست نمی‌خورد چون هشِ آن در گزارشِ v2 ثبت شده است. ``core_feats.py`` باید عیناً
-همان نسخهٔ commit b982f84 باشد (``CORE_FEATS_SHA256_LF``)؛ وگرنه اجرا رد می‌شود.
+``core2`` می‌آیند. ``core_feats.py`` باید عیناً همان نسخهٔ commit b982f84 باشد (``CORE_FEATS_SHA256_LF``)؛ وگرنه
+اجرا رد می‌شود.
+
+پس از سنجاق (ممیزیِ ۲۰۲۶-۰۹، اِراتا: ``research/core2_1_validation_erratum.json``) این فایل و ``core2.py`` برای
+مشخصه‌های بعدی اصلاح شدند: بی‌دُمِ فیوچرز پس از پایانِ پنجره، IC روی R ناخالص/جهت‌دار/جزئی، فاندینگِ کوکوین تا
+بسته‌شدنِ سطرِ آخر، و خط‌های پایه/فاندینگِ توصیفی. پس هشِ کد با سنجاق یکی نیست و نگهبانِ holdout رد می‌کند —
+عمداً: در اعتبارسنجیِ v2.1 هیچ تایم‌فریمی پذیرفته نشد و holdout هرگز اجرا نمی‌شود.
 
 holdout (سخت‌گیرانه‌تر از v2): فقط برای تایم‌فریمِ پذیرفته، فقط وقتی
   ۱. سنجاقِ ``core2_1_validation_pin.json`` در گیت commit شده و هشِ گزارشِ اعتبارسنجی با آن برابر است،
@@ -21,7 +26,6 @@ holdout (سخت‌گیرانه‌تر از v2): فقط برای تایم‌فر�
 
 اختیار: v2.1 هرگز ``tradeable`` را روشن نمی‌کند، به gates.json نمی‌نویسد و autotrader آن را نمی‌خواند.
 """
-import glob
 import hashlib
 import json
 import math
@@ -68,7 +72,7 @@ COST = decision.COST_PCT          # 0.14
 MAKER_COST = decision.MAKER_COST_PCT   # 0.10 — فقط توصیفی
 MARGIN = 0.0                      # قاعدهٔ اصلی: E > 0 و E > طرفِ دیگر
 SENS_MARGINS = (0.05, 0.10)       # فقط حساسیت
-LABEL_TAIL_BARS = core2.LABEL_TAIL_BARS
+LABEL_TAIL_BARS = core2.LABEL_TAIL_BARS   # 0 — ممیزی DATA-5: هیچ کندلی در/پس از پایانِ پنجره
 
 HOLM_ALPHA = core2.HOLM_ALPHA     # 0.10
 ADOPT_EDGE_R = 0.05
@@ -217,7 +221,7 @@ def walk_forward(ds, months, fit_fn=None, threads=NUM_THREADS, log=None, window_
     tf = ds["tf"]
     fit_fn = fit_fn or fit_pair
     t = ds["t"]
-    out = {k: [] for k in ("sym", "t", "E_L", "E_S", "month", "yL", "yS")}
+    out = {k: [] for k in core2.oos_keys(ds)}
     meta = []
     if window_end is not None and any(m1 > window_end for _, m1, _ in months):
         raise ValueError("ماهِ خارج از پنجره — پیش‌بینیِ پس از پایانِ پنجره ممنوع است")
@@ -235,7 +239,7 @@ def walk_forward(ds, months, fit_fn=None, threads=NUM_THREADS, log=None, window_
         EL, ES = predict(ds["X"][te])
         for k, v in (("sym", ds["sym"][te]), ("t", t[te]), ("E_L", EL), ("E_S", ES),
                      ("month", np.full(int(te.sum()), ym, dtype=np.int32)), ("yL", ds["yL"][te]),
-                     ("yS", ds["yS"][te])):
+                     ("yS", ds["yS"][te])) + tuple((k, ds[k][te]) for k in core2.OOS_EXTRA if k in ds):
             out[k].append(np.asarray(v))
         per_coin = np.bincount(ds["sym"][tr].astype(int), minlength=len(ds["symbols"])).tolist()
         row = {"month": ym, "train_cutoff": core2._date(m0 - GAP_BARS * BAR_MS[tf]), "n_train": int(tr.sum()),
@@ -269,16 +273,13 @@ def decide(E_L, E_S, margin=MARGIN):
 
 
 def evaluate(tf, oos, w0, w1, fut, symbols=SYMBOLS, log=None):
-    """معامله‌های v2.1 (قاعدهٔ اصلی + حاشیه‌های حساسیت) و قاعدهٔ فعلی روی همان کندل‌های فیوچرز و همان پنجره."""
+    """معامله‌های v2.1 (قاعدهٔ اصلی + حاشیه‌های حساسیت) و قاعدهٔ فعلی روی همان کندل‌های فیوچرز و همان پنجره.
+    کندل‌ها از ``core2.window_bars``: گرم‌شدنِ scorecard_for تا **پیش از** ``w1``؛ براکتِ بازمانده شمرده نمی‌شود."""
     v21 = {m: {} for m in (MARGIN,) + SENS_MARGINS}
     rule = {}
     replay_equal = True
     for k, s in enumerate(symbols):
-        F = fut[s]
-        t = F["t"]
-        s0 = int(np.searchsorted(t, w0))
-        cut = max(0, s0 - decision.WARMUP_BARS)       # همان گرم‌شدنِ scorecard_for
-        sub = {kk: np.asarray(v)[cut:] for kk, v in F.items() if kk in ("t", "o", "h", "l", "c", "v")}
+        sub = core2.window_bars(fut[s], w0, w1)
         st = sub["t"]
         rep = decision.replay(sub, start_ts=w0, cost_pct=COST)
         rule[s] = [x for x in rep["trades"] if x["t"] < w1]
@@ -333,8 +334,10 @@ def _coverage(tf, w1, spot_end, symbols=SYMBOLS):
 
 
 def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=None, allow_holdout=False):
-    """یک تایم‌فریم روی یک پنجره: ساختِ داده، walk-forward، ارزیابی. هیچ کندلی پس از پایانِ پنجره جز
-    ``LABEL_TAIL_BARS`` کندلِ فیوچرز (برای بستنِ براکتِ سیگنال‌های آخر) بارگذاری نمی‌شود.
+    """یک تایم‌فریم روی یک پنجره: ساختِ داده، walk-forward، ارزیابی. هیچ کندلی (اسپات یا فیوچرز) در/پس از پایانِ
+    پنجره بارگذاری نمی‌شود (ممیزی DATA-5: پیش‌تر ۴۵ کندلِ فیوچرزِ دُم، برچسب و معاملهٔ پایانِ اعتبارسنجی را به
+    کندل‌های holdout وابسته می‌کرد): برچسبِ بازمانده NaN و بیرون از IC، معاملهٔ بازمانده شمرده نمی‌شود — در
+    ``validation`` و ``holdout`` یکسان. خط‌های پایه و فاندینگِ کوکوین کنارِ نتیجه فقط توصیفی‌اند.
     ``holdout`` فقط با ``allow_holdout=True`` و فقط اگر ``holdout_guard`` اجازه دهد — **پیش از** خواندنِ هر داده."""
     if window not in ("validation", "holdout"):
         raise ValueError(window)
@@ -345,8 +348,7 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
     feats_lf = check_features()
     wall = time.time()
     w0, w1 = window_ms(window)
-    bar = BAR_MS[tf]
-    fut_end = w1 + LABEL_TAIL_BARS * bar
+    fut_end = w1                                      # بی‌دُم: هیچ کندلِ فیوچرزی در/پس از پایانِ پنجره
     if fit_fn is None:
         _coverage(tf, w1, w1)
     ds = core2.build_dataset(tf, w1, fut_end, log=log)
@@ -361,6 +363,8 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
     ta = core2.trade_array(v21[MARGIN], syms)
     tr = core2.trade_array(rule, syms)
     bt = core2.block_bootstrap(ta["t"], ta["net"], tr["t"], tr["net"], w0, w1)
+    base, fund = core2.descriptive_lines(tf, w0, w1, fut, {"v21": v21[MARGIN], "rule": rule},
+                                         core2.load_kfund_all(w1 + 1), syms)
     sens = {}
     for mg, tb in v21.items():
         sens[f"margin_{mg:.2f}"] = {f"cost_{c:.2f}": core2._compact(core2.trade_stats(core2.trade_array(tb, syms, c), syms))
@@ -388,8 +392,12 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
            "rounds": n_rounds(tf), "train_start": TRAIN_START,
            "train_warmup_bars": core2.TRAIN_WARMUP[tf], "subsample": core2.SUBSAMPLE.get(tf, 1),
            "dataset_rows": int(len(ds["t"])), "oos_rows": int(len(oos["t"])),
+           "futures_end": "window end (exclusive): no futures bar at/after it; brackets still open there are not counted",
+           "label_tail_bars": LABEL_TAIL_BARS,
+           "oos_rows_label_unresolved": int((~(np.isfinite(oos["yL"]) & np.isfinite(oos["yS"]))).sum()),
            "v21": core2.trade_stats(ta, syms), "rule": core2.trade_stats(tr, syms),
            "rule_maker_0.10": core2._compact(core2.trade_stats(core2.trade_array(rule, syms, MAKER_COST), syms)),
+           "baselines": base, "funding_kucoin": fund,
            "bootstrap": bt, "sensitivity": sens, "predictions": pred_stats(oos, syms),
            "importance_gain_top20": imp, "ic": core2.ic_stats(oos, syms),
            "replay_equal_to_decision_replay": bool(replay_equal),
@@ -454,8 +462,12 @@ def assemble(results, tfs=TFS):
                               "sensitivity_margins": list(SENS_MARGINS)},
             "cost_pct": COST, "maker_cost_pct_descriptive": MAKER_COST,
             "holdout_touched": False,
+            "futures_end": "window end (exclusive): labels and trades use no bar at/after it (audit DATA-5)",
+            "descriptive_only": ["ic", "baselines", "funding_kucoin", "sensitivity", "rule_maker_0.10", "predictions"],
             "note_fa": ("فقط پنجرهٔ اعتبارسنجی (۲۰۲۵-۰۷ تا ۲۰۲۵-۱۲). هیچ آماری روی holdout (۲۰۲۶-۰۱ تا ۲۰۲۶-۰۸) حساب "
-                        "نشده است. v2.1 هرگز tradeable را روشن نمی‌کند و به gates.json دست نمی‌زند."),
+                        "نشده است: برچسب و معامله هیچ کندلی در/پس از پایانِ پنجره نمی‌خوانند و براکتِ بازمانده شمرده "
+                        "نمی‌شود. IC، خط‌های پایه و فاندینگ فقط توصیفی‌اند. "
+                        "v2.1 هرگز tradeable را روشن نمی‌کند و به gates.json دست نمی‌زند."),
             "adopted": [tf for tf in tfs if cells[tf].get("adopted")],
             "timeframes": cells}
 
@@ -475,6 +487,9 @@ def summary_lines(report):
                    f"p={bt['p_one_sided']:.3f} holm={r['holm_p']:.3f} | coins+={v['coins_positive']} "
                    f"maxshare={f(v['max_coin_share'])} | ADOPT={'YES' if r['adopted'] else 'no'} | "
                    f"wall={r['timings_s']['wall']}s")
+        d = core2.descriptive_summary(r, "v21")
+        if d:
+            out.append(d)
     return out
 
 
@@ -486,7 +501,9 @@ def holdout_verdict(tf, res):
 
 
 def latest_validation_report(research_dir=None):
-    files = sorted(glob.glob(os.path.join(research_dir or RESEARCH_DIR, REPORT_PREFIX + "*.json")))
+    """آخرین گزارشِ زمان‌دار — سنجاق (``..._pin.json``) و اِراتا (``..._erratum.json``) هم همین پیشوند را دارند و
+    پیش‌تر در مرتب‌سازی پس از گزارش می‌آمدند."""
+    files = core2.report_files(REPORT_PREFIX, research_dir or RESEARCH_DIR)
     if not files:
         return None, None
     with open(files[-1], "r", encoding="utf-8") as f:

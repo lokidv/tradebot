@@ -180,6 +180,307 @@ class DatasetTests(unittest.TestCase):
         self.assertTrue((ds["exit_close"][ok] > ds["t"][ok]).all())
         self.assertTrue(np.isnan(ds["yL"][~ok]).all() or not (~ok).any())
 
+    def test_gross_labels_come_from_the_bracket_and_match_the_net_label(self):
+        """ممیزی model-1: R ناخالص مستقیم از براکت (نه float32 + هزینه): حدضرر دقیقاً −1، هدف یک مقدار، و خالص = بریده‌اش."""
+        fut = synth(3000)
+        yL, yS, ex, rp = cf.labels("1h", fut, cost=core2.COST)
+        gL, gS = core2.gross_labels(fut)
+        pen = core2.cost_r(rp)
+        for g, y in ((gL, yL), (gS, yS)):
+            self.assertTrue((np.isfinite(g) == np.isfinite(y)).all())
+            ok = np.isfinite(g)
+            self.assertLess(float(np.abs(np.clip(g - pen, -2, 1.8)[ok] - y[ok]).max()), 2e-6)
+            self.assertEqual(len(np.unique(g[np.isclose(g, 1.8)])), 1)              # بی‌نویزِ ممیزِ شناور
+            self.assertTrue((g[ok] >= -3).all())
+            self.assertGreater(int((g == -1.0).sum()), 100)
+        self.assertTrue(np.isnan(gL[-1]))                                             # کندلِ آخر نامعلوم
+
+    def test_dataset_carries_gross_labels_into_the_oos(self):
+        syms = ("BTCUSDT", "ETHUSDT")
+        spot = {s: synth(800, D_MS, seed=k) for k, s in enumerate(syms)}
+        fut = {s: synth(800, D_MS, seed=k + 50) for k, s in enumerate(syms)}
+        end = int(spot["BTCUSDT"]["t"][-1]) + D_MS
+        ds = core2.build_dataset("1d", end, end, symbols=syms, spot=spot, fut=fut, kfund={})
+        for k in ("gL", "gS", "risk_pct"):
+            self.assertEqual(len(ds[k]), len(ds["t"]))
+        self.assertTrue((np.isfinite(ds["gL"]) == np.isfinite(ds["yL"])).all())
+        months = core2.month_starts(int(ds["t"][-120]), end)
+        oos, _ = core2.walk_forward(ds, months, fit_fn=lambda X, *a: ((lambda Xt: (np.zeros(len(Xt), np.float32),
+                                                                                   np.zeros(len(Xt), np.float32))), {}),
+                                    window_end=end)
+        self.assertEqual(set(oos), {"sym", "t", "E_L", "E_S", "month", "yL", "yS", "gL", "gS", "risk_pct"})
+        with tempfile.TemporaryDirectory() as d:
+            with np.load(core2.save_oos("1d", oos, out_dir=d)) as z:
+                self.assertIn("gL", z.files)
+
+
+class KfundCutTests(unittest.TestCase):
+    """ممیزی model-5: تسویهٔ هم‌لحظه با بسته‌شدنِ آخرین کندل (``t == spot_end``) در سطرِ آخر هست — مثلِ کل‌تاریخچه."""
+    SYMS = ("BTCUSDT", "ETHUSDT")
+
+    def setUp(self):
+        self.micro = tempfile.mkdtemp(prefix="core2-kf-")
+        n = 900
+        for k, s in enumerate(self.SYMS):
+            np.savez_compressed(os.path.join(self.micro, f"spot_{s}_1d.npz"), **synth(n, D_MS, seed=k))
+            np.savez_compressed(os.path.join(self.micro, f"um_{s}_1d.npz"), **synth(n, D_MS, seed=k + 50))
+            ft = T0 + np.arange(0, 3 * n) * 8 * H_MS                          # ۰۰:۰۰، ۰۸:۰۰، ۱۶:۰۰
+            np.savez_compressed(os.path.join(self.micro, f"kfund_{s}.npz"), t=ft.astype(np.int64),
+                                rate=np.random.RandomState(k).normal(1e-4, 2e-4, len(ft)),
+                                interval_h=np.full(len(ft), 8.0))
+        self.patch = mock.patch.object(core2, "MICRO_DIR", self.micro)
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        import shutil
+        shutil.rmtree(self.micro, True)
+
+    def _last_row(self, ds, T):
+        m = (ds["sym"] == 0) & (ds["t"] == T - D_MS)
+        self.assertEqual(int(m.sum()), 1)
+        return ds["X"][m][0]
+
+    def test_last_row_equals_the_full_history_row(self):
+        T = T0 + 850 * D_MS                                                     # یک تسویه دقیقاً در T
+        cut = core2.build_dataset("1d", T, T, symbols=self.SYMS)
+        full = core2.build_dataset("1d", T + 30 * D_MS, T + 30 * D_MS, symbols=self.SYMS)
+        a, b = self._last_row(cut, T), self._last_row(full, T)
+        self.assertTrue(np.array_equal(a, b, equal_nan=True))
+        old = core2.build_dataset("1d", T, T, symbols=self.SYMS,
+                                  kfund={s: core2.load_kfund(s, T) for s in self.SYMS})     # برشِ قدیمیِ t < T
+        j = cf.FEATURES["1d"].index("kfund_bp")
+        self.assertNotEqual(float(self._last_row(old, T)[j]), float(b[j]))
+
+
+class WindowEndTests(unittest.TestCase):
+    """ممیزی DATA-5: ارزیابی هیچ کندلِ فیوچرزی در/پس از پایانِ پنجره نمی‌خواند و براکتِ باز در پایان شمرده نمی‌شود."""
+
+    def _setup(self):
+        syms = ("A", "B")
+        fut = {s: synth(3000, seed=k + 9) for k, s in enumerate(syms)}
+        t = fut["A"]["t"]
+        w0, w1 = int(t[2400]), int(t[2900])
+        rng = np.random.RandomState(0)
+        ot = np.r_[t[2400:2900], t[2400:2900]]
+        oos = {"sym": np.r_[np.zeros(500), np.ones(500)].astype(np.int8), "t": ot,
+               "E_L": rng.normal(0, 0.1, 1000).astype(np.float32), "E_S": rng.normal(0, 0.1, 1000).astype(np.float32)}
+        return syms, fut, w0, w1, oos
+
+    def test_bars_after_the_window_end_never_change_a_trade(self):
+        syms, fut, w0, w1, oos = self._setup()
+        poisoned = {}
+        for s, F in fut.items():
+            after = F["t"] >= w1
+            P = {k: np.array(v, copy=True) for k, v in F.items()}
+            for k in ("o", "h", "l", "c"):
+                P[k][after] = P[k][after] * np.where(np.arange(int(after.sum())) % 2, 3.0, 0.2)   # قیمت‌های وحشی
+            poisoned[s] = P
+        cut = {s: {k: v[F["t"] < w1] for k, v in F.items()} for s, F in fut.items()}
+        a = core2.evaluate("1h", oos, w0, w1, poisoned, symbols=syms)
+        b = core2.evaluate("1h", oos, w0, w1, cut, symbols=syms)
+        self.assertTrue(a[2] and b[2])
+        self.assertEqual(a[0], b[0])
+        self.assertEqual(a[1], b[1])
+        for s in syms:
+            for x in a[0][core2.MARGIN][s] + a[1][s]:
+                self.assertLess(x["exit_t"], w1)                              # کندلِ خروج پیش از پایان
+                self.assertLess(x["t"], w1)
+
+    def test_window_bars_stop_before_the_end(self):
+        F = synth(3000)
+        w0, w1 = int(F["t"][2400]), int(F["t"][2900])
+        sub = core2.window_bars(F, w0, w1)
+        self.assertLess(int(sub["t"][-1]), w1)
+        self.assertEqual(int(sub["t"][0]), int(F["t"][2400 - decision.WARMUP_BARS]))
+
+
+class RunWindowTests(unittest.TestCase):
+    """اجرای کاملِ v2 روی فایل‌های مصنوعیِ 1d (مدلِ ساختگیِ سریع): هیچ کندلی در/پس از پایانِ پنجره خوانده نمی‌شود،
+    برچسبِ بازماندهٔ پایان NaN است، و خط‌های توصیفی کنارِ نتیجه هستند."""
+    SYMS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "TRXUSDT")
+
+    @classmethod
+    def setUpClass(cls):
+        import shutil
+        cls._rm = shutil.rmtree
+        cls.micro = tempfile.mkdtemp(prefix="core2-micro-")
+        cls.patch = mock.patch.object(core2, "MICRO_DIR", cls.micro)
+        cls.patch.start()
+        t0 = core2._ms("2020-01-01")
+        n = (core2._ms("2025-10-01") - t0) // D_MS                           # فیوچرز تا پس از پایانِ پنجره
+        for k, s in enumerate(cls.SYMS):
+            np.savez_compressed(os.path.join(cls.micro, f"spot_{s}_1d.npz"), **synth(int(n), D_MS, seed=60 + k, t0=t0))
+            np.savez_compressed(os.path.join(cls.micro, f"um_{s}_1d.npz"), **synth(int(n), D_MS, seed=60 + k, t0=t0))
+            ft = np.arange(core2._ms("2021-10-01"), core2._ms("2025-10-01"), 8 * H_MS, dtype=np.int64)
+            np.savez_compressed(os.path.join(cls.micro, f"kfund_{s}.npz"), t=ft,
+                                rate=np.random.RandomState(k).normal(1e-4, 1e-4, len(ft)),
+                                interval_h=np.full(len(ft), 8.0))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.patch.stop()
+        cls._rm(cls.micro, True)
+
+    def test_validation_reads_nothing_at_or_after_the_window_end(self):
+        w0, w1 = core2.window_ms("validation")
+        seen = []
+        real_load, real_kf = core2.load_bars, core2.load_kfund
+
+        def spy(prefix, sym, tf, t_end=None, micro_dir=None):
+            seen.append((prefix, t_end))
+            return real_load(prefix, sym, tf, t_end, micro_dir)
+
+        def spy_kf(sym, t_end=None, micro_dir=None):
+            seen.append(("kfund", t_end))
+            return real_kf(sym, t_end, micro_dir)
+
+        def fit_fn(X, yL, yS, t, sym, tf, names, threads):
+            rng = np.random.RandomState(len(t))
+            return (lambda Xt: (rng.normal(0.05, 0.1, len(Xt)).astype(np.float32),
+                                rng.normal(0.05, 0.1, len(Xt)).astype(np.float32))), {}
+
+        with mock.patch.object(core2, "load_bars", side_effect=spy), \
+                mock.patch.object(core2, "load_kfund", side_effect=spy_kf):
+            res, oos = core2.run_window("1d", "validation", threads=1, fit_fn=fit_fn)
+        self.assertTrue(seen)
+        for prefix, t_end in seen:
+            self.assertIsNotNone(t_end)
+            self.assertLessEqual(t_end, w1 + (1 if prefix == "kfund" else 0))     # فاندینگ: t ≤ w1
+        self.assertEqual(res["label_tail_bars"], 0)
+        self.assertGreater(res["oos_rows_label_unresolved"], 0)              # براکت‌های بازِ پایان ⇒ NaN
+        self.assertTrue(np.isnan(oos["yL"][oos["t"] == w1 - D_MS]).all())
+        self.assertTrue(res["replay_equal_to_decision_replay"])
+        self.assertGreater(res["v2"]["n"], 0)
+        for k in ("always_long", "always_short", "random_side"):
+            self.assertIn("mean", res["baselines"][k])
+        self.assertIsNotNone(res["funding_kucoin"]["rule"]["mean_funding_r"])
+        self.assertIsNotNone(res["ic"]["gross_label"])
+        json.dumps(core2.to_json(res))
+
+
+class IcStatsTests(unittest.TestCase):
+    """ممیزی model-1/combos-1: IC روی برچسبِ خالص بیشتر هزینه را می‌سنجد؛ ناخالص/جهت‌دار/جزئی مهارت را."""
+
+    def _oos(self, n=6000, seed=0):
+        rng = np.random.RandomState(seed)
+        rp = rng.uniform(0.25, 2.0, n)
+        pen = 0.14 / np.maximum(rp, 0.05)
+        gL = np.where(rng.rand(n) < 0.36, 1.8, -1.0)
+        gS = np.where(rng.rand(n) < 0.36, 1.8, -1.0)
+        return rng, pen, {"sym": (np.arange(n) % 5).astype(np.int8), "t": np.arange(n, dtype=np.int64),
+                          "yL": np.clip(gL - pen, -2, 1.8).astype(np.float32),
+                          "yS": np.clip(gS - pen, -2, 1.8).astype(np.float32),
+                          "gL": gL.astype(np.float32), "gS": gS.astype(np.float32), "risk_pct": rp.astype(np.float32)}
+
+    def test_a_cost_only_predictor_has_net_ic_but_no_gross_or_partial_ic(self):
+        rng, pen, o = self._oos()
+        o["E_L"] = (-pen + rng.normal(0, 0.01, len(pen))).astype(np.float32)
+        o["E_S"] = (-pen + rng.normal(0, 0.01, len(pen))).astype(np.float32)
+        ic = core2.ic_stats(o, list("ABCDE"))
+        self.assertGreater(ic["net_label"]["E_L~yL"], 0.3)                          # «مهارتِ» ساختگی
+        self.assertEqual(ic["pooled"]["E_L~yL"], ic["net_label"]["E_L~yL"])       # کلیدِ قدیمی همان است
+        self.assertEqual(set(ic["pooled"]), {"E_L~yL", "E_S~yS", "(E_L-E_S)~(yL-yS)", "n"})
+        self.assertLess(abs(ic["gross_label"]["E_L~gL"]), 0.05)
+        self.assertLess(abs(ic["partial_given_cost"]["E_L~yL|cost"]), 0.05)
+        self.assertGreater(ic["cost_only"]["(-cost)~yL"], 0.3)
+        self.assertIn("gross_mean", ic["deciles"]["long"][0])
+        self.assertIn("cost_mean", ic["deciles"]["long"][0])
+        self.assertIn("cost", ic["note"])
+
+    def test_real_direction_shows_in_gross_directional_and_partial(self):
+        rng, pen, o = self._oos(seed=1)
+        o["E_L"] = (o["gL"] + rng.normal(0, 1.0, len(pen))).astype(np.float32)
+        o["E_S"] = (o["gS"] + rng.normal(0, 1.0, len(pen))).astype(np.float32)
+        ic = core2.ic_stats(o, list("ABCDE"))
+        self.assertGreater(ic["gross_label"]["E_L~gL"], 0.3)
+        self.assertGreater(ic["directional"]["(E_L-E_S)~(gL-gS)"], 0.3)
+        self.assertGreater(ic["partial_given_cost"]["E_S~yS|cost"], 0.3)
+        self.assertIn("E_L~gL", ic["per_coin"]["A"])
+
+    def test_old_oos_without_gross_still_works(self):
+        rng, pen, o = self._oos()
+        o["E_L"] = rng.normal(size=len(pen)).astype(np.float32)
+        o["E_S"] = rng.normal(size=len(pen)).astype(np.float32)
+        for k in ("gL", "gS", "risk_pct"):
+            o.pop(k)
+        ic = core2.ic_stats(o, list("ABCDE"))
+        self.assertIsNone(ic["gross_label"])
+        self.assertIsNone(ic["partial_given_cost"])
+        self.assertIsNotNone(ic["pooled"]["E_L~yL"])
+        json.dumps(core2.to_json(ic))
+
+
+class DescriptiveLinesTests(unittest.TestCase):
+    """ممیزی labels-4/RULE-6/labels-5: همیشه‌لانگ/همیشه‌شورت/جهتِ تصادفی و فاندینگِ کوکوین — فقط توصیفی."""
+
+    def test_baselines_on_the_same_bars(self):
+        syms = ("A", "B")
+        fut = {s: synth(3000, seed=k + 9) for k, s in enumerate(syms)}
+        w0, w1 = int(fut["A"]["t"][2400]), int(fut["A"]["t"][2900])
+        b = core2.baseline_trades("1h", w0, w1, fut, symbols=syms)
+        self.assertEqual(b, core2.baseline_trades("1h", w0, w1, fut, symbols=syms))        # بذردار
+        self.assertNotEqual(b["random_side"], core2.baseline_trades("1h", w0, w1, fut, syms, seed=7)["random_side"])
+        for s in syms:
+            self.assertTrue(b["always_long"][s] and all(x["side"] == "long" for x in b["always_long"][s]))
+            self.assertTrue(b["always_short"][s] and all(x["side"] == "short" for x in b["always_short"][s]))
+            self.assertEqual({x["side"] for x in b["random_side"][s]}, {"long", "short"})
+            for x in b["always_long"][s] + b["random_side"][s]:
+                self.assertTrue(w0 <= x["t"] < w1 and x["exit_t"] < w1)
+            tr = b["always_long"][s]
+            for p, q in zip(tr, tr[1:]):                                        # پشتِ‌سرِ‌هم، یکی در لحظه
+                self.assertEqual(q["i"], p["exit_idx"])
+
+    def test_funding_sign_and_window(self):
+        bar = H_MS
+        kf = {"t": np.array([T0 + 1 * bar, T0 + 3 * bar, T0 + 6 * bar, T0 + 7 * bar], np.int64),
+              "rate": np.array([1e-4, 1e-4, 1e-4, 1e-4]), "interval_h": np.full(4, 8.0)}
+        base = {"t": T0, "exit_t": T0 + 5 * bar, "risk_pct": 1.0}
+        tb = {"A": [dict(base, side="long", outcome="timeout"),         # (T0+1h, T0+6h] ⇒ ۲ تسویه
+                    dict(base, side="short", outcome="timeout"),
+                    dict(base, side="long", outcome="stop"),             # میانهٔ کندل ⇒ فقط T0+3h
+                    dict(base, side="long", outcome="gap_stop")]}        # بازِ کندلِ خروج ⇒ فقط T0+3h
+        f = core2.funding_r(tb, {"A": kf}, "1h", ["A"])
+        self.assertTrue(np.allclose(f, [-0.02, 0.02, -0.01, -0.01]))
+        self.assertTrue(np.isnan(core2.funding_r(tb, {}, "1h", ["A"])).all())
+        st = core2.funding_stats({"A": [dict(tb["A"][0], gross_r=1.8)]}, {"A": kf}, "1h", ["A"])
+        self.assertAlmostEqual(st["mean_funding_r"], -0.02)
+        self.assertAlmostEqual(st["mean_net_after_funding_r"], st["mean_net_r"] - 0.02)
+
+    def test_lines_are_never_used_for_adoption(self):
+        res = {"v2": {"mean": 0.2, "n": 150, "coins_positive": 4, "max_coin_share": 0.3},
+               "rule": {"mean": 0.0}, "bootstrap": {"diff_ci95": [0.05, 0.4]}}
+        plain = core2.adopt_checks("1h", res, True)
+        noisy = dict(res, baselines={"always_long": {"mean": 9.9}}, funding_kucoin={"v2": {"mean_funding_r": -9.9}})
+        self.assertEqual(core2.adopt_checks("1h", noisy, True), plain)
+        with open(os.path.join(ROOT, "bot", "core2.py"), encoding="utf-8") as f:
+            src = f.read()
+        body = src[src.index("def adopt_checks"):src.index("# ───", src.index("def adopt_checks"))]
+        self.assertNotIn("baselines", body)
+        self.assertNotIn("funding", body)
+
+    def test_summary_shows_the_descriptive_line(self):
+        r = {"v2": {"n": 1, "mean": 0.1, "coins_positive": 1, "max_coin_share": 1.0}, "rule": {"n": 1, "mean": 0.0},
+             "bootstrap": {"ci95": [0, 1], "diff_ci95": [0, 1], "p_one_sided": 0.5}, "holm_p": 1.0, "adopted": False,
+             "timings_s": {"wall": 1}, "baselines": {"always_long": {"mean": 0.15, "n": 10}},
+             "funding_kucoin": {"rule": {"mean_funding_r": -0.02}}}
+        lines = core2.summary_lines({"timeframes": {"1d": r}})
+        self.assertEqual(len(lines), 2)
+        self.assertIn("always_long=+0.150", lines[1])
+        self.assertIn("rule=-0.020", lines[1])
+
+
+class ReportFilesTests(unittest.TestCase):
+    def test_latest_report_ignores_pin_and_erratum(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("core2_validation_20250101_000000.json", "core2_validation_20260101_000000.json",
+                         "core2_validation_pin.json", "core2_validation_erratum.json"):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    json.dump({"name": name}, f)
+            rep, path = core2.latest_validation_report(d)
+            self.assertEqual(os.path.basename(path), "core2_validation_20260101_000000.json")
+            self.assertEqual(rep["name"], "core2_validation_20260101_000000.json")
+
 
 class DecisionRuleTests(unittest.TestCase):
     def test_fixed_rule(self):
