@@ -22,6 +22,7 @@ import paths
 import research
 import stats
 import universe
+import watchlist
 
 try:
     import lightgbm as lgb
@@ -45,6 +46,10 @@ CALIB_VERSION = 23       # با هر تغییرِ ویژگی‌ها/براکت/�
 # ۱۹: حذفِ ویژگیِ مردهٔ dxy_dir (۲۴ → ۲۳ ویژگی) + یکسان‌سازیِ فرمولِ فاندینگِ آموزش/اجرا
 WF_FOLDS = 5             # تعداد فولدهای Walk-Forward
 CALIB_UNIVERSE_N = 100   # اندازهٔ جهانِ نقطه‌-در-زمان در هر ماه
+# سبدِ مرجعِ «وضعیتِ کلِ بازار» (دامیننس BTC، ETH/BTC) — **همان** پنج ارزی که برنامه زنده
+# می‌خواند (watchlist، به خواستِ کاربر برای سرعت). قبلاً آموزش ۱۰۰ ارز را می‌دید و اجرا فقط
+# کشِ نیمه‌تازهٔ همین پنج تا را؛ دامیننس زنده در ~۹۷٪ کندل‌ها روی +۱ می‌ماند (calib-F1).
+MARKET_BASKET = tuple(watchlist.SYMBOLS)
 DENSE_STRIDE = 4         # نمونهٔ متراکم: هر ۴ کندل — روی شبکهٔ زمانیِ سراسری، نه اندیسِ هر ارز
 WF_EMBARGO = 24          # fallback فقط برای ورودی‌های بدون timestamp
 MIN_BRIER_SKILL = 0.01   # حداقل ۱٪ بهبود نسبت به پیش‌بینیِ ثابتِ نرخ پایه
@@ -1531,6 +1536,55 @@ def mom_norm_map(ts_list, closes, look=20, win=250):
     return out
 
 
+def market_state_maps(hists, basket=None):
+    """نقشه‌های وضعیتِ کلِ بازار ``{"dom": {ts: m}, "ethbtc": {ts: m}}`` — **یک** کد برای آموزش و اجرا.
+
+    تعریف (calib-F1، نسخهٔ ۲۳):
+    * ``dom`` — مومنتومِ نرمال‌شدهٔ سهمِ BTC از حجمِ دلاریِ سبدِ ثابتِ ``MARKET_BASKET``، فقط در
+      لحظه‌هایی که **همهٔ** ارزهای سبد کندل دارند (جمعیتِ ناقص ⇒ بی‌مقدار ⇒ ۰). قبلاً آموزش
+      ۱۰۰ ارز را جمع می‌زد و اجرا هر چه در کش بود؛ کشِ نیمه‌تازه سهمِ BTC در آخرین کندل را ۱٫۰ و
+      دامیننس را در ~۹۷٪ کندل‌ها +۱ می‌کرد.
+    * ``ethbtc`` — مومنتومِ نسبتِ ETH/BTC روی کندل‌های مشترک (بی‌تغییر).
+    * پهنای بازار و رتبهٔ نسبی خنثی‌اند (``features.DISABLED``).
+
+    مقدارِ هر لحظه فقط به ۲۷۰ کندلِ مشترکِ قبلش بسته است، پس ۴۲۰ کندلِ زنده همان عددِ آموزش را می‌دهد.
+    """
+    basket = tuple(basket or MARKET_BASKET)
+    out = {"dom": {}, "ethbtc": {}}
+    if basket and all((hists or {}).get(s) for s in basket):
+        tot, btc, cnt = {}, {}, {}
+        for s in basket:
+            kl = hists[s]
+            for t, c_, v_ in zip(kl["t"], kl["c"], kl["v"]):
+                dv = float(c_) * float(v_)
+                if not math.isfinite(dv):
+                    continue
+                tot[t] = tot.get(t, 0.0) + dv
+                cnt[t] = cnt.get(t, 0) + 1
+                if s == "BTCUSDT":
+                    btc[t] = dv
+        dom_ts = sorted(t for t, k in cnt.items() if k == len(basket) and tot[t] > 0 and t in btc)
+        if len(dom_ts) > 40:
+            out["dom"] = mom_norm_map(dom_ts, [btc[t] / tot[t] for t in dom_ts])
+    kb, ke = (hists or {}).get("BTCUSDT"), (hists or {}).get("ETHUSDT")
+    if kb and ke:
+        bb_ = dict(zip(kb["t"], kb["c"]))
+        ee_ = dict(zip(ke["t"], ke["c"]))
+        common = sorted(t for t in ee_ if t in bb_)
+        if len(common) > 40:
+            out["ethbtc"] = mom_norm_map(common, [ee_[t] / bb_[t] for t in common])
+    return out
+
+
+def market_state_at(hists, tk, basket=None):
+    """وضعیتِ بازار در **یک** کندلِ مشخص (زمانِ بازِ ``tk``) — همان کلیدهای ``extras`` زنده.
+    کندلی که در سبد کامل نیست مقدارِ خنثی (۰) می‌گیرد، مثلِ ``dict.get(ts, 0.0)`` ِ آموزش."""
+    maps = market_state_maps(hists, basket)
+    return {"breadth": 0.0,
+            "dom": float(maps["dom"].get(tk, 0.0)),
+            "ethbtc": float(maps["ethbtc"].get(tk, 0.0))}
+
+
 def _htf_sign(zmap, ts, htf):
     """جهت آخرین کندل بسته‌شده تایم بالاتر پیش از ts — بدون نگاه به آینده."""
     if not zmap or htf is None:
@@ -1834,56 +1888,26 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             def _member(sym, ts_, _snaps=snaps):
                 return universe.in_universe(_snaps, sym, ts_)
 
-            # رتبه قدرت نسبی مقطعی (بازده ۲۰ کندلی) — فقط بینِ اعضای جهانِ همان لحظه
-            rets = {}
-            for sym, kl in hists.items():
-                cc = kl["c"]
-                for idx in range(20, len(cc)):
-                    t_ = kl["t"][idx]
-                    if _member(sym, t_):
-                        rets.setdefault(t_, []).append((sym, cc[idx] / cc[idx - 20] - 1))
+            # رتبهٔ قدرتِ نسبی و پهنای بازار عمداً خنثی‌اند (features.DISABLED، calib-F1): اجرا فقط
+            # پنج ارز را می‌خواند و تعریفِ ۱۰۰ ارزی/کفِ جمعیتِ ۴۰ در اجرا همیشه ۰٫۵/۰ بود.
             rs_map = {}
-            for ts, lst in rets.items():
-                if len(lst) >= universe.MIN_POPULATION:
-                    lst.sort(key=lambda x: x[1])
-                    m = len(lst) - 1
-                    rs_map[ts] = {sym: (k / m if m else 0.5) for k, (sym, _) in enumerate(lst)}
             try:
                 gk = market.get_history("PAXGUSDT", tf, tf_bars)  # طلای توکنی = پروکسی طلا
                 gold_map = mom_norm_map(gk["t"], gk["c"])
             except Exception:  # noqa: BLE001
                 gold_map = {}
 
-            # ── P2: نقشه‌های وضعیتِ کلِ بازار (پهنا، دامیننس BTC، ETH/BTC) از همین تاریخچه‌ها ──
+            # ── P2: وضعیتِ کلِ بازار (دامیننس BTC، ETH/BTC) از سبدِ ثابتِ پنج‌ارزی — همان کدِ اجرا ──
             with _lock:
                 _state["progress"] = f"وضعیت بازار {tf}"
-            above = {}                                  # ts -> [بالای EMA50 بودن هر ارز]
-            volq = {}                                   # ts -> [حجمِ دلاری هر ارز]، جدا برای BTC
-            btc_volq = {}
-            for sym, kl in hists.items():
-                cc = np.array(kl["c"], float)
-                if len(cc) < 60:
-                    continue
-                e50 = engine.ema(cc, 50)
-                vv = np.array(kl["v"], float) * cc
-                for j in range(50, len(cc)):
-                    ts_ = kl["t"][j]
-                    if _member(sym, ts_):
-                        above.setdefault(ts_, []).append(1.0 if cc[j] > e50[j] else 0.0)
-                    volq[ts_] = volq.get(ts_, 0.0) + float(vv[j])
-                    if sym == "BTCUSDT":
-                        btc_volq[ts_] = float(vv[j])
-            breadth_map = {t: (sum(v) / len(v) - 0.5) * 2 for t, v in above.items()
-                           if len(v) >= universe.MIN_POPULATION}
-            dom_ts = sorted(t for t in btc_volq if t in volq and volq[t] > 0)
-            dom_map = mom_norm_map(dom_ts, [btc_volq[t] / volq[t] for t in dom_ts]) if len(dom_ts) > 40 else {}
-            ethbtc_map = {}
-            if "ETHUSDT" in hists and "BTCUSDT" in hists:
-                eb = {t: c_ for t, c_ in zip(hists["ETHUSDT"]["t"], hists["ETHUSDT"]["c"])}
-                bb_ = {t: c_ for t, c_ in zip(hists["BTCUSDT"]["t"], hists["BTCUSDT"]["c"])}
-                common = sorted(set(eb) & set(bb_))
-                if len(common) > 40:
-                    ethbtc_map = mom_norm_map(common, [eb[t] / bb_[t] for t in common])
+            basket_h = {s: hists[s] for s in MARKET_BASKET if s in hists}
+            for s in MARKET_BASKET:                       # سبد حتی اگر بیرونِ فهرستِ آموزش باشد
+                if s not in basket_h:
+                    _s, kl_ = _hist_one(s)
+                    if kl_:
+                        basket_h[s] = kl_
+            mstate = market_state_maps(basket_h)
+            breadth_map, dom_map, ethbtc_map = {}, mstate["dom"], mstate["ethbtc"]
 
             btc_events_zmap_src = None
             all_events = []

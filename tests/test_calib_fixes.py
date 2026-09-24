@@ -413,6 +413,82 @@ class LowCoverageFeatureTests(unittest.TestCase):
         self.assertEqual(len(rows[0]), n)
 
 
+def _basket_hists(n=1500, bar_ms=3_600_000, start_bar=480_000):
+    return {s: _klines(n, seed=40 + k, start_bar=start_bar, bar_ms=bar_ms)
+            for k, s in enumerate(calib.MARKET_BASKET)}
+
+
+class MarketStateParityTests(unittest.TestCase):
+    """calib-F1: وضعیتِ بازار با یک کد و یک سبد، در یک کندلِ مشخص، در آموزش و اجرا."""
+
+    def test_basket_is_the_live_watchlist(self):
+        import watchlist
+        self.assertEqual(calib.MARKET_BASKET, tuple(watchlist.SYMBOLS))
+        self.assertIn("BTCUSDT", calib.MARKET_BASKET)
+        self.assertIn("ETHUSDT", calib.MARKET_BASKET)
+
+    def test_420_live_bars_give_the_training_value_at_that_bar(self):
+        full = _basket_hists()
+        maps = calib.market_state_maps(full)
+        self.assertTrue(maps["dom"] and maps["ethbtc"])
+        for end in (900, 1200, 1500):
+            live = {s: {k: v[end - 420:end] for k, v in kl.items()} for s, kl in full.items()}
+            tk = live["BTCUSDT"]["t"][-1]
+            st = calib.market_state_at(live, tk)
+            self.assertAlmostEqual(st["dom"], maps["dom"][tk], places=12)
+            self.assertAlmostEqual(st["ethbtc"], maps["ethbtc"][tk], places=12)
+            self.assertEqual(st["breadth"], 0.0)
+
+    def test_a_coin_missing_the_bar_gives_neutral_dom_not_a_pinned_one(self):
+        full = _basket_hists()
+        live = {s: {k: v[1080:1500] for k, v in kl.items()} for s, kl in full.items()}
+        tk = live["BTCUSDT"]["t"][-1]
+        stale = dict(live, SOLUSDT={k: v[:-1] for k, v in live["SOLUSDT"].items()})
+        self.assertEqual(calib.market_state_at(stale, tk)["dom"], 0.0)
+        # سبدِ کامل مقدارِ واقعی دارد و بیشترِ کندل‌ها روی ±۱ نیستند
+        dom = calib.market_state_maps(full)["dom"]
+        vals = [dom[t] for t in full["BTCUSDT"]["t"][600:]]
+        self.assertLess(np.mean(np.abs(vals) >= 0.999), 0.5)
+
+
+class LiveMarketStateTests(unittest.TestCase):
+    """main._market_state: کندل‌های تازهٔ سبد در کندلِ tk، کش با کلیدِ (tf, tk)."""
+
+    def setUp(self):
+        import main
+        self.main = main
+        self.full = _basket_hists(n=900)
+        self.tk = self.full["BTCUSDT"]["t"][-1]
+        main._mstate_cache.clear()
+
+    def test_stale_cached_coin_is_refreshed_and_the_state_is_cached_per_bar(self):
+        stale_eth = {k: v[:-1] for k, v in self.full["ETHUSDT"].items()}
+        calls = []
+
+        def get_klines(s, tf, *a, **k):
+            calls.append(s)
+            return stale_eth if s == "ETHUSDT" else self.full[s]
+        with mock.patch.object(market, "get_klines", side_effect=get_klines), \
+                mock.patch.object(market, "_fetch_klines",
+                                  side_effect=lambda s, tf, limit: self.full[s]) as fetch:
+            st = self.main._market_state("1h", self.tk)
+            again = self.main._market_state("1h", self.tk)
+        fetch.assert_called_once()
+        self.assertEqual(st, again)
+        self.assertEqual(len(calls), len(calib.MARKET_BASKET))           # بارِ دوم از کش
+        ref = calib.market_state_at(self.full, self.tk)
+        self.assertAlmostEqual(st["dom"], ref["dom"], places=12)
+        self.assertAlmostEqual(st["ethbtc"], ref["ethbtc"], places=12)
+
+    def test_relative_strength_and_breadth_are_neutral_like_training(self):
+        self.assertEqual(self.main._rs_rank("1h").get("BTCUSDT", 0.5), 0.5)
+        self.assertIn("rs_dir", features.DISABLED)
+        self.assertIn("breadth_dir", features.DISABLED)
+        with mock.patch.object(market, "get_klines", side_effect=lambda s, tf, *a, **k: self.full[s]):
+            self.assertEqual(self.main._market_state("1h", self.tk)["breadth"], 0.0)
+        self.assertEqual(self.main._market_state("5m", self.tk), {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0})
+
+
 T0_4H = 1_640_995_200_000          # 2022-01-01، مرزِ کندلِ 4h
 BAR_4H = 14_400_000
 
@@ -491,6 +567,16 @@ class BuildFeatureHealthTests(unittest.TestCase):
         self.assertIn("feature_health_dense", blob)
         self.assertNotIn("rs_dir", blob["feature_health"]["dead"])       # خنثیِ عمدی، نه «مرده»
         j = calib.engine.FEATS.index("funding_dir")
+        self.assertTrue(all(e["feats"][j] == 0.0 for e in h.seen["model"][0]))
+
+    def test_training_market_state_comes_from_the_basket_only(self):
+        h = _BuildHarness(prereg=None)
+        with mock.patch.object(calib, "market_state_maps", wraps=calib.market_state_maps) as spy:
+            h.run()
+        hists = spy.call_args[0][0]
+        self.assertEqual(set(hists), {"BTCUSDT", "ETHUSDT"})             # XUSDT بیرونِ سبد است
+        self.assertTrue(set(hists) <= set(calib.MARKET_BASKET))
+        j = calib.engine.FEATS.index("rs_dir")
         self.assertTrue(all(e["feats"][j] == 0.0 for e in h.seen["model"][0]))
 
 

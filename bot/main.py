@@ -47,7 +47,7 @@ import tf_spec
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
-_mstate_cache: dict = {}   # tf -> (ts, {"breadth","dom","ethbtc"})
+_mstate_cache: dict = {}   # (tf, tk) -> (ts, سبدِ کامل؟, {"breadth","dom","ethbtc"})
 _susp_cache = {"ts": 0.0, "map": {}}
 
 # ── تک‌پروازیِ کمک‌تابع‌ها: پنج نخِ overview روی کشِ سرد هر کدام همین‌ها را از نو می‌ساختند
@@ -64,55 +64,69 @@ def _once(key):
         return lk
 
 
-def _market_state(tf):
-    """وضعیتِ کلِ بازار به‌صورت زنده (پهنای بازار، مومنتوم دامیننس BTC، مومنتوم ETH/BTC) — فقط از کشِ کندل‌ها."""
-    hit = _mstate_cache.get(tf)
-    if hit and time.time() - hit[0] < 300:
-        return hit[1]
+def _last_closed_open(tf, now=None):
+    """زمانِ بازِ آخرین کندلِ بسته‌شدهٔ ``tf`` از روی ساعت (بی شبکه)."""
+    bar = tf_spec.bar_ms(tf)
+    now_ms = int((time.time() if now is None else now) * 1000)
+    return (now_ms // bar) * bar - bar
+
+
+def _basket_klines(tf, tk):
+    """کندل‌های سبدِ مرجع که کندلِ ``tk`` را دارند — با get_klines، نه کشِ خام.
+
+    قبلاً ``get_klines_cached`` هر چه آخرین‌بار در کش بود را می‌داد: درونِ تحلیلِ BTC، کندل‌های
+    BTC تازه و بقیه یک کندل کهنه بودند (نخ‌هایشان پشتِ همان تحلیلِ BTC منتظر بودند). اگر مهلتِ
+    ۴۵ثانیه‌ایِ کش هنوز کندلِ قبلی را بدهد، یک‌بار مستقیم تازه می‌شود.
+    """
+    out = {}
+    for s in calib.MARKET_BASKET:
+        try:
+            kl = market.get_klines(s, tf)
+            if kl and kl["t"] and int(kl["t"][-1]) < tk:
+                kl = market._fetch_klines(s, tf, 420)
+            if kl and tk in kl["t"]:
+                out[s] = kl
+        except Exception:  # noqa: BLE001 — ارزِ بی‌کندل از سبد کم می‌شود ⇒ دامیننس خنثی
+            log.exc(f"market-state klines {s} {tf}")
+    return out
+
+
+def _market_state(tf, tk=None):
+    """وضعیتِ کلِ بازار (مومنتوم دامیننس BTC و ETH/BTC) در **کندلِ تحلیل‌شده** ``tk``.
+
+    یک تعریف با آموزش (calib-F1): ``calib.market_state_at`` روی سبدِ ثابتِ پنج‌ارزی
+    (``calib.MARKET_BASKET`` = watchlist)، فقط وقتی همهٔ سبد همان کندل را دارد. کش با کلیدِ
+    (tf, tk) است، نه TTLِ ساعتی — حالتِ یک کندل برای همهٔ ارزهای همان کندل یکی است.
+    پهنای بازار عمداً خنثی (۰) است: نه ویژگیِ مدل است (features.DISABLED) و نه ورودیِ متا-گیت
+    تغییر می‌کند (با پنج ارز هم قبلاً همیشه ۰ بود).
+    """
+    if tf not in tf_spec.MODEL_TFS:
+        return {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0}      # 5m مدلی ندارد
+    tk = int(tk) if tk is not None else _last_closed_open(tf)
+    key = (tf, tk)
+    hit = _mstate_cache.get(key)
+    if hit and (hit[1] or time.time() - hit[0] < 60):
+        return hit[2]
     with _once(("mstate", tf)):
-        hit = _mstate_cache.get(tf)
-        if hit and time.time() - hit[0] < 300:
-            return hit[1]
-        return _market_state_build(tf)
+        hit = _mstate_cache.get(key)
+        if hit and (hit[1] or time.time() - hit[0] < 60):
+            return hit[2]
+        return _market_state_build(tf, tk)
 
 
-def _market_state_build(tf):
+def _market_state_build(tf, tk):
     out = {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0}
+    complete = False
     try:
-        symbols, _ = market.get_top_symbols(calib.CALIB_UNIVERSE_N)   # همان جمعیتِ آموزش
-        above = []
-        volq: dict = {}
-        btcv: dict = {}
-        for s in symbols:
-            kl = market.get_klines_cached(s, tf)
-            if not kl or len(kl["c"]) < 60:
-                continue
-            cc = np.array(kl["c"], float)
-            e50 = engine.ema(cc, 50)
-            above.append(1.0 if cc[-1] > e50[-1] else 0.0)
-            for t, c_, v_ in zip(kl["t"], kl["c"], kl["v"]):
-                volq[t] = volq.get(t, 0.0) + c_ * v_
-                if s == "BTCUSDT":
-                    btcv[t] = c_ * v_
-        if len(above) >= universe.MIN_POPULATION:
-            out["breadth"] = (sum(above) / len(above) - 0.5) * 2
-        dom_ts = sorted(t for t in btcv if volq.get(t, 0) > 0)
-        if len(dom_ts) > 60:
-            dm = calib.mom_norm_map(dom_ts, [btcv[t] / volq[t] for t in dom_ts])
-            if dm:
-                out["dom"] = list(dm.values())[-1]
-        kb, ke = market.get_klines_cached("BTCUSDT", tf), market.get_klines_cached("ETHUSDT", tf)
-        if kb and ke:
-            bb_ = dict(zip(kb["t"], kb["c"]))
-            ee_ = dict(zip(ke["t"], ke["c"]))
-            common = [t for t in ke["t"] if t in bb_]
-            if len(common) > 60:
-                em = calib.mom_norm_map(common, [ee_[t] / bb_[t] for t in common])
-                if em:
-                    out["ethbtc"] = list(em.values())[-1]
+        hists = _basket_klines(tf, tk)
+        complete = len(hists) == len(calib.MARKET_BASKET)
+        out = calib.market_state_at(hists, tk)
     except Exception:  # noqa: BLE001
         log.exc()
-    _mstate_cache[tf] = (time.time(), out)
+    # سبدِ ناقص (خطای شبکه) فقط ۶۰ ثانیه کش می‌شود تا در همان کندل دوباره ساخته شود
+    for k in [k for k in _mstate_cache if k[0] == tf and k[1] < tk]:
+        _mstate_cache.pop(k, None)
+    _mstate_cache[(tf, tk)] = (time.time(), complete, out)
     return out
 
 
@@ -198,7 +212,6 @@ def _suspended_tfs_build():
     return m
 
 HTF_OF = tf_spec.HTF_OF   # 5m→1h، 15m/1h→4h، 4h→1d
-_rs_cache: dict = {}      # tf -> (ts, {sym: rank01})
 _fz_cache: dict = {}      # sym -> (ts, {"z", "persist", "crowded_long", "crowded_short"})
 _fz_pending: set = set()
 _oi_cache: dict = {}      # sym -> (ts, oi_stats)
@@ -208,34 +221,14 @@ _macro_cache: dict = {}   # tf -> (ts, {"gold": x})
 
 
 def _rs_rank(tf):
-    """رتبه قدرت نسبی ۰..۱ هر ارز بین تاپ نمادها (بازده ۲۰ کندلی)."""
-    hit = _rs_cache.get(tf)
-    if hit and time.time() - hit[0] < 180:
-        return hit[1]
-    with _once(("rs", tf)):
-        hit = _rs_cache.get(tf)
-        if hit and time.time() - hit[0] < 180:
-            return hit[1]
-        return _rs_rank_build(tf)
+    """رتبهٔ قدرتِ نسبی — عمداً خنثی (۰٫۵ برای همه)، یک تعریف با آموزش (calib-F1).
 
-
-def _rs_rank_build(tf):
-    now = time.time()
-    ranks = {}
-    try:
-        # همان جمعیتِ آموزش: ۱۰۰ ارزِ برتر، با حداقلِ جمعیت (وگرنه همه خنثی).
-        # قبلاً روی کشِ نیمه‌خالیِ پس از ری‌استارت، چند ارز رتبهٔ ۰ یا ۱ می‌گرفتند.
-        symbols, _ = market.get_top_symbols(calib.CALIB_UNIVERSE_N)
-        rets = {}
-        for s in symbols:
-            kl = market.get_klines_cached(s, tf)
-            if kl and len(kl["c"]) > 21:
-                rets[s] = kl["c"][-1] / kl["c"][-21] - 1
-        ranks = universe.rank_within(rets)
-    except Exception:  # noqa: BLE001
-        log.exc()
-    _rs_cache[tf] = (now, ranks)
-    return ranks
+    تعریفِ قبلی رتبه بینِ ۱۰۰ ارزِ برتر با کفِ جمعیتِ ۴۰ بود، ولی برنامه زنده فقط پنج ارزِ
+    watchlist را می‌خواند؛ پس اجرا همیشه ۰٫۵ می‌گرفت و آموزش مقدارِ واقعی. حالا آموزش هم خنثی
+    است (``features.DISABLED``). رتبه‌گرفتن بینِ پنج ارز بندِ «قدرت نسبی»ِ متا-گیت را هم روشن
+    می‌کرد (آستانه‌هایش برای ۱۰۰ ارز تنظیم شده) — آن تصمیمِ محصولی جداست.
+    """
+    return {}
 
 
 def _macro(tf):
@@ -501,7 +494,7 @@ def _compute_analysis(symbol, tf):
                   "rs_rank": _rs_rank(tf).get(symbol, 0.5),
                   "htf_sign": htf_sign}
         extras.update(_macro(tf))
-        extras.update(_market_state(tf))
+        extras.update(_market_state(tf, tk))
         extras["cost"] = _symbol_cost(symbol)
         extras["symbol"] = symbol                    # گیت نماد را هم می‌سنجد
         extras["suspended"] = _suspended_setups()
