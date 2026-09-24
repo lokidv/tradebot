@@ -1628,6 +1628,30 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
     return events, zmap, dir_X, dir_y, dir_R
 
 
+def _frozen_exclusion(tf, prereg):
+    """ts → آیا این ردیف بیرون از آموزش می‌ماند: داخلِ پنجرهٔ منجمد، یا در ``MAX_BARS+1`` کندلِ
+    پیش از شروعش — برچسبِ ۴۰ کندلیِ آن ردیف تا داخلِ پنجره می‌رسد (purge، calib-F9)."""
+    w = ((prereg or {}).get("final_windows") or {}).get(tf)
+    if not w:
+        return lambda _ts: False
+    lo = int(w["start_ms"]) - (bracket.MAX_BARS + 1) * TF_MS[tf]
+    hi = int(w["end_ms"])
+    return lambda ts: lo <= int(ts) < hi
+
+
+def _event_cells(events):
+    """سطل‌های پس‌گردِ ``lookup`` — [n، برد، جمعِ R، جمعِ ریسک٪] برای هر کلید."""
+    cells = {}
+    for e in events:
+        for key in keys_for(e["dir"], e["z"], e["votes"], e["trend"], e["btc"]):
+            cell = cells.setdefault(key, [0, 0, 0.0, 0.0])
+            cell[0] += 1
+            cell[1] += 1 if e["r"] > 0 else 0
+            cell[2] += e["r"]
+            cell[3] += e["risk_pct"]
+    return cells
+
+
 # ───────────────────── آموزش لجستیک (هسته مشترک، numpy خالص) ─────────────────────
 def _fit_logistic(X, y):
     """برازش با تقسیم زمانی ۷۰/۳۰ (داده باید از قبل بر اساس زمان مرتب باشد)."""
@@ -1831,7 +1855,7 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                     ethbtc_map = mom_norm_map(common, [eb[t] / bb_[t] for t in common])
 
             btc_events_zmap_src = None
-            cells, all_events = {}, []
+            all_events = []
             dir_X_all, dir_y_all, dir_R_all = [], [], []
             zmaps[tf] = {}
             order = ["BTCUSDT"] + [s for s in symbols if s != "BTCUSDT"]
@@ -1868,16 +1892,9 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                 dir_X_all.extend(dx)
                 dir_y_all.extend(dy)
                 dir_R_all.extend(dr)
-                for e in evs:
-                    for key in keys_for(e["dir"], e["z"], e["votes"], e["trend"], e["btc"]):
-                        cell = cells.setdefault(key, [0, 0, 0.0, 0.0])
-                        cell[0] += 1
-                        cell[1] += 1 if e["r"] > 0 else 0
-                        cell[2] += e["r"]
-                        cell[3] += e["risk_pct"]
                 with _lock:
                     _state["done"] += 1
-            pending[tf] = (cells, all_events, dir_X_all, dir_y_all, dir_R_all)
+            pending[tf] = (all_events, dir_X_all, dir_y_all, dir_R_all)
 
         # ── آموزشِ همهٔ تایم‌فریم‌ها موازی روی هسته‌ها (استخراج ترتیبی بود تا HTF آماده باشد؛ آموزش مستقل است) ──
         with _lock:
@@ -1886,28 +1903,40 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
         # پیش‌ثبت اگر نیست، همین‌جا — پس از استخراج و **پیش از** هر برازش و داوری
         try:
             prereg, fresh = research.ensure_registered({
-                tf: (int(min(e["ts"] for e in pending[tf][1])),
-                     int(max(e["ts"] for e in pending[tf][1])))
-                for tf in pending if pending[tf][1]})
+                tf: (int(min(e["ts"] for e in pending[tf][0])),
+                     int(max(e["ts"] for e in pending[tf][0])))
+                for tf in pending if pending[tf][0]})
             if fresh:
                 with _lock:
                     _state["progress"] = "پیش‌ثبتِ فرضیه‌ها انجام شد — پنجرهٔ آزمون منجمد شد"
         except Exception:  # noqa: BLE001 — بدونِ پیش‌ثبت، هیچ ترکیبی مجاز نمی‌شود (fail-closed)
             log.exc("preregistration")
             prereg = None
+        # پنجرهٔ منجمد فقط تا داوریِ یک‌بارمصرف معنا دارد. پس از آن (judged_<hash>.json) کنارگذاشتنش
+        # فقط ۲۵-۲۸٪ از تاریخِ 4h/1d را برای همیشه از مدل‌ها می‌گرفت (calib-F15)؛ پیش‌ثبتِ تازه
+        # پنجرهٔ تازه‌ای می‌سازد که تا داوری‌اش دوباره کنار گذاشته می‌شود.
+        judged_done = False
+        if prereg:
+            try:
+                judged_done = bool((research.last_judgement() or {}).get("judged"))
+            except Exception:  # noqa: BLE001 — نامعلوم ⇒ محافظه‌کار: کنار بگذار
+                log.exc("last_judgement")
+        freeze = prereg if (prereg and not judged_done) else None
 
         def _train_tf(tf):
-            cells, all_events, dx, dy, dr = pending[tf]
-            # ── پنجرهٔ آزمونِ منجمد: از **همهٔ** آموزش‌ها کنار گذاشته می‌شود ──
+            all_events, dx, dy, dr = pending[tf]
+            # ── پنجرهٔ آزمونِ منجمد (تا داوری): از **همهٔ** آموزش‌ها کنار گذاشته می‌شود ──
             # فقط داورِ یک‌بارمصرف (research.judge) این رویدادها را می‌بیند.
-            if prereg:
-                held = [e for e in all_events if research.in_final_window(tf, e["ts"], prereg)]
-                all_events = [e for e in all_events
-                              if not research.in_final_window(tf, e["ts"], prereg)]
-                keep = [k for k, yy in enumerate(dy)
-                        if not research.in_final_window(tf, yy[0], prereg)]
+            if freeze:
+                held = [e for e in all_events if research.in_final_window(tf, e["ts"], freeze)]
+                out_of_train = _frozen_exclusion(tf, freeze)
+                all_events = [e for e in all_events if not out_of_train(e["ts"])]
+                keep = [k for k, yy in enumerate(dy) if not out_of_train(yy[0])]
                 dx, dy, dr = [dx[k] for k in keep], [dy[k] for k in keep], [dr[k] for k in keep]
                 final_events[tf] = held
+            # سطل‌های پس‌گرد (lookup) هم فقط از رویدادهای آموزش — قبلاً پیش از کنارگذاشتن ساخته
+            # می‌شدند و آمارِ پنجرهٔ منجمد را نشان می‌دادند (calib-F9)
+            cells = _event_cells(all_events)
             # ── سلامتِ ویژگی‌ها پیش از آموزش ──
             # ویژگیِ با واریانسِ صفر چیزی برای یادگرفتن ندارد و فقط بُعد اضافه می‌کند؛
             # dxy_dir دقیقاً همین بود و کسی متوجه نشد. حالا در جدول ثبت می‌شود.
@@ -1931,10 +1960,11 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             for tf, blob in pool.map(_train_tf, list(pending)):
                 table["tfs"][tf] = blob
         table["trust_history"] = _update_trust_history(load() or {}, table)
-        table["spans"] = {tf: [int(min(e["ts"] for e in pending[tf][1])),
-                               int(max(e["ts"] for e in pending[tf][1]))]
-                          for tf in pending if pending[tf][1]}
-        if prereg and final_events:
+        table["spans"] = {tf: [int(min(e["ts"] for e in pending[tf][0])),
+                               int(max(e["ts"] for e in pending[tf][0]))]
+                          for tf in pending if pending[tf][0]}
+        table["frozen_window"] = {"excluded": bool(freeze), "judged": judged_done}
+        if freeze and final_events:
             try:
                 judged = research.last_judgement() or {}
                 if not judged.get("judged"):

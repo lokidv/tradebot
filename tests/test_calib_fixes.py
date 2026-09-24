@@ -6,6 +6,7 @@
 """
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -186,6 +187,109 @@ class DenseGridTests(unittest.TestCase):
 
     def test_model_version_was_bumped(self):
         self.assertGreaterEqual(calib.CALIB_VERSION, 23)
+
+
+T0_4H = 1_640_995_200_000          # 2022-01-01، مرزِ کندلِ 4h
+BAR_4H = 14_400_000
+
+
+class _BuildHarness:
+    """``calib.build`` روی تاریخچهٔ مصنوعی، بی‌شبکه؛ آموزش‌دهنده‌ها فقط ورودی را ثبت می‌کنند."""
+
+    SYMS = ("BTCUSDT", "ETHUSDT", "XUSDT")
+
+    def __init__(self, n=1500, prereg=None, judged=False):
+        self.n, self.prereg, self.judged = n, prereg, judged
+        self.seen, self.judge_input = {}, None
+        self.hists = {s: _klines(n, seed=21 + k, start_bar=T0_4H // BAR_4H, bar_ms=BAR_4H)
+                      for k, s in enumerate(self.SYMS)}
+
+    def _hist(self, sym, tf, bars=3000, **_k):
+        if sym not in self.hists:
+            raise RuntimeError("بی‌شبکه")
+        return self.hists[sym]
+
+    def _rec(self, name, ret=None):
+        def f(*a, **_k):
+            self.seen[name] = a
+            return ret
+        return f
+
+    def _judge(self, events_by_tf):
+        self.judge_input = events_by_tf
+        return {"passing": []}
+
+    def run(self, tfs=("4h",)):
+        tmp = tempfile.TemporaryDirectory()
+        pats = [
+            mock.patch.object(calib, "CALIB_PATH", os.path.join(tmp.name, "calib.json")),
+            mock.patch.object(calib.market, "get_history", side_effect=self._hist),
+            mock.patch.object(calib.market, "funding_z_map", return_value=[]),
+            mock.patch.object(calib.market, "get_funding_history", return_value=[]),
+            mock.patch.object(calib.research, "ensure_registered", return_value=(self.prereg, False)),
+            mock.patch.object(calib.research, "last_judgement",
+                              return_value={"judged": self.judged}),
+            mock.patch.object(calib.research, "judge", side_effect=self._judge),
+            mock.patch.object(calib, "_train_logistic", side_effect=self._rec("model")),
+            mock.patch.object(calib, "_fit_edge_model", side_effect=self._rec("edge")),
+            mock.patch.object(calib, "_fit_policy_model", side_effect=self._rec("policy")),
+            mock.patch.object(calib, "_train_dir_model", side_effect=self._rec("dir")),
+            mock.patch.object(calib, "_fit_action_policy", side_effect=self._rec("action")),
+            mock.patch.object(calib, "_table", None),
+        ]
+        for p in pats:
+            p.start()
+        try:
+            calib.build(list(self.SYMS), tfs=tfs)
+            st = dict(calib._state)
+            table = calib._table
+        finally:
+            for p in reversed(pats):
+                p.stop()
+            tmp.cleanup()
+        if st.get("error"):
+            raise AssertionError(st["error"])
+        return table
+
+
+def _prereg(start_bar, end_bar):
+    return {"hash": "x" * 64, "final_windows": {
+        "4h": {"start_ms": T0_4H + start_bar * BAR_4H, "end_ms": T0_4H + end_bar * BAR_4H}}}
+
+
+class FrozenWindowTests(unittest.TestCase):
+    """calib-F9: سطل‌ها و purge؛ calib-F15: پس از داوری پنجره به آموزش برمی‌گردد."""
+
+    def test_window_events_are_out_of_cells_and_labels_before_it_are_purged(self):
+        doc = _prereg(900, 1200)
+        h = _BuildHarness(prereg=doc, judged=False)
+        table = h.run()
+        w = doc["final_windows"]["4h"]
+        trained = h.seen["model"][0]
+        self.assertGreater(len(trained), 10)
+        purge_lo = w["start_ms"] - (calib.bracket.MAX_BARS + 1) * BAR_4H
+        self.assertFalse([e for e in trained if purge_lo <= e["ts"] < w["end_ms"]])
+        dense_ts = [yy[0] for yy in h.seen["dir"][1]]
+        self.assertFalse([t for t in dense_ts if purge_lo <= t < w["end_ms"]])
+        blob = table["tfs"]["4h"]
+        self.assertEqual(blob["cells"]["all"][0], len(trained))      # سطل = فقط آموزش
+        held = h.judge_input["4h"]
+        self.assertTrue(held)
+        self.assertTrue(all(w["start_ms"] <= e["ts"] < w["end_ms"] for e in held))
+        self.assertEqual(blob["held_out_final_events"], len(held))
+        self.assertEqual(table["frozen_window"], {"excluded": True, "judged": False})
+
+    def test_after_the_one_shot_judgement_the_window_is_trained_on(self):
+        doc = _prereg(900, 1200)
+        h = _BuildHarness(prereg=doc, judged=True)
+        table = h.run()
+        w = doc["final_windows"]["4h"]
+        trained = h.seen["model"][0]
+        self.assertTrue([e for e in trained if w["start_ms"] <= e["ts"] < w["end_ms"]])
+        self.assertIsNone(h.judge_input)                             # داوری فقط یک‌بار
+        self.assertEqual(table["tfs"]["4h"]["held_out_final_events"], 0)
+        self.assertEqual(table["frozen_window"], {"excluded": False, "judged": True})
+        self.assertEqual(table["tfs"]["4h"]["cells"]["all"][0], len(trained))
 
 
 if __name__ == "__main__":
