@@ -226,6 +226,27 @@ class LiveCostAdjustmentTests(unittest.TestCase):
         hi = calib._score_edge(m, feats, 2.0, 0.10)["edge_r"]
         self.assertAlmostEqual(hi - lo, (0.10 + m["live_funding_pct"]) * (1 / 0.5 - 1 / 2.0), delta=0.002)
 
+    def test_event_models_use_the_funding_their_events_actually_paid(self):
+        rng = np.random.RandomState(19)
+        events = []
+        for i in range(1500):
+            x = rng.normal(size=6)
+            events.append({"ts": i * calib.TF_MS["4h"], "feats": x.tolist(), "risk_pct": 1.5,
+                           "r": 0.6 * x[0] + 0.1 * rng.normal(), "cost_pct": 0.11 + 0.02,
+                           "tier_pct": 0.11, "regime": "trend"})
+        m = calib._fit_edge_model(events, "4h", calib.COST_PCT)
+        self.assertAlmostEqual(m["live_funding_pct"], 0.02, places=6)
+        # همان رده و همان ریسکِ آموزش ⇒ هیچ تعدیلی (قبلاً برآوردِ ثابتِ ۰٫۱٪ فاندینگ اضافه می‌شد)
+        self.assertAlmostEqual(calib._live_cost_delta_r(m, 0.11, 1.5), 0.0, places=6)
+
+    def test_extracted_events_carry_their_tier(self):
+        kl = _klines(2000, seed=5)
+        events, *_ = calib.extract_events("TESTUSDT", kl, "1h", [], {}, None, None)
+        self.assertTrue(events)
+        for e in events:
+            self.assertGreaterEqual(e["cost_pct"], e["tier_pct"])
+            self.assertIn(e["tier_pct"], [t for _f, t in calib.costs.TIERS])
+
     def test_action_policy_stores_the_cost_meta(self):
         rng = np.random.RandomState(37)
         dx, dy, dr = [], [], []
@@ -398,6 +419,14 @@ class LowCoverageFeatureTests(unittest.TestCase):
         vec = [0.5] * n
         self.assertEqual(calib._live_feats(blob, vec, "events")[j], 0.0)
         self.assertEqual(calib._live_feats(blob, vec, "dense")[j], 0.5)
+
+    def test_missing_higher_timeframe_is_zeroed_like_other_context(self):
+        self.assertIn("htf_align", features.MISSING_AS_ZERO)
+        n = len(calib.engine.FEATS)
+        rows = [[0.0 if name == "htf_align" else 0.01 * ((i * 7 + k) % 13)
+                 for k, name in enumerate(calib.engine.FEATS)] for i in range(100)]
+        self.assertIn("htf_align", features.live_zeroed(features.health(rows)))
+        self.assertEqual(len(rows[0]), n)
 
     def test_expected_constants_are_not_reported_dead(self):
         n = len(calib.engine.FEATS)

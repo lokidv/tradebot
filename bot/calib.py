@@ -699,7 +699,7 @@ def _edge_lift(pred, actual):
     return float(actual[th[1]].mean() - actual[th[0]].mean())
 
 
-def _trained_cost_meta(tf, cost_pct, risk_pct, rows):
+def _trained_cost_meta(tf, cost_pct, risk_pct, rows, funding_pct=None):
     """هزینه‌ای که مدل **واقعاً** یاد گرفته، برای تعدیلِ زنده (calib-F2).
 
     برچسب‌ها ``r − هزینهٔ هر ردیف/ریسکِ همان ردیف`` هستند، ولی مدل‌ها بینِ نمادها تجمیعی‌اند و
@@ -710,12 +710,25 @@ def _trained_cost_meta(tf, cost_pct, risk_pct, rows):
     """
     cost_pct = np.asarray(cost_pct, float)[rows]
     risk_pct = np.asarray(risk_pct, float)[rows]
+    # فاندینگِ برآوردیِ زنده = میانگینِ فاندینگی که همین ردیف‌ها واقعاً پرداختند (رویدادها: تسویه‌های
+    # واقعیِ مدتِ نگه‌داری)؛ نمونه‌های متراکم همان برآوردِ ثابتِ نیمِ براکت را دارند.
+    live_funding = costs.expected_funding_pct(tf, bracket.MAX_BARS / 2)
+    if funding_pct is not None:
+        fund = np.asarray(funding_pct, float)[rows]
+        fund = fund[np.isfinite(fund)]
+        if len(fund):
+            live_funding = round(float(np.mean(fund)), 6)
     return {
         "trained_cost_pct": round(float(np.mean(cost_pct)), 6) if len(cost_pct) else float(COST_PCT),
         "trained_cost_r": round(float(np.mean(cost_pct / risk_pct)), 6) if len(cost_pct) else 0.0,
-        # فاندینگِ برآوردیِ زنده — همان تعریفِ هزینهٔ نمونه‌های متراکم (نیمِ براکت)
-        "live_funding_pct": costs.expected_funding_pct(tf, bracket.MAX_BARS / 2),
+        "live_funding_pct": live_funding,
     }
+
+
+def _event_funding(evs):
+    """سهمِ فاندینگ از هزینهٔ هر رویداد (هزینه − ردهٔ نقدشوندگی)؛ رویدادِ بی ``tier_pct`` ⇒ NaN."""
+    return np.asarray([float(e["cost_pct"]) - float(e["tier_pct"])
+                       if "tier_pct" in e and "cost_pct" in e else np.nan for e in evs], float)
 
 
 def _live_cost_delta_r(m, cost_pct, risk_pct):
@@ -816,7 +829,7 @@ def _fit_edge_model(events, tf, cost_pct=COST_PCT):
         "kind": best_kind, "n_feat": X.shape[1],
         "mu": mu.tolist(), "sd": sd.tolist(),
         "calibration": [slope, intercept], "trained_ts": time.time(),
-        **_trained_cost_meta(tf, ev_cost, risk, cal_rows),
+        **_trained_cost_meta(tf, ev_cost, risk, cal_rows, _event_funding(evs)),
         "n_train": len(idx), "n_oos": len(test_rows),
         "oos_rank_ic": round(rank_ic, 4),
         "oos_lift_r": round(lift_r, 4),
@@ -1086,7 +1099,7 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
     feat_sd = np.where(feat_sd < 1e-9, 1.0, feat_sd)
     meta = {
         "n_feat": X.shape[1], "trained_ts": time.time(),
-        **_trained_cost_meta(tf, ev_cost, risk, cal_rows),
+        **_trained_cost_meta(tf, ev_cost, risk, cal_rows, _event_funding(evs)),
         "prob_kind": prob_kind, "prob_model": _ser(prob_kind, prob_fit),
         "edge_kind": edge_kind,
         "edge_model": ({"lgbm": edge_fit.model_to_string()} if edge_kind == "lgb_edge"
@@ -1678,6 +1691,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
         entry_ts = ts_arr[i + 1]
         exit_ts = ts_arr[min(res["exit_idx"], n - 1)]
         ev_cost = costs.event_cost_pct(sig, c, v, i, tf, entry_ts, exit_ts, funding_rows)
+        ev_tier = costs.point_in_time_tier(c, v, i, tf)
         b, s = engine.votes_at(cs, i)
         votes = b if sig == 1 else s
         trending = cs["adx"][i] >= 22 and cs["chop"][i] < 55
@@ -1701,6 +1715,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
                        "bars_held": int(res["bars_held"]),
                        "outcome": res["outcome"],
                        "cost_pct": ev_cost,            # رده‌ای + فاندینگ — نه ۰٫۱۵٪ ثابت
+                       "tier_pct": ev_tier,            # سهمِ نقدشوندگی (بقیه فاندینگ است)
                        "z": float(cs["z"][i]), "votes": int(votes),
                        "trend": bool(trending), "btc": bool(btc_align),
                        "regime": engine.regime_at(cs, c, i)[0]})
