@@ -275,7 +275,7 @@ def _empty(sym, tf):
             "entry": None, "sl": None, "tp": None, "rr": None, "risk_pct": None, "atr": None,
             "components": [], "votes_bull": 0, "votes_bear": 0, "z": None, "regime": None,
             "reasons": [], "warnings": [], "scorecard_applies": True, "policy_opinion": None,
-            "venue": LIVE_VENUE}
+            "venue": LIVE_VENUE, "variants": None, "variant_ref": None}
 
 
 # وضعیتِ موتور که هشدار است (مسدود/معلق/رد/قفل، یا احتیاطِ مشخص) — نه متن‌های عمومیِ «منتظر…» /
@@ -381,9 +381,14 @@ def from_analysis(a):
         d["reasons"] = [str(err)]
         return d
     tr = a.get("trade") if isinstance(a.get("trade"), dict) else {}
+    rt = a.get("rule_trade") if isinstance(a.get("rule_trade"), dict) else None
+    if rt is not None:                                 # گونه‌های پیش‌ثبت‌شده از همان خروجیِ analyze
+        d["variants"] = {v: variant_side(v, tf, rt.get("setup_side"), rt.get("zrule_side"), rt.get("rsi14"))
+                         or "wait" for v in VARIANTS}
+        d["variant_ref"] = {"entry": _num(rt.get("entry")), "atr": _num(rt.get("atr14")),
+                            "rsi14": _num(rt.get("rsi14"))}
     rule_missing = False
     if tr.get("setup") == "ap":
-        rt = a.get("rule_trade") if isinstance(a.get("rule_trade"), dict) else None
         rule_missing = rt is None
         tr_rule = rt if rt is not None else {}
         rule_side = tr_rule.get("side") if tr_rule.get("side") in ("long", "short") else None
@@ -896,6 +901,7 @@ def record(decisions, now=None):
     """برای هر تصمیمِ لانگ/شورت روی یک کندلِ بسته یک ردیفِ «open» می‌افزاید (بی‌تکرار).
 
     خروجی: تعدادِ ردیف‌های تازه. تصمیمِ کهنه‌تر از ``STALE_BARS`` کندل (فیدِ مرده) ثبت نمی‌شود.
+    همان تصمیم‌ها گونه‌های پیش‌ثبت‌شده را هم در دفترِ جدای خودشان ثبت می‌کنند (``record_variants``).
     """
     now = time.time() if now is None else now
     added = 0
@@ -927,6 +933,10 @@ def record(decisions, now=None):
             _append(LEDGER_PATH, row)
             seen.add(rid)
             added += 1
+    try:
+        record_variants(decisions, now=now)         # دفترِ جدای گونه‌ها؛ خطایش دفترِ اصلی را نمی‌اندازد
+    except Exception:  # noqa: BLE001
+        log.exc("decision.record variants")
     return added
 
 
@@ -942,6 +952,8 @@ def _resolve_one(op, kl, now):
     bar_ms = TF_MINUTES[op["tf"]] * 60000
     base = {"kind": "result", "id": op["id"], "sym": op["sym"], "tf": op["tf"], "side": op["side"],
             "candle_ts": ts, "venue": LIVE_VENUE, "resolved_at": round(now, 3)}
+    if op.get("variant"):
+        base["variant"] = op["variant"]             # دفترِ گونه‌ها — همان داوری
     atr = _num(op.get("atr"))
     if not atr or atr <= 0:
         base["skipped"] = "bad_row"
@@ -978,11 +990,38 @@ def resolve(get_klines, now=None):
 
     هیچ خطی بازنویسی نمی‌شود. ردیفِ ناقص/خراب نادیده گرفته می‌شود و هیچ‌وقت استثنا بیرون نمی‌آید
     (جز خطای نوشتنِ دیسک). چک و افزودن زیرِ یک قفل‌اند: «داوری‌شده؟» زیرِ قفل دوباره خوانده می‌شود،
-    پس دو فراخوانیِ هم‌زمان نتیجهٔ تکراری نمی‌افزایند. خروجی: تعدادِ ردیف‌های تازه داوری‌شده.
+    پس دو فراخوانیِ هم‌زمان نتیجهٔ تکراری نمی‌افزایند. خروجی: تعدادِ ردیف‌های تازه داوری‌شدهٔ دفترِ اصلی.
+
+    دفترِ گونه‌ها با **همین** مسیر و همان کندل‌ها (هر ارز × تایم‌فریم یک‌بار دریافت) داوری می‌شود و
+    سپس داوریِ یک‌بارهٔ پیش‌ثبت‌شده‌اش اگر موعدش رسیده باشد (``judge_variants``).
     """
     now = time.time() if now is None else now
+    memo = {}
+
+    def gk(sym, tf):
+        if (sym, tf) not in memo:
+            try:
+                memo[(sym, tf)] = (True, get_klines(sym, tf))
+            except Exception as e:  # noqa: BLE001 — همان خطا برای دفترِ دوم هم، بی درخواستِ دوباره
+                memo[(sym, tf)] = (False, e)
+        ok, val = memo[(sym, tf)]
+        if not ok:
+            raise val
+        return val
+
+    added = _resolve_ledger(LEDGER_PATH, gk, now)
+    try:
+        _resolve_ledger(VARIANTS_LEDGER_PATH, gk, now)
+        judge_variants(now=now)
+    except Exception:  # noqa: BLE001 — گونه‌ها هرگز دفترِ اصلی را نمی‌اندازند
+        log.exc("decision.resolve variants")
+    return added
+
+
+def _resolve_ledger(path, get_klines, now):
+    """داوریِ ردیف‌های بازِ یک دفترِ فقط‌افزودنی (اصلی یا گونه‌ها) — یک مسیرِ مشترک."""
     with _ledger_lock:
-        rows = _read_jsonl(LEDGER_PATH)
+        rows = _read_jsonl(path)
     done = _done_ids(rows)
     pending, seen = {}, set()
     for r in rows:
@@ -1009,11 +1048,11 @@ def resolve(get_klines, now=None):
         if not found:
             continue
         with _ledger_lock:                          # چک + افزودن اتمی
-            done_now = _done_ids(_read_jsonl(LEDGER_PATH))
+            done_now = _done_ids(_read_jsonl(path))
             for res in found:
                 if res["id"] in done_now:
                     continue                        # فراخوانیِ دیگری همین حالا داوری کرد
-                _append(LEDGER_PATH, res)
+                _append(path, res)
                 done_now.add(res["id"])
                 added += 1
     return added
@@ -1131,11 +1170,333 @@ def live_stats():
             "policy": {"cells": pcells, "overall": poverall}}
 
 
+# ───────────────────────── ۳ب) گونه‌های پیش‌ثبت‌شدهٔ قاعده — آزمونِ فقط رو-به-جلو ─────────────────────────
+# bot/data/research/prereg_rule_variants_forward.json (۲۰۲۶-۰۹-۲۴): دقیقاً دو گونه، فقط تصمیم‌های ثبت‌شده پس از
+# انتشارِ این کد. همان کندل‌های زنده و بازار، همان براکت و هزینه، همان مسیرِ داوریِ دفترِ اصلی. قبولی فقط برچسب
+# است: قاعده خودکار عوض نمی‌شود و این بخش هرگز به gates.json یا autotrader دست نمی‌زند.
+VARIANTS_LEDGER_PATH = paths.data("decision_variants_ledger.jsonl")
+VARIANTS_PREREG = "prereg_rule_variants_forward.json"
+VARIANTS = ("z_only", "d1_no_short_rsi30")
+VARIANT_FA = {"z_only": "فقط قاعدهٔ z/رأی (بی‌لایهٔ ستاپ)، همهٔ تایم‌فریم‌ها",
+              "d1_no_short_rsi30": "همان قاعده، ولی در روزانه بی‌شورت وقتی RSI14 زیرِ ۳۰ است"}
+V2_TF = "1d"                 # تنها تایم‌فریمی که گونهٔ دوم می‌تواند با قاعده فرق کند
+V2_RSI = 30.0
+JUDGE_RULES = {              # موعدِ داوریِ یک‌باره — عیناً همان پیش‌ثبت
+    "z_only": {"tfs": ("15m", "1h", "4h"), "min_weeks": 26, "min_trades": 300},
+    "d1_no_short_rsi30": {"tfs": (V2_TF,), "min_weeks": 52, "min_differs": 10},
+}
+BOOT_N = 10000
+BOOT_SEED = 20260924
+BOOT_ALPHA = 0.05
+DAY_MS = 86_400_000
+WEEK_MS = 7 * DAY_MS
+MONDAY0_MS = 4 * DAY_MS      # ۱۹۷۰-۰۱-۰۵، نخستین دوشنبه پس از epoch (پنج‌شنبه)
+VARIANT_STATUS_FA = {"not_started": "هنوز چیزی ثبت نشده", "collecting": "در حالِ جمع‌آوری — هنوز داوری نشده",
+                     "pass": "قبول: بهتر از قاعده (فقط برچسب؛ قاعده عوض نمی‌شود)",
+                     "fail": "رد: برتری بر قاعده نشان نداد",
+                     "inconclusive": "بی‌نتیجه: تا موعد به‌اندازهٔ کافی با قاعده فرق نکرد"}
+VARIANTS_NOTE_FA = ("دو گونهٔ پیش‌ثبت‌شده (۲۰۲۶-۰۹-۲۴) فقط روی تصمیم‌های ثبت‌شده از این به بعد، با همان کندل‌ها، براکت و "
+                    "کارمزدِ دفترِ اصلی سنجیده می‌شوند. شواهدِ قبلی داده‌کاوی‌شده بود؛ تا موعدِ داوری این اعداد فقط برای "
+                    "اطلاع‌اند و داوری یک‌بار و با بوت‌استرپِ بلوک‌هفتگی انجام می‌شود. قبولی فقط برچسب است و قاعده، "
+                    "gates.json و ربات را عوض نمی‌کند.")
+_SIDES = ("long", "short")
+
+
+def variant_side(variant, tf, setup_side, zrule_side, rsi14, setup_layer=None):
+    """جهتِ یک گونه در یک کندل از دو لایهٔ قاعده (``rule_trade`` در engine.analyze) — ``None`` یعنی صبر.
+
+    قاعده = ستاپِ زنده (معتبر و معلق‌نشده)، وگرنه z/رأی. ``z_only`` لایهٔ ستاپ را برمی‌دارد و
+    ``setup_layer=True`` آن را برمی‌گرداند (آزمونِ هم‌ارزی: باید عیناً خودِ قاعده شود).
+    ``d1_no_short_rsi30`` همان قاعده است جز شورتِ 1d وقتی RSI14 کندلِ تصمیم زیرِ ۳۰ است (⇒ صبر، بی‌جایگزین).
+    """
+    if variant not in VARIANTS:
+        raise ValueError(f"گونهٔ ناشناخته: {variant}")
+    use_setup = (variant != "z_only") if setup_layer is None else bool(setup_layer)
+    side = setup_side if (use_setup and setup_side in _SIDES) else (zrule_side if zrule_side in _SIDES else None)
+    if variant == "d1_no_short_rsi30" and tf == V2_TF and side == "short":
+        r = _num(rsi14)
+        if r is not None and r < V2_RSI:
+            side = None
+    return side
+
+
+def variant_id(variant, sym, tf, candle_ts, side):
+    return f"{variant}|{ledger_id(sym, tf, candle_ts, side)}"
+
+
+def _prereg_sha():
+    import hashlib
+    try:
+        with open(paths.data("research", VARIANTS_PREREG), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def record_variants(decisions, now=None):
+    """گونه‌های هر تصمیمِ تازه را در ``decision_variants_ledger.jsonl`` (فقط افزودنی، بی‌تکرار) ثبت می‌کند.
+
+    گونه‌ها در ``from_analysis`` از **همان** خروجیِ analyze (همان پنجرهٔ کندلِ زنده) ساخته شده‌اند. لانگ/شورتِ
+    گونه ردیفِ «open» می‌شود (با همان قراردادِ دفترِ اصلی)؛ کندلی که گونه صبر می‌کند ولی قاعده معامله،
+    ردیفِ «skip» — تا شمارِ کندل‌های متفاوت معلوم باشد. نخستین فراخوانیِ معتبر ردیفِ «start» (t0) را
+    یک‌بار می‌نویسد. گونهٔ دوم فقط در 1d ثبت می‌شود (جای دیگر عیناً قاعده است). خروجی: تعدادِ ردیف‌های تازه.
+    """
+    now = time.time() if now is None else now
+    added = 0
+    with _ledger_lock:
+        rows = _read_jsonl(VARIANTS_LEDGER_PATH)
+        seen = {r.get("id") for r in rows if r.get("kind") in ("open", "skip")}
+        started = any(r.get("kind") == "start" for r in rows)
+        for d in decisions or []:
+            if not isinstance(d, dict) or d.get("error"):
+                continue
+            vs, ref = d.get("variants"), d.get("variant_ref")
+            if not isinstance(vs, dict) or not isinstance(ref, dict):
+                continue
+            sym, tf, ts = d.get("sym"), d.get("tf"), _int(d.get("candle_ts"))
+            if not (sym and tf in TF_MINUTES and ts is not None):
+                continue
+            if now * 1000 - int(ts) > STALE_BARS * TF_MINUTES[tf] * 60000:
+                continue                            # همان گاردِ کهنگیِ دفترِ اصلی
+            if not started:
+                _append(VARIANTS_LEDGER_PATH, {"kind": "start", "at": round(now, 3), "prereg": VARIANTS_PREREG,
+                                               "prereg_sha256": _prereg_sha(), "variants": list(VARIANTS)})
+                started = True
+            rule_side = d.get("action") if d.get("action") in _SIDES else "wait"
+            entry, atr, rsi14 = _num(ref.get("entry")), _num(ref.get("atr")), _num(ref.get("rsi14"))
+            for v in VARIANTS:
+                if v == "d1_no_short_rsi30" and tf != V2_TF:
+                    continue
+                side = vs.get(v)
+                if side in _SIDES:
+                    if not (entry and atr and atr > 0):
+                        continue
+                    lv = bracket.levels(entry, atr, 1 if side == "long" else -1)
+                    rid = variant_id(v, sym, tf, ts, side)
+                    row = {"kind": "open", "id": rid, "variant": v, "sym": sym, "tf": tf, "side": side,
+                           "candle_ts": int(ts), "entry": entry, "sl": engine.sig_round(float(lv["sl"])),
+                           "tp": engine.sig_round(float(lv["tp"])), "atr": atr,
+                           "risk_pct": round(float(lv["risk_pct"]), 4), "rule_side": rule_side, "rsi14": rsi14,
+                           "cost_pct": COST_PCT, "venue": LIVE_VENUE, "recorded_at": round(now, 3)}
+                elif rule_side in _SIDES:
+                    rid = variant_id(v, sym, tf, ts, "wait")
+                    row = {"kind": "skip", "id": rid, "variant": v, "sym": sym, "tf": tf, "side": "wait",
+                           "candle_ts": int(ts), "rule_side": rule_side, "rsi14": rsi14,
+                           "venue": LIVE_VENUE, "recorded_at": round(now, 3)}
+                else:
+                    continue
+                if rid in seen:
+                    continue
+                _append(VARIANTS_LEDGER_PATH, row)
+                seen.add(rid)
+                added += 1
+    return added
+
+
+def weekly_block_bootstrap(var_trades, rule_trades, n_boot=BOOT_N, seed=BOOT_SEED):
+    """آزمونِ یک‌طرفهٔ پیش‌ثبت‌شده روی «میانگینِ R خالصِ گونه منهای قاعده».
+
+    ورودی‌ها ``[(candle_ts, net_r)]``. بلوک = هفتهٔ UTC (از دوشنبه) بر اساسِ کندلِ سیگنال؛ اجتماعِ هفته‌هایی که
+    در هر یک از دو جریان معامله دارند با جای‌گذاری بازنمونه‌گیری می‌شود و هر تکرار هر دو میانگین را از همان
+    هفته‌ها می‌سازد (تکراری که یکی از دو جریانش خالی است کنار می‌رود).
+    ``p = (1 + #{تفاوت ≤ 0}) / (1 + #تکرارهای معتبر)``.
+    """
+    def wk(t):
+        return (int(t) - MONDAY0_MS) // WEEK_MS
+    vt = [(wk(t), float(r)) for t, r in var_trades if _num(r) is not None]
+    rt = [(wk(t), float(r)) for t, r in rule_trades if _num(r) is not None]
+    out = {"n_variant": len(vt), "n_rule": len(rt), "mean_variant": None, "mean_rule": None,
+           "diff": None, "p": None, "weeks": 0, "valid": 0}
+    if not vt or not rt:
+        return out
+    weeks = sorted({w for w, _ in vt} | {w for w, _ in rt})
+    ix = {w: i for i, w in enumerate(weeks)}
+    sums = np.zeros((4, len(weeks)))
+    for w, r in vt:
+        sums[0, ix[w]] += r
+        sums[1, ix[w]] += 1
+    for w, r in rt:
+        sums[2, ix[w]] += r
+        sums[3, ix[w]] += 1
+    mv, mr = sums[0].sum() / sums[1].sum(), sums[2].sum() / sums[3].sum()
+    draw = np.random.default_rng(seed).integers(0, len(weeks), size=(int(n_boot), len(weeks)))
+    bs = sums[:, draw].sum(axis=2)                  # (۴، n_boot)
+    ok = (bs[1] > 0) & (bs[3] > 0)
+    d = bs[0, ok] / bs[1, ok] - bs[2, ok] / bs[3, ok]
+    out.update(mean_variant=round(float(mv), 4), mean_rule=round(float(mr), 4), diff=round(float(mv - mr), 4),
+               p=round(float((1 + np.count_nonzero(d <= 0)) / (1 + int(ok.sum()))), 4),
+               weeks=len(weeks), valid=int(ok.sum()))
+    return out
+
+
+def _variant_rows():
+    return _ledger_rows(VARIANTS_LEDGER_PATH, "decision.variants read")
+
+
+def _start_of(rows):
+    ats = [_num(r.get("at")) for r in rows if r.get("kind") == "start"]
+    ats = [a for a in ats if a is not None]
+    return min(ats) if ats else None
+
+
+def _taken_by_cell(by, results):
+    cells = {}
+    for key, ops in by.items():
+        try:
+            taken, open_n, _ = _cell_taken(ops, results)
+        except Exception:  # noqa: BLE001
+            log.exc("decision.variants cell", sym=key[0], tf=key[1])
+            continue
+        cells[key] = (taken, open_n)
+    return cells
+
+
+def _variant_streams(vrows, mrows, start):
+    """معامله‌های شمرده‌شدهٔ هر گونه و قاعده (یک معامله در هر لحظه، هر ارز × تایم‌فریم جدا) از t0 به بعد."""
+    v_opens, v_results = _index(vrows)
+    m_opens, m_results = _index(mrows)
+    out = {}
+    for v in VARIANTS:
+        by = {}
+        for op in v_opens.values():
+            if op.get("variant") == v:
+                by.setdefault((op["sym"], op["tf"]), []).append(op)
+        out[v] = _taken_by_cell(by, v_results)
+    rule_by = {}
+    for op in m_opens.values():
+        rec = _num(op.get("recorded_at"))
+        if _basis_of(op) != "policy" and rec is not None and rec >= start:
+            rule_by.setdefault((op["sym"], op["tf"]), []).append(op)
+    out["rule"] = _taken_by_cell(rule_by, m_results)
+    return out
+
+
+def _pool(cells, tfs):
+    """معامله‌های ``[(candle_ts, net_r)]`` و تعدادِ بازِ چند تایم‌فریم، روی هر پنج ارز."""
+    trades, open_n = [], 0
+    for (_sym, tf), (taken, o) in cells.items():
+        if tf in tfs:
+            trades += [(int(op["candle_ts"]), net) for op, net in taken]
+            open_n += o
+    return trades, open_n
+
+
+def _differs(vrows, variant):
+    """کندل‌های متفاوت با قاعده: گونه معامله و قاعده جهتِ دیگر/صبر، یا گونه صبر و قاعده معامله."""
+    out = set()
+    for r in vrows:
+        if r.get("variant") != variant:
+            continue
+        if r.get("kind") == "skip" or (r.get("kind") == "open" and r.get("side") != r.get("rule_side")):
+            out.add((r.get("sym"), r.get("tf"), _int(r.get("candle_ts"))))
+    return out
+
+
+def _compact(trades):
+    st = _stats([r for _, r in trades])
+    return {k: st[k] for k in ("n", "avg_r", "win_rate", "total_r", "se")}
+
+
+def _mean_diff(a, b):
+    return round(a["avg_r"] - b["avg_r"], 4) if a["n"] and b["n"] else None
+
+
+def judge_variants(now=None):
+    """داوریِ یک‌بارهٔ پیش‌ثبت‌شده: هر گونه حداکثر یک ردیفِ «judgement» می‌گیرد که پس از آن ثابت است.
+
+    z_only: پس از ≥۲۶ هفته از t0 و ≥۳۰۰ معاملهٔ داوری‌شده روی 15m/1h/4h (تجمیعِ پنج ارز).
+    d1_no_short_rsi30: پس از ≥۵۲ هفته؛ با ≥۱۰ کندلِ متفاوت آزمون روی 1d، وگرنه «بی‌نتیجه».
+    قبولی = تفاوتِ مشاهده‌شده > ۰ و p ≤ ۰٫۰۵. خروجی: ردیف‌های تازهٔ داوری.
+    """
+    now = time.time() if now is None else now
+    vrows = _variant_rows()
+    start = _start_of(vrows)
+    if start is None:
+        return []
+    weeks = (now - start) / (WEEK_MS / 1000)
+    judged = {r.get("variant") for r in vrows if r.get("kind") == "judgement"}
+    due = [v for v in VARIANTS if v not in judged and weeks >= JUDGE_RULES[v]["min_weeks"]]
+    if not due:
+        return []
+    st = _variant_streams(vrows, _ledger_rows(LEDGER_PATH, "decision.variants main read"), start)
+    out = []
+    for v in due:
+        rule = JUDGE_RULES[v]
+        vt, _ = _pool(st[v], rule["tfs"])
+        rt, _ = _pool(st["rule"], rule["tfs"])
+        if len(vt) < rule.get("min_trades", 0):
+            continue                                # z_only: تا ۳۰۰ معامله جمع شود
+        differs = len(_differs(vrows, v))
+        row = {"kind": "judgement", "variant": v, "at": round(now, 3), "t0": start, "weeks": round(weeks, 2),
+               "tfs": list(rule["tfs"]), "differs": differs, "prereg": VARIANTS_PREREG,
+               "n_boot": BOOT_N, "seed": BOOT_SEED, "alpha": BOOT_ALPHA}
+        if differs < rule.get("min_differs", 0):
+            row.update(result="inconclusive", n_variant=len(vt), n_rule=len(rt), diff=None, p=None)
+        else:
+            bt = weekly_block_bootstrap(vt, rt)
+            win = bt["diff"] is not None and bt["diff"] > 0 and bt["p"] is not None and bt["p"] <= BOOT_ALPHA
+            row.update(bt, result="pass" if win else "fail")
+        out.append(row)
+    if out:
+        with _ledger_lock:                          # چک + افزودن اتمی: داوریِ دوم ممکن نیست
+            again = {r.get("variant") for r in _read_jsonl(VARIANTS_LEDGER_PATH) if r.get("kind") == "judgement"}
+            out = [r for r in out if r["variant"] not in again]
+            for row in out:
+                _append(VARIANTS_LEDGER_PATH, row)
+    return out
+
+
+def variant_stats(now=None):
+    """کارنامهٔ زندهٔ دو گونه کنارِ قاعده در همان دوره (از t0)، پیشرفت تا موعدِ داوری و حکمِ ثبت‌شده."""
+    now = time.time() if now is None else now
+    vrows = _variant_rows()
+    start = _start_of(vrows)
+    weeks = max(0.0, (now - start) / (WEEK_MS / 1000)) if start is not None else None
+    st = (_variant_streams(vrows, _ledger_rows(LEDGER_PATH, "decision.variants main read"), start)
+          if start is not None else None)
+    judged = {}
+    for r in vrows:
+        if r.get("kind") == "judgement" and r.get("variant") in VARIANTS:
+            judged.setdefault(r["variant"], r)
+    items = []
+    for v in VARIANTS:
+        rule = JUDGE_RULES[v]
+        per_tf = {}
+        for tf in (TFS if v == "z_only" else (V2_TF,)):
+            vt, vo = _pool(st[v], (tf,)) if st else ([], 0)
+            rt, ro = _pool(st["rule"], (tf,)) if st else ([], 0)
+            a, b = _compact(vt), _compact(rt)
+            per_tf[tf] = {"variant": dict(a, open=vo), "rule": dict(b, open=ro), "diff": _mean_diff(a, b)}
+        vt, vo = _pool(st[v], rule["tfs"]) if st else ([], 0)
+        rt, _ = _pool(st["rule"], rule["tfs"]) if st else ([], 0)
+        a, b = _compact(vt), _compact(rt)
+        j = judged.get(v)
+        status = j.get("result") if j else ("collecting" if start is not None else "not_started")
+        items.append({
+            "key": v, "fa": VARIANT_FA[v], "judge_tfs": list(rule["tfs"]),
+            "pooled": {"variant": dict(a, open=vo), "rule": b, "diff": _mean_diff(a, b)},
+            "tfs": per_tf,
+            "differs": len(_differs(vrows, v)),
+            "progress": {"weeks": round(weeks, 2) if weeks is not None else None,
+                         "min_weeks": rule["min_weeks"], "trades": a["n"],
+                         "min_trades": rule.get("min_trades"), "min_differs": rule.get("min_differs")},
+            "status": status, "status_fa": VARIANT_STATUS_FA.get(status, status), "judgement": j,
+        })
+    return {"prereg": VARIANTS_PREREG, "started_at": start, "weeks": round(weeks, 2) if weeks is not None else None,
+            "venue": LIVE_VENUE, "cost_pct": COST_PCT, "note": VARIANTS_NOTE_FA, "items": items}
+
+
 # ───────────────────────── ۴) خروجیِ endpoint ─────────────────────────
-def payload(decisions, scorecard=None, live=None):
-    """بدنهٔ ``GET /api/decisions``: هر خانه = تصمیم + کارنامهٔ دوساله + کارنامهٔ زنده."""
+def payload(decisions, scorecard=None, live=None, variants=None):
+    """بدنهٔ ``GET /api/decisions``: هر خانه = تصمیم + کارنامهٔ دوساله + کارنامهٔ زنده (+ گونه‌های پیش‌ثبت‌شده)."""
     sc = scorecard if scorecard is not None else scorecards(wait=False)
     lv = live if live is not None else live_stats()
+    if variants is None:
+        try:
+            variants = variant_stats()
+        except Exception:  # noqa: BLE001 — دفترِ گونه‌ها هرگز جدول را نمی‌اندازد
+            log.exc("decision.payload variants")
+            variants = None
     sc = sc if isinstance(sc, dict) else {}
     lv = lv if isinstance(lv, dict) else {}
     sc_cells = sc.get("cells") or {}
@@ -1173,6 +1534,7 @@ def payload(decisions, scorecard=None, live=None):
         "venue_note": VENUE_NOTE_FA,
         "live_basis": "rule",                  # کارنامهٔ زنده فقط تصمیم‌های قاعده است
         "live_policy_overall": (lv.get("policy") or {}).get("overall"),
+        "variants": variants,
         "note": NOTE_FA,
     }
 
