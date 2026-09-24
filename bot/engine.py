@@ -527,11 +527,30 @@ def trade_suggestion(c, cs, fc, tf, votes_bull, votes_bear, s_ml, force_side=Non
 
 
 # ───────────────────────── بک‌تست سریع (سه‌مانعی) ─────────────────────────
-def quick_backtest(o, h, l, c, cs, tf, cost_pct=0.15):
-    """بک‌تست سریعِ همهٔ ستاپ‌ها با ورود کندل بعد، timeout و هزینه.
+BT_MIN_N = 30              # زیرِ این، وین‌ریتِ بک‌تست «نمونهٔ کم» است (همان مرزِ UI و decision.MIN_TRADES)
 
-    نتیجهٔ هر رویداد حتماً شمرده می‌شود و برخورد هم‌زمان SL/TP به‌صورت
-    محافظه‌کارانه باخت است.
+
+def wilson_ci(k, n, z=1.96):
+    """بازهٔ اطمینانِ ویلسون (۹۵٪) برای نرخِ برد، به درصد؛ بی‌نمونه ‹(None, None)›.
+
+    برخلافِ تقریبِ نرمال، با n کوچک یا نرخِ ۰/۱۰۰٪ هم در [۰، ۱۰۰] می‌ماند و صفرپهنا نمی‌شود.
+    """
+    if not n:
+        return None, None
+    p = k / n
+    den = 1.0 + z * z / n
+    mid = (p + z * z / (2 * n)) / den
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return round(max(mid - half, 0.0) * 100, 1), round(min(mid + half, 1.0) * 100, 1)
+
+
+def quick_backtest(o, h, l, c, cs, tf, cost_pct=0.15):
+    """بک‌تست سریعِ ستاپ‌های رویدادی با ورود کندل بعد، timeout و هزینه.
+
+    نتیجهٔ هر رویداد (حتی timeout) شمرده می‌شود و برخورد هم‌زمان SL/TP به‌صورت
+    محافظه‌کارانه باخت است. فقط برای نمایش: قاعدهٔ z/رأی را نمی‌سنجد، خنک‌شدنِ ۱۰ کندلی کوتاه‌تر
+    از سقفِ ۴۰ کندلیِ براکت است (معامله‌ها هم‌پوشان‌اند) و پنجرهٔ زنده n≈۶ می‌دهد — پس بازهٔ ویلسون
+    و پرچمِ small_n هم برمی‌گردد. کارنامهٔ واقعیِ قاعده decision.scorecards است.
     """
     n = len(c)
     wins = losses = timeouts = 0
@@ -559,10 +578,16 @@ def quick_backtest(o, h, l, c, cs, tf, cost_pct=0.15):
     total = wins + losses
     gross_win = sum(x for x in outcomes if x > 0)
     gross_loss = -sum(x for x in outcomes if x <= 0)
+    wr_lo, wr_hi = wilson_ci(wins, total)
     return {"n": total, "win_rate": (wins / total * 100) if total else None,
             "avg_r": (sum(outcomes) / total) if total else None,
             "timeouts": timeouts,
-            "profit_factor": gross_win / gross_loss if gross_loss > 0 else None}
+            "profit_factor": gross_win / gross_loss if gross_loss > 0 else None,
+            # فقط نمایش: پنجرهٔ ۴۲۰ کندلی حدودِ ۶ معامله می‌دهد (خطای معیارِ وین‌ریت ~۲۰ واحد)؛
+            # بازهٔ ۹۵٪ ویلسون و پرچمِ «نمونهٔ کم» تا عدد مثلِ کارنامه خوانده نشود
+            "win_rate_lo": wr_lo, "win_rate_hi": wr_hi,
+            "small_n": total < BT_MIN_N,
+            "scope": "setups"}                   # فقط ستاپ‌های رویدادی؛ قاعدهٔ z/رأی در این بک‌تست نیست
 
 
 # ───────────────────────── تحلیل کامل یک نماد/تایم‌فریم ─────────────────────────

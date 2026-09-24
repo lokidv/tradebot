@@ -200,5 +200,41 @@ class AdvisorTiltTests(unittest.TestCase):
                     self.assertIsNone(seen[0])
                     self.assertNotEqual(adv["action"], "close_now")
 
+
+# ───────────────────────── display-4: بک‌تستِ کوچک ─────────────────────────
+class QuickBacktestSampleTests(unittest.TestCase):
+    def test_wilson_interval(self):
+        self.assertEqual(engine.wilson_ci(0, 0), (None, None))
+        self.assertEqual(engine.wilson_ci(3, 6), (18.8, 81.2))
+        lo, hi = engine.wilson_ci(0, 6)
+        self.assertEqual(lo, 0.0)
+        self.assertGreater(hi, 30)                               # ۰ از ۶ یعنی «نمی‌دانیم»، نه «هرگز»
+        lo, hi = engine.wilson_ci(6, 6)
+        self.assertEqual(hi, 100.0)
+        self.assertLess(lo, 70)
+
+    def test_quick_backtest_reports_ci_and_small_sample_flag(self):
+        n = 300
+        o = np.full(n, 100.0)
+        h = np.full(n, 100.1)
+        l = np.full(n, 99.9)
+        c = np.full(n, 100.0)
+        cs = {"a14": np.full(n, 1.0)}
+        one = lambda _cs, _o, _h, _l, _c, i: (1, "pb") if i in (220, 240) else (0, None)  # noqa: E731
+        with mock.patch.object(engine, "setup_signal", side_effect=one):
+            bt = engine.quick_backtest(o, h, l, c, cs, "1h", cost_pct=0.15)
+        self.assertEqual(bt["n"], 2)
+        self.assertTrue(bt["small_n"])
+        self.assertEqual((bt["win_rate_lo"], bt["win_rate_hi"]), engine.wilson_ci(0, 2))
+        self.assertEqual(bt["scope"], "setups")
+        with mock.patch.object(engine, "setup_signal", return_value=(0, None)):
+            empty = engine.quick_backtest(o, h, l, c, cs, "1h")
+        self.assertEqual((empty["n"], empty["win_rate_lo"], empty["small_n"]), (0, None, True))
+
+    def test_live_analysis_carries_the_flag(self):
+        bt = engine.analyze(synthetic_klines(seed=5), "1h")["backtest"]
+        self.assertIn("small_n", bt)
+        self.assertEqual(bt["small_n"], bt["n"] < engine.BT_MIN_N)
+
 if __name__ == "__main__":
     unittest.main()
