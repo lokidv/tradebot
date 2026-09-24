@@ -308,6 +308,9 @@ class RunWindowTests(unittest.TestCase):
         self.assertEqual(res["label_tail_bars"], 0)
         self.assertGreater(res["oos_rows_label_unresolved"], 0)              # براکت‌های بازِ پایان ⇒ NaN
         self.assertTrue(np.isnan(oos["yL"][oos["t"] == w1 - D_MS]).all())
+        self.assertIsNotNone(res["ic"]["gross_label"])
+        self.assertIsNotNone(res["ic"]["partial_given_cost"])
+        self.assertIn("gL", oos)
         self.assertEqual(len(res["months"]), 6)
         self.assertTrue(all(m["rounds"] == 150 for m in res["months"]))
         self.assertTrue(all(m["train_t_min"] >= "2022-01-01" for m in res["months"]))

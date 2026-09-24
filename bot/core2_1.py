@@ -11,8 +11,8 @@
 اجرا رد می‌شود.
 
 پس از سنجاق (ممیزیِ ۲۰۲۶-۰۹) این فایل و ``core2.py`` برای مشخصه‌های بعدی اصلاح شدند: بی‌دُمِ فیوچرز پس از پایانِ
-پنجره و فاندینگِ کوکوین تا بسته‌شدنِ سطرِ آخر. پس هشِ کد با سنجاق یکی نیست و نگهبانِ holdout رد می‌کند — عمداً: در
-اعتبارسنجیِ v2.1 هیچ تایم‌فریمی پذیرفته نشد و holdout هرگز اجرا نمی‌شود.
+پنجره، IC روی R ناخالص/جهت‌دار/جزئی و فاندینگِ کوکوین تا بسته‌شدنِ سطرِ آخر. پس هشِ کد با سنجاق یکی نیست و نگهبانِ
+holdout رد می‌کند — عمداً: در اعتبارسنجیِ v2.1 هیچ تایم‌فریمی پذیرفته نشد و holdout هرگز اجرا نمی‌شود.
 
 holdout (سخت‌گیرانه‌تر از v2): فقط برای تایم‌فریمِ پذیرفته، فقط وقتی
   ۱. سنجاقِ ``core2_1_validation_pin.json`` در گیت commit شده و هشِ گزارشِ اعتبارسنجی با آن برابر است،
@@ -220,7 +220,7 @@ def walk_forward(ds, months, fit_fn=None, threads=NUM_THREADS, log=None, window_
     tf = ds["tf"]
     fit_fn = fit_fn or fit_pair
     t = ds["t"]
-    out = {k: [] for k in ("sym", "t", "E_L", "E_S", "month", "yL", "yS")}
+    out = {k: [] for k in core2.oos_keys(ds)}
     meta = []
     if window_end is not None and any(m1 > window_end for _, m1, _ in months):
         raise ValueError("ماهِ خارج از پنجره — پیش‌بینیِ پس از پایانِ پنجره ممنوع است")
@@ -238,7 +238,7 @@ def walk_forward(ds, months, fit_fn=None, threads=NUM_THREADS, log=None, window_
         EL, ES = predict(ds["X"][te])
         for k, v in (("sym", ds["sym"][te]), ("t", t[te]), ("E_L", EL), ("E_S", ES),
                      ("month", np.full(int(te.sum()), ym, dtype=np.int32)), ("yL", ds["yL"][te]),
-                     ("yS", ds["yS"][te])):
+                     ("yS", ds["yS"][te])) + tuple((k, ds[k][te]) for k in core2.OOS_EXTRA if k in ds):
             out[k].append(np.asarray(v))
         per_coin = np.bincount(ds["sym"][tr].astype(int), minlength=len(ds["symbols"])).tolist()
         row = {"month": ym, "train_cutoff": core2._date(m0 - GAP_BARS * BAR_MS[tf]), "n_train": int(tr.sum()),

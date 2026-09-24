@@ -180,6 +180,39 @@ class DatasetTests(unittest.TestCase):
         self.assertTrue((ds["exit_close"][ok] > ds["t"][ok]).all())
         self.assertTrue(np.isnan(ds["yL"][~ok]).all() or not (~ok).any())
 
+    def test_gross_labels_come_from_the_bracket_and_match_the_net_label(self):
+        """ممیزی model-1: R ناخالص مستقیم از براکت (نه float32 + هزینه): حدضرر دقیقاً −1، هدف یک مقدار، و خالص = بریده‌اش."""
+        fut = synth(3000)
+        yL, yS, ex, rp = cf.labels("1h", fut, cost=core2.COST)
+        gL, gS = core2.gross_labels(fut)
+        pen = core2.cost_r(rp)
+        for g, y in ((gL, yL), (gS, yS)):
+            self.assertTrue((np.isfinite(g) == np.isfinite(y)).all())
+            ok = np.isfinite(g)
+            self.assertLess(float(np.abs(np.clip(g - pen, -2, 1.8)[ok] - y[ok]).max()), 2e-6)
+            self.assertEqual(len(np.unique(g[np.isclose(g, 1.8)])), 1)              # بی‌نویزِ ممیزِ شناور
+            self.assertTrue((g[ok] >= -3).all())
+            self.assertGreater(int((g == -1.0).sum()), 100)
+        self.assertTrue(np.isnan(gL[-1]))                                             # کندلِ آخر نامعلوم
+
+    def test_dataset_carries_gross_labels_into_the_oos(self):
+        syms = ("BTCUSDT", "ETHUSDT")
+        spot = {s: synth(800, D_MS, seed=k) for k, s in enumerate(syms)}
+        fut = {s: synth(800, D_MS, seed=k + 50) for k, s in enumerate(syms)}
+        end = int(spot["BTCUSDT"]["t"][-1]) + D_MS
+        ds = core2.build_dataset("1d", end, end, symbols=syms, spot=spot, fut=fut, kfund={})
+        for k in ("gL", "gS", "risk_pct"):
+            self.assertEqual(len(ds[k]), len(ds["t"]))
+        self.assertTrue((np.isfinite(ds["gL"]) == np.isfinite(ds["yL"])).all())
+        months = core2.month_starts(int(ds["t"][-120]), end)
+        oos, _ = core2.walk_forward(ds, months, fit_fn=lambda X, *a: ((lambda Xt: (np.zeros(len(Xt), np.float32),
+                                                                                   np.zeros(len(Xt), np.float32))), {}),
+                                    window_end=end)
+        self.assertEqual(set(oos), {"sym", "t", "E_L", "E_S", "month", "yL", "yS", "gL", "gS", "risk_pct"})
+        with tempfile.TemporaryDirectory() as d:
+            with np.load(core2.save_oos("1d", oos, out_dir=d)) as z:
+                self.assertIn("gL", z.files)
+
 
 class KfundCutTests(unittest.TestCase):
     """ممیزی model-5: تسویهٔ هم‌لحظه با بسته‌شدنِ آخرین کندل (``t == spot_end``) در سطرِ آخر هست — مثلِ کل‌تاریخچه."""
@@ -319,7 +352,60 @@ class RunWindowTests(unittest.TestCase):
         self.assertTrue(np.isnan(oos["yL"][oos["t"] == w1 - D_MS]).all())
         self.assertTrue(res["replay_equal_to_decision_replay"])
         self.assertGreater(res["v2"]["n"], 0)
+        self.assertIsNotNone(res["ic"]["gross_label"])
         json.dumps(core2.to_json(res))
+
+
+class IcStatsTests(unittest.TestCase):
+    """ممیزی model-1/combos-1: IC روی برچسبِ خالص بیشتر هزینه را می‌سنجد؛ ناخالص/جهت‌دار/جزئی مهارت را."""
+
+    def _oos(self, n=6000, seed=0):
+        rng = np.random.RandomState(seed)
+        rp = rng.uniform(0.25, 2.0, n)
+        pen = 0.14 / np.maximum(rp, 0.05)
+        gL = np.where(rng.rand(n) < 0.36, 1.8, -1.0)
+        gS = np.where(rng.rand(n) < 0.36, 1.8, -1.0)
+        return rng, pen, {"sym": (np.arange(n) % 5).astype(np.int8), "t": np.arange(n, dtype=np.int64),
+                          "yL": np.clip(gL - pen, -2, 1.8).astype(np.float32),
+                          "yS": np.clip(gS - pen, -2, 1.8).astype(np.float32),
+                          "gL": gL.astype(np.float32), "gS": gS.astype(np.float32), "risk_pct": rp.astype(np.float32)}
+
+    def test_a_cost_only_predictor_has_net_ic_but_no_gross_or_partial_ic(self):
+        rng, pen, o = self._oos()
+        o["E_L"] = (-pen + rng.normal(0, 0.01, len(pen))).astype(np.float32)
+        o["E_S"] = (-pen + rng.normal(0, 0.01, len(pen))).astype(np.float32)
+        ic = core2.ic_stats(o, list("ABCDE"))
+        self.assertGreater(ic["net_label"]["E_L~yL"], 0.3)                          # «مهارتِ» ساختگی
+        self.assertEqual(ic["pooled"]["E_L~yL"], ic["net_label"]["E_L~yL"])       # کلیدِ قدیمی همان است
+        self.assertEqual(set(ic["pooled"]), {"E_L~yL", "E_S~yS", "(E_L-E_S)~(yL-yS)", "n"})
+        self.assertLess(abs(ic["gross_label"]["E_L~gL"]), 0.05)
+        self.assertLess(abs(ic["partial_given_cost"]["E_L~yL|cost"]), 0.05)
+        self.assertGreater(ic["cost_only"]["(-cost)~yL"], 0.3)
+        self.assertIn("gross_mean", ic["deciles"]["long"][0])
+        self.assertIn("cost_mean", ic["deciles"]["long"][0])
+        self.assertIn("cost", ic["note"])
+
+    def test_real_direction_shows_in_gross_directional_and_partial(self):
+        rng, pen, o = self._oos(seed=1)
+        o["E_L"] = (o["gL"] + rng.normal(0, 1.0, len(pen))).astype(np.float32)
+        o["E_S"] = (o["gS"] + rng.normal(0, 1.0, len(pen))).astype(np.float32)
+        ic = core2.ic_stats(o, list("ABCDE"))
+        self.assertGreater(ic["gross_label"]["E_L~gL"], 0.3)
+        self.assertGreater(ic["directional"]["(E_L-E_S)~(gL-gS)"], 0.3)
+        self.assertGreater(ic["partial_given_cost"]["E_S~yS|cost"], 0.3)
+        self.assertIn("E_L~gL", ic["per_coin"]["A"])
+
+    def test_old_oos_without_gross_still_works(self):
+        rng, pen, o = self._oos()
+        o["E_L"] = rng.normal(size=len(pen)).astype(np.float32)
+        o["E_S"] = rng.normal(size=len(pen)).astype(np.float32)
+        for k in ("gL", "gS", "risk_pct"):
+            o.pop(k)
+        ic = core2.ic_stats(o, list("ABCDE"))
+        self.assertIsNone(ic["gross_label"])
+        self.assertIsNone(ic["partial_given_cost"])
+        self.assertIsNotNone(ic["pooled"]["E_L~yL"])
+        json.dumps(core2.to_json(ic))
 
 
 class ReportFilesTests(unittest.TestCase):

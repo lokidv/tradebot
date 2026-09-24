@@ -68,6 +68,7 @@ SENS_MARGINS = (0.0, 0.10, 0.20)      # فقط حساسیت
 # خوانده می‌شد، پس برچسب و معاملهٔ پایانِ اعتبارسنجی به کندل‌های holdout وابسته بود. اکنون صفر: هیچ کندلی در/پس از
 # پایانِ پنجره خوانده نمی‌شود و براکتی که تا پایانِ پنجره بسته نشده نامعلوم است (برچسب NaN، معامله شمرده نمی‌شود).
 LABEL_TAIL_BARS = 0
+GROSS_DECIMALS = 6               # گردکردنِ R ناخالص: نویزِ ممیزِ شناور (~1e-13) گره‌های حدضرر/هدف را نمی‌شکند
 
 BOOT_B = 2000
 BOOT_SEED = 42
@@ -236,6 +237,24 @@ def load_kfund(sym, t_end=None, micro_dir=None):
     return out
 
 
+def gross_labels(fut_bars, max_bars=bracket.MAX_BARS):
+    """R **ناخالصِ** براکت برای هر کندل و هر جهت ⇒ ``(gL, gS)`` float64 — همان ``core_feats._side_label`` که
+    ``cf.labels`` برچسبِ خالص را از آن می‌سازد (خالص = بریدهٔ ``g − هزینه/risk_pct``)، بی‌هزینه و بی‌برش؛ NaN = نامعلوم.
+
+    مستقیم از نتیجهٔ براکت، نه بازسازی از برچسبِ float32 + هزینه (ممیزی model-1: آن بازسازی حدضررِ دقیقاً −1R را به
+    ده‌ها هزار مقدارِ متفاوتِ همبسته با هزینه می‌شکند و IC ساختگی می‌دهد)؛ گردشده به ``GROSS_DECIMALS``."""
+    o, h, l, c = (np.asarray(fut_bars[k], dtype=np.float64) for k in ("o", "h", "l", "c"))
+    a14 = engine.atr(h, l, c, 14)
+    gL = cf._side_label(o, h, l, c, a14, 1, max_bars)[0]
+    gS = cf._side_label(o, h, l, c, a14, -1, max_bars)[0]
+    return np.round(gL, GROSS_DECIMALS), np.round(gS, GROSS_DECIMALS)
+
+
+def cost_r(risk_pct, cost_pct=COST):
+    """جملهٔ هزینه برحسبِ R — همان ``pen`` در ``cf.labels``: ``هزینه / max(risk_pct, 0.05)``."""
+    return max(float(cost_pct), 0.0) / np.maximum(np.asarray(risk_pct, dtype=np.float64), 0.05)
+
+
 def build_dataset(tf, spot_end, fut_end, symbols=SYMBOLS, spot=None, fut=None, kfund=None, log=None):
     """سطرهای هر پنج ارز: ویژگیِ اسپات (کندل‌های ``< spot_end``) + برچسبِ فیوچرز (کندل‌های ``< fut_end``).
 
@@ -244,6 +263,7 @@ def build_dataset(tf, spot_end, fut_end, symbols=SYMBOLS, spot=None, fut=None, k
     ``spot``/``fut``/``kfund`` (اختیاری، برای تست) = ``{نماد: کندل‌ها}``؛ نبود ⇒ از micro/.
     فاندینگِ کوکوین تا بسته‌شدنِ آخرین کندل، خودش هم (``t ≤ spot_end``، ممیزی model-5): ``_kfund`` تسویهٔ هم‌لحظه
     با بسته‌شدن را معلوم می‌داند، پس برشِ ``t < spot_end`` سطرِ آخر را با محاسبهٔ کل‌تاریخچه/زنده متفاوت می‌کرد.
+    علاوه بر برچسبِ خالص: ``gL``/``gS`` (R ناخالص از ``gross_labels``، float32) برای IC توصیفی.
     """
     t0 = time.time()
     spot = spot or {s: load_bars("spot", s, tf, spot_end) for s in symbols}
@@ -263,6 +283,7 @@ def build_dataset(tf, spot_end, fut_end, symbols=SYMBOLS, spot=None, fut=None, k
         X = cf.stack(tf, F)
         Fb = fut[s]
         yL, yS, ex, rp = cf.labels(tf, Fb, cost=COST)
+        gL, gS = gross_labels(Fb)
         tf_ = Fb["t"]
         t = B["t"]
         j = np.searchsorted(tf_, t)
@@ -274,7 +295,8 @@ def build_dataset(tf, spot_end, fut_end, symbols=SYMBOLS, spot=None, fut=None, k
         exit_close = np.where(exj >= 0, tf_[np.maximum(exj, 0)] + bar, _NO_EXIT)
         parts.append({"sym": np.full(int(keep.sum()), k, dtype=np.int8), "t": t[keep], "X": X[keep],
                       "yL": yL[jj], "yS": yS[jj], "exit_close": exit_close.astype(np.int64),
-                      "risk_pct": rp[jj].astype(np.float32)})
+                      "risk_pct": rp[jj].astype(np.float32),
+                      "gL": gL[jj].astype(np.float32), "gS": gS[jj].astype(np.float32)})
         if log:
             log(f"  {tf} {s}: {int(keep.sum())} سطر ({time.time() - t0:.1f}s)")
     ds = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
@@ -296,16 +318,23 @@ def train_mask(t, exit_close, yL, yS, tf, m0):
     return m
 
 
+OOS_EXTRA = ("gL", "gS", "risk_pct")     # اگر در داده باشند به oos هم می‌روند (فقط برای IC توصیفی)
+
+
+def oos_keys(ds):
+    return ("sym", "t", "E_L", "E_S", "month", "yL", "yS") + tuple(k for k in OOS_EXTRA if k in ds)
+
+
 def walk_forward(ds, months, fit_fn=None, threads=NUM_THREADS, log=None, window_end=None):
     """برای هر ماه: برازشِ تازه روی ``train_mask`` و پیش‌بینیِ فقط سطرهای همان ماه.
 
     ``window_end`` (انحصاری) سقفِ سخت است: هیچ سطرِ پیش‌بینی‌ای در/پس از آن ساخته نمی‌شود.
-    خروجی: ``(oos, meta)``؛ ``oos`` = sym, t, E_L, E_S, month, yL, yS.
+    خروجی: ``(oos, meta)``؛ ``oos`` = sym, t, E_L, E_S, month, yL, yS (+ gL, gS, risk_pct اگر در داده باشند).
     """
     tf = ds["tf"]
     fit_fn = fit_fn or fit_pair
     t = ds["t"]
-    out = {k: [] for k in ("sym", "t", "E_L", "E_S", "month", "yL", "yS")}
+    out = {k: [] for k in oos_keys(ds)}
     meta = []
     if window_end is not None and any(m1 > window_end for _, m1, _ in months):
         raise ValueError("ماهِ خارج از پنجره — پیش‌بینیِ holdout در حالتِ اعتبارسنجی ممنوع است")
@@ -322,7 +351,7 @@ def walk_forward(ds, months, fit_fn=None, threads=NUM_THREADS, log=None, window_
         EL, ES = predict(ds["X"][te])
         for k, v in (("sym", ds["sym"][te]), ("t", t[te]), ("E_L", EL), ("E_S", ES),
                      ("month", np.full(int(te.sum()), ym, dtype=np.int32)), ("yL", ds["yL"][te]),
-                     ("yS", ds["yS"][te])):
+                     ("yS", ds["yS"][te])) + tuple((k, ds[k][te]) for k in OOS_EXTRA if k in ds):
             out[k].append(np.asarray(v))
         per_coin = np.bincount(ds["sym"][tr].astype(int), minlength=len(ds["symbols"])).tolist()
         row = {"month": ym, "train_cutoff": _date(m0 - GAP_BARS * BAR_MS[tf]), "n_train": int(tr.sum()),
@@ -507,25 +536,87 @@ def _spearman(a, b):
     return float(r) if np.isfinite(r) else None
 
 
-def ic_stats(oos, symbols):
+def _partial_spearman(a, b, c):
+    """Spearmanِ جزئیِ ``a`` و ``b`` با کنترلِ ``c``: همبستگیِ رتبه‌ها پس از حذفِ خطیِ رتبهٔ ``c`` از هر دو."""
+    from scipy.stats import rankdata
+    a, b, c = (np.asarray(x, dtype=np.float64) for x in (a, b, c))
+    m = np.isfinite(a) & np.isfinite(b) & np.isfinite(c)
+    if m.sum() < 10:
+        return None
+    r = np.corrcoef([rankdata(a[m]), rankdata(b[m]), rankdata(c[m])])
+    rab, rac, rbc = r[0, 1], r[0, 2], r[1, 2]
+    den = math.sqrt(max((1.0 - rac * rac) * (1.0 - rbc * rbc), 0.0))
+    if not (den > 1e-12) or not np.isfinite(rab):
+        return None
+    v = (rab - rac * rbc) / den
+    return float(v) if np.isfinite(v) else None
+
+
+IC_NOTE = ("pooled/net_label = Spearman against the NET label (gross - 0.14/risk_pct). About 60% of rows are exactly "
+           "-1R (stop) and 35% exactly +1.8R (target); inside those tie groups the net rank is set only by the cost term, "
+           "which is known at entry, so this IC mostly measures cost/volatility ranking, not direction (audit model-1, "
+           "combos-1). Read gross_label, directional and partial_given_cost for skill; cost_only is the model-free "
+           "'-cost' predictor. Descriptive only: adoption never reads IC.")
+
+
+def ic_stats(oos, symbols, cost_pct=COST):
+    """IC توصیفیِ بیرون از نمونه (هرگز در پذیرش به کار نمی‌رود).
+
+    ``pooled`` (کلیدِ قدیمی، همان ``net_label``) = Spearman روی برچسبِ **خالص** — درونِ گره‌های حدضرر/هدف رتبه‌اش را
+    فقط هزینه تعیین می‌کند، پس بیشتر «رتبه‌بندیِ هزینه» را می‌سنجد (ممیزی model-1/combos-1). برای مهارت:
+    ``gross_label`` (R ناخالص از خودِ براکت، ``gL``/``gS``)، ``directional`` (E_L−E_S با yL−yS و gL−gS) و
+    ``partial_given_cost`` (Spearmanِ جزئیِ E و y با کنترلِ جملهٔ هزینه). ``cost_only`` = پیش‌بینِ بی‌مدلِ «−هزینه».
+    نبودِ ``gL``/``risk_pct`` در oos (فایل‌های قدیمی) ⇒ همان بلوک‌ها ``None``.
+    """
     EL, ES = oos["E_L"].astype(float), oos["E_S"].astype(float)
     yL, yS = oos["yL"].astype(float), oos["yS"].astype(float)
-    out = {"pooled": {"E_L~yL": _spearman(EL, yL), "E_S~yS": _spearman(ES, yS),
-                      "(E_L-E_S)~(yL-yS)": _spearman(EL - ES, yL - yS),
-                      "n": int((np.isfinite(yL) & np.isfinite(yS)).sum())},
+    has_g = "gL" in oos and "gS" in oos and len(oos["gL"]) == len(EL)
+    has_c = "risk_pct" in oos and len(oos["risk_pct"]) == len(EL)
+    gL = oos["gL"].astype(float) if has_g else None
+    gS = oos["gS"].astype(float) if has_g else None
+    neg_cost = -cost_r(oos["risk_pct"], cost_pct) if has_c else None
+    net = {"E_L~yL": _spearman(EL, yL), "E_S~yS": _spearman(ES, yS),
+           "(E_L-E_S)~(yL-yS)": _spearman(EL - ES, yL - yS), "n": int((np.isfinite(yL) & np.isfinite(yS)).sum())}
+    out = {"note": IC_NOTE,
+           "pooled": dict(net),                            # کلیدِ قدیمی (سازگاری) = net_label
+           "net_label": dict(net, label="net = gross - cost/risk_pct (cost-dominated ranks)"),
+           "gross_label": ({"E_L~gL": _spearman(EL, gL), "E_S~gS": _spearman(ES, gS),
+                            "n": int((np.isfinite(gL) & np.isfinite(gS)).sum()),
+                            "label": "gross bracket R before cost, taken from the bracket result"} if has_g else None),
+           "directional": {"(E_L-E_S)~(yL-yS)": net["(E_L-E_S)~(yL-yS)"],
+                           "(E_L-E_S)~(gL-gS)": _spearman(EL - ES, gL - gS) if has_g else None},
+           "partial_given_cost": ({"E_L~yL|cost": _partial_spearman(EL, yL, neg_cost),
+                                   "E_S~yS|cost": _partial_spearman(ES, yS, neg_cost)} if has_c else None),
+           "cost_only": ({"(-cost)~yL": _spearman(neg_cost, yL), "(-cost)~yS": _spearman(neg_cost, yS),
+                          "E_L~(-cost)": _spearman(EL, neg_cost), "E_S~(-cost)": _spearman(ES, neg_cost)}
+                         if has_c else None),
            "per_coin": {}, "deciles": {}}
     for k, s in enumerate(symbols):
         m = oos["sym"] == k
-        out["per_coin"][s] = {"E_L~yL": _spearman(EL[m], yL[m]), "E_S~yS": _spearman(ES[m], yS[m])}
-    for name, E, y in (("long", EL, yL), ("short", ES, yS)):
+        pc = {"E_L~yL": _spearman(EL[m], yL[m]), "E_S~yS": _spearman(ES[m], yS[m])}
+        if has_g:
+            pc.update({"E_L~gL": _spearman(EL[m], gL[m]), "E_S~gS": _spearman(ES[m], gS[m])})
+        out["per_coin"][s] = pc
+    for name, E, y, g in (("long", EL, yL, gL), ("short", ES, yS, gS)):
         m = np.isfinite(E) & np.isfinite(y)
         if m.sum() < 100:
             continue
         q = np.quantile(E[m], np.linspace(0, 1, 11))
         b = np.clip(np.searchsorted(q, E[m], side="right") - 1, 0, 9)
-        out["deciles"][name] = [{"E_mean": round(float(E[m][b == d].mean()), 4),
-                                 "y_mean": round(float(y[m][b == d].mean()), 4), "n": int((b == d).sum())}
-                                for d in range(10) if (b == d).any()]
+        rows = []
+        for d in range(10):
+            if not (b == d).any():
+                continue
+            row = {"E_mean": round(float(E[m][b == d].mean()), 4),
+                   "y_mean": round(float(y[m][b == d].mean()), 4), "n": int((b == d).sum())}
+            if has_g:
+                gd = g[m][b == d]
+                gd = gd[np.isfinite(gd)]
+                row["gross_mean"] = round(float(gd.mean()), 4) if len(gd) else None
+            if has_c:
+                row["cost_mean"] = round(float(-neg_cost[m][b == d].mean()), 4)
+            rows.append(row)
+        out["deciles"][name] = rows
     return out
 
 
@@ -648,10 +739,11 @@ def save_oos(tf, oos, window="validation", out_dir=None):
     d = out_dir or OUT_DIR
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, f"{tf}_{'val' if window == 'validation' else 'hold'}_oos.npz")
+    extra = {k: np.asarray(oos[k]).astype(np.float32) for k in OOS_EXTRA if k in oos}
     np.savez_compressed(path, sym=np.asarray(SYMBOLS)[oos["sym"].astype(int)] if len(oos["sym"]) else np.zeros(0, "U7"),
                         t=oos["t"].astype(np.int64), E_L=oos["E_L"].astype(np.float32),
                         E_S=oos["E_S"].astype(np.float32), month=oos["month"].astype(np.int32),
-                        yL=oos["yL"].astype(np.float32), yS=oos["yS"].astype(np.float32))
+                        yL=oos["yL"].astype(np.float32), yS=oos["yS"].astype(np.float32), **extra)
     return path
 
 
