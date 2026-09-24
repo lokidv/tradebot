@@ -18,6 +18,16 @@
 دو فایلِ فقط-افزودنی:
 * ``candidates.jsonl`` — یک خط به ازای هر کاندید
 * ``candidate_results.jsonl`` — یک خط به ازای هر داوری
+
+کلیدِ ستاپ: معامله‌ای که از قاعدهٔ z/رأی آمده (بی‌ستاپِ رویدادی) ``"rule"`` ثبت می‌شود، نه «zx».
+«zx» در خانوادهٔ پیش‌ثبت‌شده (preregistration.json، research.judge) یعنی **رویدادِ کراسِ z** از
+``engine.setup_signal``؛ ردیف‌های قاعده (≈۸۰٪ ردیف‌های «zx»ِ قدیمی در 4h/1d) را گیت هرگز مجاز نمی‌کند
+و اثباتِ سایهٔ ترکیبِ zx را آلوده می‌کردند. ردیف‌های قدیمی (بی‌``setup_v``) که «zx» دارند قابلِ تفکیک
+نیستند و با ``setup_key`` زیرِ کلیدِ جدای ``LEGACY_ZX`` شمرده می‌شوند، نه zx.
+
+هزینه: ``cost_pct`` ردهٔ نقدشوندگیِ همان نماد است (``main._symbol_cost`` = جدولِ ``costs.TIERS``) — همان
+جزءِ ردهٔ مدلِ هزینهٔ پیش‌ثبت‌شده (``costs.event_cost_pct``)؛ فاندینگ اینجا **لحاظ نمی‌شود**. این با
+کارمزدِ ثابتِ ۰٫۱۴٪ِ دفترِ تصمیم/کارنامه فرق دارد؛ برچسبش در ``COST_BASIS`` است.
 """
 import hashlib
 import json
@@ -29,6 +39,7 @@ import time
 import bracket
 import paths
 import stats as statsmod   # «stats» نامِ تابعِ همین ماژول است
+import log
 import tf_spec
 
 DATA_DIR = paths.DATA_DIR
@@ -46,8 +57,35 @@ GATE_FIELDS = (
     "drift_reject", "meta_approved", "meta_blocks", "signal_score",
 )
 
+RULE_SETUP = "rule"            # معاملهٔ قاعدهٔ z/رأی — هرگز «zx» (که یعنی رویدادِ کراسِ z)
+LEGACY_ZX = "zx_or_rule"       # ردیفِ قدیمیِ «zx»: کراسِ z یا قاعده — قابلِ تفکیک نیست
+SETUP_KEY_V = 2                # نسخهٔ کلیدِ ستاپ؛ ردیفِ بی‌این نشانه قدیمی است
+LEGACY_COST_PCT = 0.15         # فقط ردیف‌های قدیمیِ بی‌کلیدِ هزینه
+COST_BASIS = {
+    "model": "tier",
+    "desc_fa": ("ردهٔ نقدشوندگیِ نماد از حجمِ ۲۴ساعتهٔ اسپات (۰٫۰۸ / ۰٫۱۱ / ۰٫۱۸ / ۰٫۳۰٪، با فرضِ ورودِ میکر) — "
+                "جزءِ ردهٔ مدلِ هزینهٔ پیش‌ثبت‌شده؛ فاندینگ لحاظ نشده"),
+    "pre_registered": "costs.event_cost_pct (point-in-time tier + funding)",
+    "funding_included": False,
+}
+
 _lock = threading.Lock()
 _seen = None                   # مجموعهٔ شناسه‌های ثبت‌شده (کشِ حافظه)
+
+
+def setup_key(row):
+    """کلیدِ ستاپِ یک ردیفِ کاندید/نتیجه برای ترکیب‌های ``tf|setup|side``.
+
+    ردیفِ تازه (``setup_v``≥۲) همان مقدارِ ذخیره‌شده است (خالی ⇒ ``rule``). ردیفِ قدیمیِ «zx» یا خالی
+    ⇒ ``LEGACY_ZX``؛ هرگز در ترکیبِ پیش‌ثبت‌شدهٔ zx شمرده نمی‌شود. ستاپ‌های دیگر (sq/fd/pb/rg/ap)
+    همیشه واقعی ثبت شده بودند.
+    """
+    s = row.get("setup")
+    if int(row.get("setup_v") or 1) >= SETUP_KEY_V:
+        return s or RULE_SETUP
+    if not s or s == "zx":
+        return LEGACY_ZX
+    return s
 
 
 def candidate_id(symbol, tf, side, candle_ts):
@@ -111,13 +149,16 @@ def log_candidate(row, tf, extra=None):
             return False
         rec = {
             "id": cid, "symbol": symbol, "tf": tf, "side": side,
-            "setup": row.get("setup") or "zx",
+            "setup": row.get("setup") or RULE_SETUP,
+            "setup_observed": bool(row.get("setup_observed")),
+            "setup_v": SETUP_KEY_V,
             "candle_ts": int(candle_ts), "logged_at": time.time(),
             "atr14": float(atr14),
             "proposed_entry": float(entry),
             "risk_pct": round(risk_pct, 4),
             # ⚠️ ``or`` اینجا اشتباه است: هزینهٔ صفر (تستِ بدونِ کارمزد) falsy است
-            "cost_pct": float(row["cost"] if row.get("cost") is not None else 0.15),
+            "cost_pct": float(row["cost"] if row.get("cost") is not None else LEGACY_COST_PCT),
+            "cost_model": COST_BASIS["model"] if row.get("cost") is not None else "default",
             "p_win": row.get("p_win"), "ev_pct": row.get("ev_pct"),
             "regime": row.get("regime"),
             "gate_state": {k: row.get(k) for k in GATE_FIELDS if k in row},
@@ -134,33 +175,76 @@ def _resolved_ids():
 
 
 def resolve(get_klines, limit=None):
-    """داوریِ کاندیدهای بازِ با کندل‌های واقعی. خروجی: تعداد ردیفِ تازه داوری‌شده."""
+    """داوریِ کاندیدهای بازِ با کندل‌های واقعی. خروجی: تعداد ردیفِ تازه داوری‌شده.
+
+    فهرستِ داوری‌شده‌ها **یک‌بار** خوانده می‌شود (قبلاً برای هر کاندید یک‌بار: O(N×M) زیرِ قفل، که
+    ثبتِ کاندید و در نتیجه overview را هم معطل می‌کرد). چک و افزودن مثلِ ``decision.resolve`` زیرِ یک
+    قفل‌اند و «داوری‌شده؟» آنجا دوباره خوانده می‌شود، پس دو فراخوانیِ هم‌زمان (دو زبانه، یا حلقهٔ
+    پس‌زمینه کنارِ ‎/api/live-stats) نتیجهٔ تکراری نمی‌افزایند.
+    """
     with _lock:
-        pending = [c for c in _read(CAND_PATH) if c.get("id") not in _resolved_ids()]
+        done = _resolved_ids()
+        pending, queued = [], set()
+        for c in _read(CAND_PATH):
+            cid = c.get("id")
+            if not cid or cid in done or cid in queued:
+                continue
+            queued.add(cid)
+            pending.append(c)
     if limit:
         pending = pending[:limit]
-    done = 0
+    found, klines = [], {}
     for c in pending:
+        key = (c.get("symbol"), c.get("tf"))
+        if key not in klines:
+            try:
+                klines[key] = get_klines(*key)
+            except Exception:  # noqa: BLE001 — نماد در دسترس نیست؛ دفعهٔ بعد
+                klines[key] = None
+        if klines[key] is None:
+            continue
         try:
-            kl = get_klines(c["symbol"], c["tf"])
-        except Exception:  # noqa: BLE001 — نماد در دسترس نیست؛ دفعهٔ بعد
+            res = resolve_one(c, klines[key])
+        except Exception:  # noqa: BLE001 — یک ردیفِ خراب نباید بقیه را بیندازد
+            log.exc("candidates.resolve row", id=c.get("id"))
             continue
-        res = resolve_one(c, kl)
-        if res is None:
-            continue
-        with _lock:
+        if res is not None:
+            found.append(res)
+    if not found:
+        return 0
+    added = 0
+    with _lock:                                   # چک + افزودن اتمی
+        done_now = _resolved_ids()
+        for res in found:
+            if res["id"] in done_now:
+                continue                          # فراخوانیِ دیگری همین حالا داوری کرد
             _append(RESULT_PATH, res)
-        done += 1
-    return done
+            done_now.add(res["id"])
+            added += 1
+    return added
 
 
 def resolve_one(cand, kl):
-    """داوریِ یک کاندید با همان قراردادِ برچسبِ آموزش. ``None`` یعنی هنوز زود است."""
+    """داوریِ یک کاندید با همان قراردادِ برچسبِ آموزش. ``None`` یعنی هنوز زود است.
+
+    ورود فقط روی بازِ **دقیقاً** کندلِ بعد از کندلِ سیگنال (``candle_ts + یک کندل``)، مثلِ
+    ``decision._resolve_one``. اگر آن کندل در پنجره نیست (داوری بیش از ۴۲۰ کندل دیر شد و پنجره از آن
+    گذشت، یا شکافِ داده) ردیف با ``skipped="no_data"`` بسته می‌شود — قبلاً اولین کندلِ پنجره (گاهی صدها
+    کندل بعد) با ATRِ کهنه ورود حساب می‌شد و نتیجه‌ای بی‌ربط به سیگنال با همان candle_ts در آمار می‌رفت.
+    """
     sig = 1 if cand["side"] == "long" else -1
     ts = int(cand["candle_ts"])
-    start = next((i for i, t in enumerate(kl["t"]) if t > ts), None)
+    t = kl["t"]
+    start = next((i for i, x in enumerate(t) if x > ts), None)
     if start is None:
         return None                       # هنوز کندلِ بعدی بسته نشده
+    base = {"id": cand["id"], "symbol": cand.get("symbol"), "tf": cand.get("tf"),
+            "side": cand.get("side"), "setup": setup_key(cand), "setup_v": SETUP_KEY_V,
+            "candle_ts": ts, "resolved_at": time.time()}
+    if not tf_spec.is_known(cand.get("tf")):
+        return dict(base, skipped="unknown_tf")
+    if int(t[start]) != ts + tf_spec.bar_ms(cand["tf"]):
+        return dict(base, skipped="no_data")  # کندلِ ورود (سیگنال + یک کندل) در داده نیست
     entry = float(kl["o"][start])          # ورود = بازِ کندلِ بعد، دقیقاً مثل برچسب
     lv = bracket.levels(entry, cand["atr14"], sig)
     if lv["risk_pct"] < MIN_RISK_PCT:
@@ -170,20 +254,23 @@ def resolve_one(cand, kl):
                                lv["entry"], lv["sl"], lv["tp"])
     if res["timed_out"] and available < bracket.MAX_BARS:
         return None                       # هنوز به حدِ زمانی نرسیده و باری نخورده
-    cost_pct = cand["cost_pct"] if cand.get("cost_pct") is not None else 0.15
+    has_cost = cand.get("cost_pct") is not None
+    cost_pct = cand["cost_pct"] if has_cost else LEGACY_COST_PCT
     net = bracket.net_r(res["gross_r"], lv["risk_pct"], cost_pct)
-    return {
-        "id": cand["id"], "symbol": cand["symbol"], "tf": cand["tf"],
-        "side": cand["side"], "setup": cand.get("setup") or "zx",
-        "candle_ts": ts, "resolved_at": time.time(),
+    base.update({
+        "setup_observed": cand.get("setup_observed"),
         "entry": lv["entry"], "sl": lv["sl"], "tp": lv["tp"],
         "risk_pct": round(lv["risk_pct"], 4),
         "outcome": res["outcome"], "bars_held": res["bars_held"],
         "gross_r": round(res["gross_r"], 4),
         "net_r": round(net, 4),
+        # مبنای هزینه کنارِ هر نتیجه: ردهٔ نقدشوندگی (بی‌فاندینگ)، نه ۰٫۱۴٪ِ کارنامه
+        "cost_pct": float(cost_pct),
+        "cost_model": (cand.get("cost_model") or COST_BASIS["model"]) if has_cost else "default",
         "was_tradeable": bool((cand.get("gate_state") or {}).get("tradeable")),
         "blocking_gates": _blocking_gates(cand.get("gate_state") or {}),
-    }
+    })
+    return base
 
 
 def _blocking_gates(gs):
@@ -213,19 +300,19 @@ def _blocking_gates(gs):
 def stats(tf=None, days=30, only_tradeable=False, setup=None, side=None):
     """آمارِ خالصِ کاندیدها. پیش‌فرض: **همهٔ** کاندیدها، نه فقط آن‌هایی که مجوز گرفتند."""
     cutoff = (time.time() - days * 86400) * 1000
-    rows = [r for r in _read(RESULT_PATH)
+    rows = [r for r in _unique(_read(RESULT_PATH))          # نتیجهٔ تکراریِ قدیمی دوبار شمرده نشود
             if r.get("net_r") is not None and r.get("candle_ts", 0) >= cutoff]
     if tf:
         rows = [r for r in rows if r.get("tf") == tf]
     if setup:
-        rows = [r for r in rows if r.get("setup") == setup]
+        rows = [r for r in rows if setup_key(r) == setup]
     if side:
         rows = [r for r in rows if r.get("side") == side]
     if only_tradeable:
         rows = [r for r in rows if r.get("was_tradeable")]
     out = {"n": len(rows), "breakeven_win_rate": round(bracket.breakeven_win_rate() * 100, 1),
            "win_rate": None, "avg_net_r": None, "sum_net_r": None,
-           "by_combo": {}, "by_blocking_gate": {}}
+           "by_combo": {}, "by_blocking_gate": {}, "cost_basis": dict(COST_BASIS)}
     if not rows:
         return out
     vals = [float(r["net_r"]) for r in rows]
@@ -238,7 +325,7 @@ def stats(tf=None, days=30, only_tradeable=False, setup=None, side=None):
     out["lcb_net_r_90"] = statsmod.block_bootstrap_lcb(vals, stamps, block, alpha=0.10, B=500)
     out["n_eff"] = statsmod.effective_n(vals, stamps, block)
     for r in rows:
-        key = f"{r['tf']}|{r['setup']}|{r['side']}"
+        key = f"{r['tf']}|{setup_key(r)}|{r['side']}"
         b = out["by_combo"].setdefault(key, {"n": 0, "wins": 0, "sum_r": 0.0})
         b["n"] += 1
         b["wins"] += 1 if float(r["net_r"]) > 0 else 0
@@ -257,14 +344,28 @@ def stats(tf=None, days=30, only_tradeable=False, setup=None, side=None):
     return out
 
 
+def _unique(rows):
+    """اولین ردیفِ هر id (بقیه تکرارِ داوریِ هم‌زمانِ قدیمی‌اند)."""
+    out, seen = [], set()
+    for r in rows:
+        rid = r.get("id")
+        if rid is not None:
+            if rid in seen:
+                continue
+            seen.add(rid)
+        out.append(r)
+    return out
+
+
 def counts():
-    """شمارشِ سریع برای health — بدونِ محاسبهٔ آمار."""
-    cands = _read(CAND_PATH)
-    results = _read(RESULT_PATH)
+    """شمارشِ سریع برای health — بدونِ محاسبهٔ آمار (بی‌تکرار بر اساسِ id)."""
+    cands = _unique(_read(CAND_PATH))
+    results = _unique(_read(RESULT_PATH))
+    done = {r.get("id") for r in results}
     return {
         "candidates": len(cands),
         "resolved": len(results),
-        "open": len(cands) - len(results),
+        "open": sum(1 for c in cands if c.get("id") not in done),
         "last_logged_at": max((c.get("logged_at") or 0 for c in cands), default=None),
         "last_resolved_at": max((r.get("resolved_at") or 0 for r in results), default=None),
     }
