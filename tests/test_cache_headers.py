@@ -18,13 +18,15 @@ class CacheHeaderTests(unittest.TestCase):
         self.c = TestClient(main.app)
 
     def test_pages_must_revalidate(self):
-        for path in ("/", "/lab"):
+        for path in ("/", "/lab", "/desk"):
             r = self.c.get(path)
             self.assertEqual(r.status_code, 200)
             self.assertIn("no-cache", r.headers.get("cache-control", ""))
 
-    def test_main_page_is_the_new_one(self):
-        self.assertIn("میز تصمیم", self.c.get("/").text)
+    def test_main_page_is_the_trading_page(self):
+        # کاربر محیطِ معامله را خواست، نه میزِ تصمیمِ هفتگی
+        self.assertIn("میز فرمان CTP", self.c.get("/").text)
+        self.assertIn("میز تصمیم", self.c.get("/desk").text)
 
     def test_api_is_never_stored(self):
         r = self.c.get("/api/gates")

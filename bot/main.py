@@ -1429,15 +1429,16 @@ STATIC = os.path.join(os.path.dirname(__file__), "static")
 
 
 @app.get("/")
-def index():
-    """صفحهٔ اصلی: میزِ تصمیمِ BTC/ETH (ساده، یک تصمیم در هفته)."""
-    return FileResponse(os.path.join(STATIC, "app.html"))
-
-
 @app.get("/lab")
-def lab():
-    """آزمایشگاه: صفحهٔ کاملِ قبلی — جدولِ ۲۰۰ ارز، مدل‌ها، قفلِ ایمنی، پژوهش."""
+def index():
+    """صفحهٔ اصلی: محیطِ معامله (جدولِ ارزها، تایم‌فریم‌ها، پوزیشن‌ها). /lab همان صفحه است تا نشانی‌های قبلی کار کنند."""
     return FileResponse(os.path.join(STATIC, "index.html"))
+
+
+@app.get("/desk")
+def desk():
+    """صفحهٔ سادهٔ تصمیمِ هفتگی و ابزارهای کوکوین — دیگر در منو نیست، فقط با همین نشانی."""
+    return FileResponse(os.path.join(STATIC, "app.html"))
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
@@ -1453,7 +1454,7 @@ async def _no_stale_pages(request, call_next):
     path = request.url.path
     if path.startswith("/api/"):
         resp.headers["Cache-Control"] = "no-store"
-    elif path in ("/", "/lab") or path.endswith(".html"):
+    elif path in ("/", "/lab", "/desk") or path.endswith(".html"):
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
     return resp
 
