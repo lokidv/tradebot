@@ -606,6 +606,13 @@ class LiveFeedbackIsHonestTests(_Shadow, unittest.TestCase):
         self.assertEqual(main._suspended_tfs(), {})
         self.assertEqual(main._live_edge_book(), ({}, {}))
 
+    def test_matrix_note_matches_the_feedback_switch(self):
+        # یادداشتِ ماتریس نباید از «پیشنهادهای ستاپِ معلق‌شده» بگوید وقتی تعلیق خاموش است؛
+        # روشن‌کردنِ دوبارهٔ بازخورد این تست را می‌شکند تا متن هم‌زمان اصلاح شود
+        off = "تعلیقِ خودکارِ ستاپ‌ها غیرفعال است" in decision.NOTE_FA
+        self.assertEqual(off, not main.LIVE_FEEDBACK_ACTIVE)
+        self.assertNotIn("ستاپِ معلق‌شده می‌آیند", decision.NOTE_FA)
+
     def test_live_stats_says_inactive_and_never_claims_a_halt(self):
         with mock.patch.object(shadow, "resolve", return_value=0), \
                 mock.patch.object(candidates, "resolve", return_value=0), \
