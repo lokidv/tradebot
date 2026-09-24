@@ -355,6 +355,15 @@ class _FakeBinanceFunding:
         return [{"fundingTime": t, "fundingRate": v} for t, v in got]
 
 
+def _clear_funding_memory():
+    """حافظهٔ درون‌فرایندیِ فاندینگ. ``_fund_pace_last`` هم: زمانِ ساختگیِ جلوافتادهٔ یک تست
+    وگرنه صفحه‌بندیِ تستِ بعدی را به اندازهٔ اختلافِ دو ساعتِ ساختگی می‌خواباند."""
+    market._neg_until.clear()
+    market._fund_fail.clear()
+    market._fund_switch_until.clear()
+    market._fund_pace_last.clear()
+
+
 class FundingHistoryPagingTests(unittest.TestCase):
     """calib-F4: تاریخچه تا ابتدای پنجرهٔ آموزش صفحه‌بندی می‌شود و کش هم‌منبع می‌ماند."""
 
@@ -368,11 +377,12 @@ class FundingHistoryPagingTests(unittest.TestCase):
                      mock.patch.object(market.time, "time", lambda: self.now_ms / 1000.0)]
         for p in self.pats:
             p.start()
-        market._neg_until.clear()
+        _clear_funding_memory()
 
     def tearDown(self):
         for p in reversed(self.pats):
             p.stop()
+        _clear_funding_memory()
         self.tmp.cleanup()
 
     def test_training_pages_back_and_live_reads_the_same_cache(self):
@@ -458,8 +468,9 @@ class _FakeKucoinFunding:
 
 
 class FundingSourceFailoverTests(unittest.TestCase):
-    """منبعِ کشِ فاندینگ که از کار افتاد و ردیف‌هایش کهنه شد به منبعِ بعدیِ زنجیره می‌رود
-    (قبلاً سندِ هم‌منبع هرگز منبع عوض نمی‌کرد و فاندینگ بی‌صدا یخ می‌زد)."""
+    """منبعِ کشِ فاندینگ که کهنگی‌اش را نشان داد (پاسخ داد و تسویهٔ تازه نداشت، یا شکستش پس از
+    عقب‌نشینی ادامه یافت) و ردیف‌هایش کهنه شد به منبعِ بعدیِ زنجیره می‌رود (قبلاً سندِ هم‌منبع هرگز
+    منبع عوض نمی‌کرد و فاندینگ بی‌صدا یخ می‌زد)؛ یک خطای گذرا منبع را عوض نمی‌کند."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -474,12 +485,12 @@ class FundingSourceFailoverTests(unittest.TestCase):
                      mock.patch.object(market.time, "time", lambda: self.now_ms / 1000.0)]
         for p in self.pats:
             p.start()
-        market._neg_until.clear()
+        _clear_funding_memory()
 
     def tearDown(self):
         for p in reversed(self.pats):
             p.stop()
-        market._neg_until.clear()
+        _clear_funding_memory()
         self.tmp.cleanup()
 
     def _cache(self, newest_age_ms, mtime_age_s):
@@ -496,14 +507,21 @@ class FundingSourceFailoverTests(unittest.TestCase):
         with open(self.path, encoding="utf-8") as f:
             return json.load(f)
 
-    def test_blocked_source_with_stale_rows_hands_over_to_kucoin(self):
-        self._cache(newest_age_ms=20 * 3_600_000, mtime_age_s=market.FUNDING_TTL + 60)
+    def test_blocked_source_with_stale_rows_hands_over_once_the_failure_persists(self):
+        old = self._cache(newest_age_ms=20 * 3_600_000, mtime_age_s=market.FUNDING_TTL + 60)
         fapi = mock.Mock(side_effect=RuntimeError("HTTP 451"))
         kc = _FakeKucoinFunding(self.kucoin)
         with mock.patch.object(market, "_fapi_json", fapi), \
                 mock.patch.object(market, "_get_json", side_effect=kc):
+            # شکستِ نخست ممکن است گذرا باشد: همان کش و کشِ منفی، بی منبعِ دیگر
+            self.assertEqual(market.get_funding_history("BTCUSDT"), old[-1000:])
+            self.assertEqual(kc.calls, [])
+            self.assertTrue(market._neg_hit(self.path))
+            self.assertEqual(self._doc()["src"], "binance")
+            # پس از عقب‌نشینی باز شکست خورد ⇒ واگذاری
+            self.now_ms += int(market.NEG_TTL * 1000) + 1000
             rows = market.get_funding_history("BTCUSDT")
-        self.assertEqual(fapi.call_count, 1)
+        self.assertEqual(fapi.call_count, 2)
         self.assertTrue(kc.calls)
         want_from = self.now_ms - 1000 * H8
         expect = [r for r in self.kucoin if r[0] >= want_from]
@@ -557,15 +575,63 @@ class FundingSourceFailoverTests(unittest.TestCase):
     def test_no_fresher_source_keeps_the_old_rows_and_backs_off(self):
         old = self._cache(newest_age_ms=20 * 3_600_000, mtime_age_s=market.FUNDING_TTL + 60)
         down = mock.Mock(side_effect=RuntimeError("down"))
+        neg_ms = int(market.NEG_TTL * 1000) + 1000
         with mock.patch.object(market, "_fapi_json", down), \
                 mock.patch.object(market, "_get_json", down):
+            self.assertEqual(market.get_funding_history("BTCUSDT"), old[-1000:])
+            self.assertEqual(down.call_count, 1)                       # شکستِ نخست: فقط منبعِ کش
+            market.get_funding_history("BTCUSDT")                      # کشِ منفی: بی شبکه
+            self.assertEqual(down.call_count, 1)
+            self.now_ms += neg_ms
             rows = market.get_funding_history("BTCUSDT")
             self.assertEqual(rows, old[-1000:])
-            n = down.call_count
-            self.assertEqual(n, 3)                                     # بایننس، کوکوین، OKX
-            market.get_funding_history("BTCUSDT")                      # کشِ منفی: بی شبکه
-            self.assertEqual(down.call_count, n)
+            self.assertEqual(down.call_count, 4)                       # بایننس، سپس کوکوین و OKX
+            # جست‌وجوی بی‌حاصل تا FUNDING_SWITCH_BACKOFF تکرار نمی‌شود؛ هر سرکشی فقط منبعِ کش
+            until = market._fund_switch_until[self.path]
+            self.assertGreaterEqual(until - self.now_ms / 1000.0, market.FUNDING_SWITCH_BACKOFF - 1)
+            while True:
+                self.now_ms += neg_ms
+                n = down.call_count
+                market.get_funding_history("BTCUSDT")
+                if self.now_ms / 1000.0 >= until:
+                    self.assertEqual(down.call_count, n + 3)
+                    break
+                self.assertEqual(down.call_count, n + 1)
         self.assertEqual(self._doc()["src"], "binance")
+        self.assertTrue(market._neg_hit(self.path))
+
+    def test_a_failure_a_week_after_the_last_one_starts_a_new_streak(self):
+        old = self._cache(newest_age_ms=20 * 3_600_000, mtime_age_s=market.FUNDING_TTL + 60)
+        fapi = mock.Mock(side_effect=RuntimeError("timeout"))
+        other = mock.Mock(side_effect=AssertionError("منبعِ دیگر"))
+        with mock.patch.object(market, "_fapi_json", fapi), \
+                mock.patch.object(market, "_get_json", other):
+            market.get_funding_history("BTCUSDT")
+            self.now_ms += 7 * 24 * 3_600_000                          # هفتهٔ بعد، کسی در این میان نپرسید
+            self.assertEqual(market.get_funding_history("BTCUSDT"), old[-1000:])
+        self.assertEqual(fapi.call_count, 2)
+        self.assertEqual(other.call_count, 0)
+        self.assertEqual(self._doc()["src"], "binance")
+
+    def test_a_longer_funding_interval_is_not_mistaken_for_a_dead_source(self):
+        # کوکوین فاصله را از ۱ به ۸ ساعت برد: آخرین تسویه ۳ ساعت پیش، بعدی ۵ ساعت دیگر
+        last = self.now_ms - 3 * 3_600_000
+        rows = [[last - k * 3_600_000, 1e-4] for k in range(400)][::-1]
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"src": "kucoin", "from_ms": 0, "rows": rows}, f)
+        t = self.now_ms / 1000.0 - market.FUNDING_TTL - 60
+        os.utime(self.path, (t, t))
+        other = mock.Mock(side_effect=AssertionError("منبعِ دیگر"))
+        with mock.patch.dict(market._FUNDING_SOURCES,
+                             {"kucoin": lambda s, lo, hi: [r for r in rows if lo <= r[0] <= hi],
+                              "binance": other, "okx": other}):
+            got = market.get_funding_history("BTCUSDT")
+        self.assertEqual(other.call_count, 0)
+        self.assertEqual(got[-1], rows[-1])
+        self.assertEqual(self._doc()["src"], "kucoin")
+        self.assertFalse(market._funding_stale([r[0] for r in rows], self.now_ms))
+        self.assertTrue(market._funding_stale([r[0] for r in rows],
+                                              last + 2 * H8 + market.FUNDING_PUBLISH_GRACE_MS + 1))
 
     def test_cache_writes_use_a_per_process_temp_name(self):
         seen = []
@@ -580,6 +646,117 @@ class FundingSourceFailoverTests(unittest.TestCase):
         self.assertIn(str(os.getpid()), os.path.basename(seen[0]))
         self.assertNotEqual(seen[0], self.path + ".tmp")
         self.assertEqual(self._doc()["src"], "binance")
+
+
+class _Source:
+    """منبعِ فاندینگِ ساختگی برای ``market._FUNDING_SOURCES``: ردیف‌های [lo, min(hi, اکنون)] یا خطا."""
+
+    def __init__(self, rows, now, err=None):
+        self.rows, self.now, self.err, self.calls = rows, now, err, 0
+
+    def __call__(self, symbol, lo, hi):
+        self.calls += 1
+        if self.err is not None:
+            raise self.err
+        return [list(r) for r in self.rows if lo <= r[0] <= min(hi, self.now())]
+
+
+class FundingTransientErrorTests(unittest.TestCase):
+    """بازبینیِ calib-r1: یک خطای گذرای منبعِ کش روی سندی که فقط «قدیمی» است (اسنادِ top-100 در
+    rebuildِ هفتگی) تاریخچهٔ عمیقِ کوکوین را با ~۹۰ روزِ OKX عوض می‌کرد و سند برای همیشه OKX می‌ماند."""
+
+    DAY = 24 * 3_600_000
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.now_ms = 1_790_000_000_000
+        self.path = os.path.join(self.tmp.name, "funding_ADAUSDT.json")
+        self.deep_from = self.now_ms - 3 * 365 * self.DAY
+        now = lambda: self.now_ms                                          # noqa: E731
+        ku_rows = [[t, 1e-4] for t in range(self.deep_from - 50 * H8, self.now_ms + 60 * H8, H8)]
+        okx_rows = [[t, 2e-4] for t in range(self.now_ms - 90 * self.DAY, self.now_ms + 60 * H8, H8)]
+        self.kucoin = _Source(ku_rows, now, err=RuntimeError("timeout / 429 / کول‌داونِ میزبان"))
+        self.binance = _Source([], now, err=RuntimeError("HTTP 451"))
+        self.okx = _Source(okx_rows, now)
+        week = 7 * self.DAY
+        self.doc = {"src": "kucoin", "from_ms": self.deep_from - 40 * H8,
+                    "rows": [r for r in ku_rows if self.deep_from - 40 * H8 <= r[0] <= self.now_ms - week]}
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(self.doc, f)
+        t = (self.now_ms - week) / 1000.0
+        os.utime(self.path, (t, t))
+        self.pats = [mock.patch.object(market, "HIST_DIR", self.tmp.name),
+                     mock.patch.object(market.time, "time", lambda: self.now_ms / 1000.0),
+                     mock.patch.dict(market._FUNDING_SOURCES, {"kucoin": self.kucoin,
+                                                               "binance": self.binance,
+                                                               "okx": self.okx})]
+        for p in self.pats:
+            p.start()
+        _clear_funding_memory()
+
+    def tearDown(self):
+        for p in reversed(self.pats):
+            p.stop()
+        _clear_funding_memory()
+        self.tmp.cleanup()
+
+    def _doc(self):
+        with open(self.path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_one_transient_error_keeps_the_deep_history_and_only_a_persisting_one_hands_over(self):
+        # rebuild: z و ردیف‌های خام، هر دو با همان since
+        rows = market.get_funding_history("ADAUSDT", since_ms=self.deep_from)
+        self.assertEqual(rows, self.doc["rows"])
+        self.assertEqual(market.get_funding_history("ADAUSDT", since_ms=self.deep_from), rows)
+        self.assertEqual(self.kucoin.calls, 1)                             # دومی از کشِ منفی
+        self.assertEqual((self.binance.calls, self.okx.calls), (0, 0))
+        self.assertEqual(self._doc(), self.doc)
+        self.assertTrue(market._neg_hit(self.path))
+        # کوکوین پس از عقب‌نشینی هم در دسترس نیست ⇒ حالا واگذاری (فقط OKX پاسخ می‌دهد)
+        self.now_ms += int(market.NEG_TTL * 1000) + 1000
+        rows = market.get_funding_history("ADAUSDT", since_ms=self.deep_from)
+        self.assertEqual(self.kucoin.calls, 2)
+        self.assertEqual(self._doc()["src"], "okx")
+        self.assertGreaterEqual(rows[0][0], self.now_ms - 91 * self.DAY)
+        # فراخوانِ زندهٔ بعدی پوشیده است: زنجیره را دوباره نمی‌کوبد
+        n = (self.binance.calls, self.kucoin.calls, self.okx.calls)
+        live = market.get_funding_history("ADAUSDT")
+        self.assertEqual((self.binance.calls, self.kucoin.calls, self.okx.calls), n)
+        self.assertEqual(live[-1][1], 2e-4)
+        # rebuildِ هفتهٔ بعد (fund_since یک هفته جلوتر)، کوکوین سالم: تاریخچهٔ عمیق برمی‌گردد
+        self.now_ms += 7 * self.DAY
+        self.kucoin.err = None
+        _clear_funding_memory()
+        since = self.deep_from + 7 * self.DAY
+        rows = market.get_funding_history("ADAUSDT", since_ms=since)
+        doc = self._doc()
+        self.assertEqual(doc["src"], "kucoin")
+        self.assertLessEqual(rows[0][0], since - 30 * H8)
+        self.assertEqual(rows[-1][0], max(t for t, _ in self.kucoin.rows if t <= self.now_ms))
+        self.assertTrue(all(v == 1e-4 for _, v in doc["rows"]))           # بی ردیفِ OKX
+
+    def test_okx_coverage_is_capped_at_the_live_window(self):
+        now = self.now_ms
+        live_from = now - market.FUNDING_LIVE_ROWS * market.FUNDING_STEP_MS
+        deep = {"src": "okx", "from_ms": now - 1000 * self.DAY}
+        self.assertEqual(market._funding_covered_from(deep, now), live_from)
+        shallow = {"src": "okx", "from_ms": now - 10 * self.DAY}
+        self.assertEqual(market._funding_covered_from(shallow, now), now - 10 * self.DAY)
+        self.assertEqual(market._funding_covered_from({"src": "kucoin", "from_ms": 5}, now), 5)
+        self.assertIsNone(market._funding_covered_from(None, now))
+        self.assertIsNone(market._funding_covered_from({"src": "okx", "from_ms": None}, now))
+
+    def test_old_okx_doc_claiming_deep_coverage_retries_a_deeper_source_on_a_deep_call(self):
+        okx_rows = [r for r in self.okx.rows if r[0] <= self.now_ms]
+        with open(self.path, "w", encoding="utf-8") as f:                 # نوشتهٔ کدِ قبلی
+            json.dump({"src": "okx", "from_ms": self.deep_from - 40 * H8, "rows": okx_rows}, f)
+        self.kucoin.err = None
+        market.get_funding_history("ADAUSDT")                              # زنده: تازه و پوشیده
+        self.assertEqual((self.binance.calls, self.kucoin.calls, self.okx.calls), (0, 0, 0))
+        rows = market.get_funding_history("ADAUSDT", since_ms=self.deep_from)
+        self.assertEqual(self._doc()["src"], "kucoin")
+        self.assertLessEqual(rows[0][0], self.deep_from - 30 * H8)
 
 
 class LowCoverageFeatureTests(unittest.TestCase):

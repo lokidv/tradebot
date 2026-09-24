@@ -623,6 +623,11 @@ FUNDING_TTL = 43200             # سقفِ سنِ کشِ فاندینگ حتی �
 FUNDING_RECHECK_SEC = 300       # پس از موعدِ تسویه، تا انتشارش هر ۵ دقیقه یک‌بار
 FUNDING_PUBLISH_GRACE_MS = 60_000
 FUNDING_STEP_MS = 8 * 3600 * 1000
+FUNDING_LIVE_ROWS = 1000        # پنجرهٔ زنده (max_rowsِ پیش‌فرض): ۱۰۰۰ تسویهٔ ۸ساعته
+FUNDING_FAIL_STREAK_GAP = 3 * NEG_TTL   # شکستِ بعدی دیرتر از این ⇒ رشتهٔ تازه، نه ادامهٔ همان قطعی
+FUNDING_SWITCH_BACKOFF = 3600.0 # جست‌وجوی بی‌حاصلِ منبعِ جایگزین تا این‌قدر تکرار نمی‌شود
+_fund_fail: dict = {}           # path -> (اولین, آخرین) شکستِ پیاپیِ بی‌پاسخِ منبعِ کش؛ پاسخ پاکش می‌کند
+_fund_switch_until: dict = {}   # path -> تا این لحظه منبعِ جایگزین دوباره جست‌وجو نمی‌شود
 # سقفِ ایمنیِ صفحه در هر واکشی (بایننس ۱۰۰۰ ردیف، کوکوین/OKX ۱۰۰ ردیف در صفحه) — آن‌قدر بزرگ که
 # تاریخچهٔ چندساله با تسویهٔ ۱ساعته هم کامل برسد؛ هر حلقه با پاسخِ خالی یا رسیدن به ابتدا تمام می‌شود
 FUNDING_MAX_PAGES = 1000
@@ -745,7 +750,24 @@ def _funding_doc_fresh(doc, mtime, now=None):
     return now - mtime < FUNDING_RECHECK_SEC
 
 
-def get_funding_history(symbol, max_rows=1000, since_ms=None):
+def _funding_covered_from(doc, now_ms):
+    """از کِی سند واقعاً تاریخچه دارد (``from_ms``؛ None اگر نامعلوم).
+
+    OKX فقط ~۳ ماه نگه می‌دارد: سندِ OKX هیچ‌گاه عمیق‌تر از پنجرهٔ زنده (``FUNDING_LIVE_ROWS`` تسویهٔ
+    ۸ساعته) حساب نمی‌شود. فراخوانِ زنده پوشیده می‌ماند و زنجیره را هر بار نمی‌کوبد، ولی فراخوانِ عمیقِ
+    بعدی (آموزش) دوباره منبعِ عمیق‌تر را امتحان می‌کند. قبلاً OKX ``from_ms``ِ عمیقِ درخواست را ادعا
+    می‌کرد و چون fund_since هر هفته جلو می‌رود، سند برای همیشه OKX می‌ماند (مشکلِ calib-F4 بی‌صدا
+    برمی‌گشت). اسنادِ قدیمیِ روی دیسک هم همین‌طور خوانده می‌شوند.
+    """
+    f = (doc or {}).get("from_ms")
+    if f is None:
+        return None
+    if doc.get("src") == "okx":
+        return max(int(f), int(now_ms) - FUNDING_LIVE_ROWS * FUNDING_STEP_MS)
+    return int(f)
+
+
+def get_funding_history(symbol, max_rows=FUNDING_LIVE_ROWS, since_ms=None):
     """تاریخچه فاندینگ‌ریت فیوچرز ``[[fundingTime, rate], ...]`` صعودی — خالی اگر در دسترس نباشد.
 
     * بی ``since_ms`` (اجرا، متا-گیت، پوزیشن‌ها): آخرین ``max_rows`` ردیف، مثل قبل.
@@ -759,9 +781,10 @@ def get_funding_history(symbol, max_rows=1000, since_ms=None):
     os.makedirs(HIST_DIR, exist_ok=True)
     path = os.path.join(HIST_DIR, f"funding_{symbol}.json")
     now = time.time()
+    now_ms = int(now * 1000)
     # با since: ۴۰ تسویهٔ پیش از آن هم، تا z غلتانِ ۳۰تایی از اولین ردیفِ لازم گرم باشد
     want_from = (int(since_ms) - 40 * FUNDING_STEP_MS if since_ms is not None
-                 else int(now * 1000) - int(max_rows) * FUNDING_STEP_MS)
+                 else now_ms - int(max_rows) * FUNDING_STEP_MS)
     # تحلیل (live_funding_z) و واکشیِ پس‌زمینه (_fetch_funding) هم‌زمان همین را می‌خواستند
     with _flight_lock(("funding", path)):
         doc = None
@@ -770,12 +793,13 @@ def get_funding_history(symbol, max_rows=1000, since_ms=None):
                 doc = _read_funding_doc(path)
             except (OSError, ValueError):
                 doc = None
-        covered = bool(doc) and doc.get("from_ms") is not None and doc["from_ms"] <= want_from
+        covered_from = _funding_covered_from(doc, now_ms)
+        covered = covered_from is not None and covered_from <= want_from
         if not (covered and _funding_doc_fresh(doc, os.path.getmtime(path), now)):
             if _neg_hit(path):
                 rows = (doc or {}).get("rows") or []
             else:
-                doc = _fetch_funding_history(symbol, path, doc, want_from)
+                doc = _fetch_funding_history(symbol, path, doc, want_from, now_ms=now_ms)
                 rows = (doc or {}).get("rows") or []
         else:
             rows = doc.get("rows") or []
@@ -785,21 +809,37 @@ def get_funding_history(symbol, max_rows=1000, since_ms=None):
 
 
 def _funding_stale(ts, end_ms):
-    """آخرین تسویهٔ ``ts`` (زمان‌های صعودی) از دو فاصلهٔ تسویه + مهلتِ انتشار کهنه‌تر است.
+    """آخرین تسویهٔ ``ts`` (زمان‌های صعودی) از دو برابرِ **بلندترین** فاصلهٔ تسویه (۸ ساعت) + مهلتِ
+    انتشار کهنه‌تر است.
 
     منبعِ سالم همیشه تسویه‌ای در همین فاصله دارد؛ کهنگی یعنی منبع دیگر برای این نماد به‌روز
-    نمی‌شود (مسدود، قطعِ طولانی، قراردادِ برچیده) — نه یک تأخیرِ عادیِ انتشار.
+    نمی‌شود (مسدود، قطعِ طولانی، قراردادِ برچیده) — نه یک تأخیرِ عادیِ انتشار. سنجه فاصلهٔ دو ردیفِ
+    آخر نیست: وقتی صرافی فاصله را بلندتر می‌کند (۱→۴ یا ۴→۸ ساعت) منبعِ سالم کهنه به نظر می‌رسید.
     """
-    if not ts:
-        return True
-    step_h = 8 if len(ts) < 2 else min(max(round((ts[-1] - ts[-2]) / 3_600_000), 1), 8)
-    return end_ms - ts[-1] > 2 * step_h * 3_600_000 + FUNDING_PUBLISH_GRACE_MS
+    return not ts or end_ms - ts[-1] > 2 * FUNDING_STEP_MS + FUNDING_PUBLISH_GRACE_MS
+
+
+def _fund_failure_persists(path, now):
+    """یک شکستِ بی‌پاسخِ دیگرِ منبعِ کش (قطع، تایم‌اوت، ۴۲۹، ۵xx، ۴۵۱، کول‌داونِ میزبان) را ثبت می‌کند.
+
+    True فقط اگر رشتهٔ شکست‌های پیاپی (هر کدام حداکثر ``FUNDING_FAIL_STREAK_GAP`` پس از قبلی) دست‌کم
+    ``NEG_TTL`` طول کشیده باشد، یعنی منبع پس از عقب‌نشینی دوباره شکست خورد. یک خطای گذرا — مثلاً در
+    rebuildِ یک‌باره که اسنادِ top-100 یک هفته کهنه‌اند — هرگز تاریخچهٔ عمیق را با منبعِ دیگر عوض
+    نمی‌کند؛ شکستی که یک هفته بعد تکرار شد هم رشتهٔ تازه است، نه همان قطعی.
+    """
+    first, last = _fund_fail.get(path, (now, now))
+    if now - last > FUNDING_FAIL_STREAK_GAP:
+        first = now
+    _fund_fail[path] = (first, now)
+    return now - first >= NEG_TTL
 
 
 def _funding_switch(symbol, path, failed, want_from, end, newest):
     """منبعِ کش کهنه ماند: بقیهٔ زنجیره (بی ``failed``) به ترتیب. اولین منبعی که تسویهٔ تازه‌تر از
     ``newest`` دارد **کلِ** سند را جایگزین می‌کند (فقط ردیف‌های خودش، from_ms = want_from) — دو
-    صرافی آمیخته نمی‌شوند. هیچ‌کدام تازه‌تر نبود ⇒ None (فراخوان همان کشِ قبلی را نگه می‌دارد)."""
+    صرافی آمیخته نمی‌شوند. سندِ OKX با این from_ms عمیق‌تر از پنجرهٔ زنده حساب نمی‌شود
+    (``_funding_covered_from``)، پس فراخوانِ عمیقِ بعدی دوباره منبعِ عمیق‌تر را امتحان می‌کند.
+    هیچ‌کدام تازه‌تر نبود ⇒ None (فراخوان همان کشِ قبلی را نگه می‌دارد)."""
     for alt in FUNDING_CHAIN:
         if alt == failed:
             continue
@@ -815,21 +855,25 @@ def _funding_switch(symbol, path, failed, want_from, end, newest):
     return None
 
 
-def _fetch_funding_history(symbol, path, doc, want_from):
+def _fetch_funding_history(symbol, path, doc, want_from, now_ms=None):
     """ردیف‌های تازه (و در صورتِ نیاز، پرکردنِ عقب تا ``want_from``) از منبعِ کش، وگرنه زنجیره.
 
-    منبعِ کش که از کار افتاد (قطع، ۴۵۱، ۴۰۰/۴۰۴) یا دیگر تسویهٔ تازه نداد و آخرین ردیفِ کش از
-    دو فاصلهٔ تسویه کهنه‌تر است، بقیهٔ زنجیره امتحان می‌شود و منبعِ تازه‌تر کلِ سند را جایگزین
-    می‌کند. قبلاً سندِ هم‌منبع هرگز منبع عوض نمی‌کرد: با ۴۵۱ شدنِ fapi یا قطعیِ کوکوین، فاندینگِ
-    زنده، متا-گیت و فاندینگِ پیپر بی‌صدا روی ردیف‌های یخ‌زده می‌ماندند. ردیف‌های هنوز تازه منبع را
-    عوض نمی‌کنند: خطای گذرا فقط کشِ منفیِ حافظه می‌سازد.
+    منبعِ کش فقط وقتی به بقیهٔ زنجیره واگذار می‌شود که **خودش** کهنگی‌اش را نشان داده و آخرین ردیفِ
+    کش هم کهنه است (``_funding_stale``): یا پاسخ داد (بی‌خطا یا ۴۰۰/۴۰۴) و باز هم تسویهٔ تازه‌ای
+    نداشت، یا شکستش پس از عقب‌نشینی ادامه یافت (``_fund_failure_persists``). آن‌گاه منبعِ تازه‌تر کلِ
+    سند را جایگزین می‌کند. قبلاً سندِ هم‌منبع هرگز منبع عوض نمی‌کرد و با ۴۵۱ شدنِ fapi فاندینگِ زنده،
+    متا-گیت و فاندینگِ پیپر بی‌صدا روی ردیف‌های یخ‌زده می‌ماندند. ولی سندی که فقط «قدیمی» است (کسی
+    مدتی نپرسیده، مثلِ اسنادِ top-100 در rebuildِ هفتگی) با **یک** خطای گذرا (تایم‌اوت، ۴۲۹، کول‌داونِ
+    میزبان) عوض نمی‌شود: همان کشِ قبلی و کشِ منفیِ حافظه، مثلِ پیش از واگذاری.
     """
-    end = int(time.time() * 1000)
+    end = int(time.time() * 1000) if now_ms is None else int(now_ms)
     rows = {int(t): float(v) for t, v in ((doc or {}).get("rows") or [])}
     src = old_src = (doc or {}).get("src")
     from_ms = (doc or {}).get("from_ms")
-    if src == "okx" and (from_ms is None or want_from < from_ms):
-        src = None                     # OKX فقط ~۳ ماه دارد: برای پرکردنِ عقب اول منبعِ عمیق‌تر
+    if src == "okx":
+        covered_from = _funding_covered_from(doc, end)
+        if covered_from is None or want_from < covered_from:
+            src = None                 # OKX فقط ~۳ ماه دارد: برای پرکردنِ عقب اول منبعِ عمیق‌تر
     if src not in _FUNDING_SOURCES:
         try:
             src, got = _funding_chain(symbol, want_from, end)
@@ -858,12 +902,22 @@ def _fetch_funding_history(symbol, path, doc, want_from):
     except Exception as e:  # noqa: BLE001 — منبعِ کش جواب نداد
         err = e
     ts = sorted(rows)
-    if _funding_stale(ts, end):
+    answered = err is None or _answered(err)
+    if answered:
+        _fund_fail.pop(path, None)
+    persists = answered or _fund_failure_persists(path, time.time())
+    if persists and _funding_stale(ts, end) and _fund_switch_until.get(path, 0.0) <= time.time():
         new = _funding_switch(symbol, path, src, want_from, end, ts[-1] if ts else None)
         if new is not None:
+            _fund_fail.pop(path, None)
+            _fund_switch_until.pop(path, None)
             return new
-    if err is not None and not _answered(err):
-        # منبعِ کش در دسترس نیست و منبعِ تازه‌تری هم نبود: همان کشِ قبلی، بدونِ آمیختنِ منبع
+        # هیچ منبعِ تازه‌تری نبود (مثلاً نمادِ همه‌جا برچیده): تا یک ساعت بقیهٔ زنجیره از want_from
+        # صفحه‌به‌صفحه دوباره پرسیده نمی‌شود؛ فقط منبعِ کش در هر سرکشی
+        _fund_switch_until[path] = time.time() + FUNDING_SWITCH_BACKOFF
+    if not answered:
+        # منبعِ کش در دسترس نیست و واگذار هم نشد (خطای نخست، ردیف‌های هنوز تازه یا منبعِ تازه‌تری
+        # نبود): همان کشِ قبلی، بدونِ آمیختنِ منبع
         _neg_until[path] = time.time() + NEG_TTL
         return doc
     new = {"src": src, "from_ms": from_ms, "rows": [[t, rows[t]] for t in ts]}
