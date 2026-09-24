@@ -134,9 +134,32 @@ def _model_era(tf=None):
         return None
 
 
+# ── بازخوردِ زنده: تعلیقِ خودکار (ستاپ/تایم‌فریم/ترکیب)، جیبِ لبه و هشدارِ drift ──
+# همه از signals_log.json (shadow) خوانده می‌شدند، ولی از ۱۶ جولای هیچ کدِ تولیدی در آن نمی‌نویسد
+# (shadow.log_signal فقط در تست‌ها صدا زده می‌شود؛ دفترِ جایگزین candidates.jsonl است). پس این «ترمزها»
+# هرگز فعال نمی‌شدند، در حالی که UI ترمزِ خودکار را القا می‌کرد. احیایشان تصمیمِ زنده را از کارنامهٔ
+# بازپخش (decision.replay، بی‌تعلیق) جدا می‌کرد؛ پس عمداً خاموش‌اند و API/UI صریحاً «غیرفعال» می‌گویند.
+LIVE_FEEDBACK_ACTIVE = False
+LIVE_FEEDBACK_NOTE_FA = ("تعلیقِ خودکارِ ستاپ/تایم‌فریم/ترکیب، جیبِ لبه و هشدارِ افتِ عملکرد غیرفعال‌اند: "
+                         "دفترِ سایه‌ای که از آن تغذیه می‌شدند از ژوئیه ثبتی ندارد. تصمیم‌ها دقیقاً همان قاعدهٔ "
+                         "کارنامه‌اند و هیچ ترمزِ خودکاری رویشان نیست؛ عملکردِ زنده در کارنامهٔ رو-به-جلوی "
+                         "میزِ تصمیم است.")
+
+
+def _live_feedback():
+    """وضعیتِ بازخوردِ زنده برای API/UI — صریح، نه ضمنی."""
+    state = "active" if LIVE_FEEDBACK_ACTIVE else "inactive"
+    return {"active": LIVE_FEEDBACK_ACTIVE, "suspension": state, "edge_pockets": state, "drift": state,
+            "source": "signals_log.json (shadow.log_signal) — بدونِ نویسندهٔ تولیدی از ۱۶ جولای",
+            "live_ledger": "decision_ledger.jsonl (/api/decisions → live_overall)",
+            "note_fa": None if LIVE_FEEDBACK_ACTIVE else LIVE_FEEDBACK_NOTE_FA}
+
+
 def _suspended_setups():
     """تعلیق سراسری فقط برای ستاپ‌های واقعاً سمی.
     تعلیقِ خفیفِ سراسری (مثل zx با −۰٫۰۱R) جیب‌های سوددهٔ تایم‌فریم‌محور را می‌کشت."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}                                  # منبع تغذیه نمی‌شود — هیچ تعلیقی (تصمیم = کارنامه)
     if time.time() - _susp_cache["ts"] < 120:
         return _susp_cache["map"]
     with _once("susp"):
@@ -161,6 +184,8 @@ def _suspended_setups_build():
 _tf_susp_cache = {"ts": 0.0, "map": {}}
 def _live_edge_book():
     """جیب‌های سودده و ترکیب‌های معلق — معیار LCB/نیمه‌ها در edge_book."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}, {}
     try:
         import edge_book
         with _once("edge_book"):                   # edge_book کشِ ۹۰ثانیه‌ای دارد ولی قفل ندارد
@@ -173,6 +198,8 @@ def _live_edge_book():
 def _suspended_tfs():
     """تایم‌فریم‌هایی که بازده خالص زندهٔ ۳۰روزه‌شان با n کافی مثبت نیست — معلق تا بهبود.
     اگر همان TF جیب سوددهٔ ترکیبی داشته باشد، تعلیقِ کل TF اعمال نمی‌شود."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}
     if time.time() - _tf_susp_cache["ts"] < 120:
         return _tf_susp_cache["map"]
     with _once("tf_susp"):
@@ -335,6 +362,24 @@ def _symbol_cost(symbol):
     if qv >= 2e7:
         return 0.18
     return 0.30
+
+
+def _cost_basis():
+    """مبنای هزینهٔ هر دفتر/عدد — برچسبِ صریح کنارِ هر API (LP-10).
+
+    عمداً یکی نشده‌اند: کارنامه و دفترِ تصمیمِ قاعده با کارمزدِ ثابتِ ``decision.COST_PCT`` بازپخش/داوری
+    می‌شوند؛ دفترِ کاندیدها (که اثباتِ سایه با آزمونِ منجمد مقایسه‌اش می‌کند) مدلِ هزینهٔ پیش‌ثبت‌شده
+    (``costs.event_cost_pct``) را دارد و فقط جزءِ ردهٔ نقدشوندگی‌اش را. بک‌تستِ کوچکِ هر نماد همان رده را
+    از ``extras["cost"]`` می‌گیرد (همان عدد به مدل‌ها هم می‌رود، پس اینجا فقط برچسب می‌خورد).
+    """
+    return {
+        "decision_ledger": {"model": "flat", "cost_pct": decision.COST_PCT,
+                            "maker_cost_pct": decision.MAKER_COST_PCT,
+                            "desc_fa": "کارمزدِ ثابتِ رفت‌وبرگشت (تیکرِ فیوچرزِ کوکوین ×۲ + لغزش) — کارنامه و دفترِ تصمیم"},
+        "candidates": dict(candidates.COST_BASIS),
+        "symbol_backtest": {"model": "tier",
+                            "desc_fa": "ردهٔ نقدشوندگیِ همان نماد (۰٫۰۸ تا ۰٫۳۰٪، ورودِ میکر) — «cost»ِ هر ردیف"},
+    }
 
 
 def _funding_info(symbol):
@@ -527,6 +572,10 @@ def _compute_analysis(symbol, tf):
             # analyze این دو را فقط در مسیرِ مجوزدار به status می‌برد؛ ماتریسِ تصمیم باید همیشه ببیندشان
             res["tf_suspended"] = extras["tf_suspended"]
             res["btc_z"] = btc_z
+            # منبعِ کندل‌ها: «okx» یعنی پشتیبان (حجمِ OKX، بی‌qv/n/tbv) — کارنامه روی بایننس است
+            res["data_src"] = kl.get("src")
+            if isinstance(res.get("backtest"), dict):   # مبنای هزینهٔ بک‌تستِ کوچک (نه ۰٫۱۴٪ِ کارنامه)
+                res["backtest"].update(cost_pct=extras["cost"], cost_basis="tier")
         res["symbol"] = symbol
     except Exception as e:  # noqa: BLE001
         res = {"symbol": symbol, "tf": tf, "error": str(e)}
@@ -989,13 +1038,18 @@ def live_stats(tf: str | None = None):
     st = shadow.stats(tf)
     drift = None
     # drift با بازده خالص تشخیص داده می‌شود، نه win-rate خام که نسبت سود/ضرر را نادیده می‌گیرد.
-    if tf and st.get("n", 0) >= 20 and st.get("avg_r") is not None and st["avg_r"] <= 0:
+    # فقط وقتی بازخوردِ زنده فعال است: متنش «ورودها متوقف می‌شوند» است و بی‌تعلیقِ واقعی دروغ می‌شد.
+    if (LIVE_FEEDBACK_ACTIVE and tf and st.get("n", 0) >= 20 and st.get("avg_r") is not None
+            and st["avg_r"] <= 0):
         drift = (f"⚠️ عملکرد زندهٔ {tf} ({st['avg_r']:+.2f}R از {st['n']} سیگنال) "
                  "پس از هزینه مثبت نیست — ورودهای تازهٔ این تایم‌فریم متوقف می‌شوند.")
     return {"tf": tf, "stats": st, "all": shadow.stats(None), "drift": drift,
             "suspended": _suspended_setups(),
             "edge_pockets": _live_edge_book()[0],
             "suspended_combos": _live_edge_book()[1],
+            # stats/all/suspended/edge_pockets/drift از دفترِ سایهٔ بی‌نویسنده‌اند — «feedback» می‌گوید غیرفعال‌اند
+            "feedback": _live_feedback(),
+            "cost_basis": _cost_basis(),
             # دفترِ کاندیدها: همهٔ ستاپ‌های دیده‌شده، نه فقط مجازها
             "candidates": candidates.counts(),
             "candidate_stats": candidates.stats(tf),
@@ -1008,10 +1062,17 @@ def edge_health():
     try:
         import edge_book
         import fill_quality
-        h = edge_book.get_health()
         fq = fill_quality.summary(14)
-        return {"ok": True, "health": h, "fill_quality": fq,
+        if not LIVE_FEEDBACK_ACTIVE:                # منبعِ جیب‌ها تغذیه نمی‌شود: «منجمد» نه، «غیرفعال»
+            h = {"updated": time.time(), "pocket_count": 0, "pockets": {}, "suspended_count": 0,
+                 "verdict": "inactive", "advice": LIVE_FEEDBACK_NOTE_FA}
+            return {"ok": True, "active": False, "health": h, "fill_quality": fq, "scan_hint": [],
+                    "feedback": _live_feedback(),
+                    "version": {"app": APP_VERSION, "ai_core": AI_CORE_VERSION}}
+        h = edge_book.get_health()
+        return {"ok": True, "active": True, "health": h, "fill_quality": fq,
                 "scan_hint": edge_book.scan_tfs_for(["1h", "4h", "15m"]),
+                "feedback": _live_feedback(),
                 "version": {"app": APP_VERSION, "ai_core": AI_CORE_VERSION}}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
@@ -1211,6 +1272,8 @@ def overview(tf: str = "1h"):
             "live_suspended": _suspended_tfs().get(tf),
             "edge_pockets": {k: v for k, v in _live_edge_book()[0].items()
                              if k.startswith(tf + "|")},
+            "live_feedback": _live_feedback(),       # live_suspended/edge_pockets/combo_suspended: غیرفعال؟
+            "cost_basis": _cost_basis(),             # «cost»ِ هر ردیف = ردهٔ نقدشوندگی، نه ۰٫۱۴٪ِ کارنامه
             "btc_macro": _btc_macro(),
             "breadth_macro": round((_market_state("1d") or {}).get("breadth", 0.0), 2),
             "calib": {"building": cs.get("building"), "progress": cs.get("progress"),
@@ -1229,18 +1292,21 @@ DECISION_LAG = 20.0          # ثانیه پس از هر مرزِ ۵دقیقه�
 # ۵ دقیقه = کوچک‌ترین تایم‌فریم (با ۹۰۰ ثانیه، decision.record با STALE_BARS=3 فقط ۱ از ۳ کندلِ 5m را می‌دید).
 # هر دور فقط تایم‌فریم‌هایی را تازه می‌کند که کندلشان از دورِ قبل بسته شده (5m همیشه، 1d فقط نیمه‌شبِ UTC).
 DECISION_PERIOD = 300
-_decision_state = {"last_boundary": None}   # آخرین مرزِ ۵دقیقه‌ای که تصمیم‌هایش جمع شد
+CANDIDATE_RESOLVE_LIMIT = 120   # داوریِ کاندیدها در هر دور (مثلِ ‎/api/live-stats)
+_decision_state = {"last_boundary": None,   # آخرین مرزِ ۵دقیقه‌ای که تصمیم‌هایش جمع شد
+                   "retry": {}}              # (sym, tf) -> openِ کندلی که هنوز دیده نشده (خطا/تحلیلِ کهنه)
 
 
-def _decision_lookup(symbols=None, tfs=None):
+def _decision_lookup(symbols=None, tfs=None, keys=None):
     """همهٔ تحلیل‌های ارز × تایم‌فریمِ میزِ تصمیم (۵×۵=۲۵) را موازی روی ``_pool`` می‌سازد
     و یک تابعِ جست‌وجوی ``(sym, tf) -> analysis`` برای ``decision.collect/refresh`` برمی‌گرداند.
+    ``keys`` (اختیاری): فقط همین خانه‌های ``(sym, tf)`` به‌جای ضربِ symbols × tfs.
 
     ترتیب: تایم‌فریمِ بالاتر و BTC اول — پیش‌نیازِ زنجیرهٔ HTF/BTCِ بقیه‌اند، پس منتظرها کمتر معطل می‌شوند.
     """
     symbols = tuple(symbols or decision.SYMBOLS)
     tfs = tuple(tfs or decision.TFS)
-    keys = sorted(((s, tf) for s in symbols for tf in tfs),
+    keys = sorted(keys if keys is not None else ((s, tf) for s in symbols for tf in tfs),
                   key=lambda k: (-tf_spec.MINUTES.get(k[1], 0), k[0] != "BTCUSDT"))
 
     def _one(k):
@@ -1273,23 +1339,98 @@ def _due_tfs(boundary, last_boundary=None):
     return tuple(tf for tf in decision.TFS if tf_spec.closed_between(tf, last_boundary, boundary))
 
 
+def _expected_bar(tf, boundary):
+    """openِ (ms) آخرین کندلِ بسته‌شدهٔ ``tf`` در مرزِ ``boundary`` (ثانیهٔ UTC)."""
+    bar = tf_spec.bar_ms(tf)
+    return (int(boundary) * 1000 // bar) * bar - bar
+
+
+def _collect_cells(cells):
+    """تصمیمِ خانه‌های ``cells`` (فهرستِ ``(sym, tf)``)، هر تایم‌فریم یک ``decision.collect``."""
+    if not cells:
+        return []
+    lookup = _decision_lookup(keys=cells)
+    by_tf = {}
+    for s, tf in cells:
+        by_tf.setdefault(tf, []).append(s)
+    out = []
+    for tf, syms in by_tf.items():
+        out += decision.collect(lookup, symbols=tuple(syms), tfs=(tf,)) or []
+    return out
+
+
+def _drop_analysis(keys):
+    """تحلیلِ کش‌شدهٔ این خانه‌ها دور انداخته می‌شود تا از نو ساخته شود (کشِ کندل تازگی را خودش می‌سنجد)."""
+    with _an_lock:
+        for k in keys:
+            _an_cache.pop(k, None)
+
+
+def _screen_decisions(decisions, boundary, retry):
+    """فقط تصمیم‌هایی که کندلِ مورد انتظارِ همین مرز را دارند برای ثبت می‌مانند.
+
+    * خطا ⇒ خانه در ``retry`` می‌ماند و دورِ ۵دقیقه‌ایِ بعد دوباره تحلیل می‌شود (LP-5)؛ قبلاً تا مرزِ
+      بعدیِ همان تایم‌فریم تلاشی نبود و کندلِ 1h/4h/1d با یک خطای گذرا برای همیشه گم می‌شد.
+    * کندلِ قبلی (تحلیلِ کهنه — کشِ سردِ درست پیش از مرز، یا صرافیِ دیررس) ⇒ تحلیلِ کش‌شده دور انداخته و
+      همین حالا یک‌بار از نو ساخته می‌شود؛ اگر باز کهنه بود **ثبت نمی‌شود** و دورِ بعد دوباره (LP-4).
+      اگر BTC کهنه بود، آلت‌های همان تایم‌فریم هم از نو ساخته می‌شوند (btc_z از همان تحلیل می‌آید).
+    خروجی: ``(تصمیم‌های قابلِ ثبت، تعدادِ کهنه‌ها)``.
+    """
+    def split(ds):
+        good, stale = [], []
+        for d in ds:
+            key = (d.get("sym"), d.get("tf"))
+            exp = _expected_bar(key[1], boundary)
+            try:
+                ts = int(d.get("candle_ts"))
+            except (TypeError, ValueError):
+                ts = None
+            if d.get("error") or ts is None:
+                retry[key] = exp
+            elif ts < exp:
+                retry[key] = exp
+                stale.append(key)
+            else:
+                retry.pop(key, None)
+                good.append(d)
+        return good, stale
+
+    good, stale = split(decisions)
+    if not stale:
+        return good, 0
+    redo = set(stale)
+    redo |= {(s, tf) for b, tf in stale if b == "BTCUSDT" for s in decision.SYMBOLS}
+    _drop_analysis(redo)
+    good = [d for d in good if (d.get("sym"), d.get("tf")) not in redo]
+    again, _still = split(_collect_cells(sorted(redo)))
+    return good + again, len(stale)
+
+
 def _decision_cycle(now=None, tfs=None):
     """یک دورِ پس‌زمینه: تصمیم‌ها → ثبت در دفترِ رو-به-جلو → داوریِ ردیف‌های باز → کارنامه (بی‌انتظار).
 
-    فقط تایم‌فریم‌هایی که کندلشان تازه بسته شده دوباره تحلیل و ثبت می‌شوند (``tfs`` برای تست/اجبار)؛
-    داوریِ ردیف‌های باز هر دور برای همه انجام می‌شود. هر گام جدا خطاگیری می‌شود تا خرابیِ یکی بقیه
-    را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
+    فقط تایم‌فریم‌هایی که کندلشان تازه بسته شده دوباره تحلیل و ثبت می‌شوند (``tfs`` برای تست/اجبار)،
+    به‌علاوهٔ خانه‌هایی که کندلِ آخرشان هنوز دیده نشده (خطا/تحلیلِ کهنه در دورهای قبل — ``_screen_decisions``).
+    داوریِ ردیف‌های باز (دفترِ تصمیم و دفترِ کاندیدها) هر دور برای همه انجام می‌شود. هر گام جدا
+    خطاگیری می‌شود تا خرابیِ یکی بقیه را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
     now = time.time() if now is None else now
     boundary = _decision_boundary(now)
+    # کپی و جایگزینی (نه جهشِ درجا): یک دورِ نیمه‌کاره یا patchِ تست حالتِ مشترک را آلوده نمی‌کند
+    retry = {k: exp for k, exp in (_decision_state.get("retry") or {}).items()
+             if exp == _expected_bar(k[1], boundary)}      # کندلِ تازه‌تری بسته شده ⇒ از راهِ tfs می‌آید
     if tfs is None:
         tfs = _due_tfs(boundary, _decision_state["last_boundary"])
     tfs = tuple(tfs)
-    out = {"decisions": 0, "tfs": list(tfs), "recorded": None, "resolved": None}
-    decisions = []
-    if tfs:
-        decisions = decision.collect(_decision_lookup(tfs=tfs), tfs=tfs)
+    cells = [(s, tf) for tf in tfs for s in decision.SYMBOLS]
+    extra = sorted(k for k in retry if k not in set(cells))
+    out = {"decisions": 0, "tfs": list(tfs), "retried": len(extra), "stale": 0,
+           "recorded": None, "resolved": None, "candidates_resolved": None}
+    collected = _collect_cells(cells + extra)
+    decisions, out["stale"] = _screen_decisions(collected, boundary, retry)
     _decision_state["last_boundary"] = boundary
-    out["decisions"] = len(decisions or [])
+    _decision_state["retry"] = retry
+    out["decisions"] = len(collected)
+    out["pending_retry"] = len(retry)
     if decisions:
         try:
             out["recorded"] = decision.record(decisions)
@@ -1299,6 +1440,12 @@ def _decision_cycle(now=None, tfs=None):
         out["resolved"] = decision.resolve(market.get_klines)
     except Exception:  # noqa: BLE001
         log.exc("decision ledger resolve")
+    try:
+        # دفترِ کاندیدها هم در پس‌زمینه داوری می‌شود، نه فقط وقتی UI ‎/api/live-stats را صدا می‌زند؛
+        # وگرنه با UIِ بسته پنجرهٔ ۴۲۰ کندلی از کندلِ ورود می‌گذشت (LP-7: حالا «no_data» می‌شود).
+        out["candidates_resolved"] = candidates.resolve(market.get_klines, limit=CANDIDATE_RESOLVE_LIMIT)
+    except Exception:  # noqa: BLE001
+        log.exc("candidates resolve")
     try:
         decision.scorecards(wait=False)             # حداکثر روزی یک‌بار، در نخِ جدا
     except Exception:  # noqa: BLE001
@@ -1312,6 +1459,15 @@ def _next_decision_run(now):
     return base + DECISION_PERIOD + DECISION_LAG
 
 
+def _decision_wait(now):
+    """ثانیه تا دورِ بعد. اگر مرزی که مهلتش گذشته هنوز پردازش نشده (دورِ قبل بیش از ۵ دقیقه طول کشید)
+    صفر — وگرنه ``_next_decision_run`` آن مرز را جا می‌انداخت و کندلِ 5mِ آن هرگز دیده نمی‌شد (LP-5)."""
+    last = _decision_state.get("last_boundary")
+    if last is not None and _decision_boundary(now) > last:
+        return 0.0
+    return max(1.0, _next_decision_run(now) - now)
+
+
 def _decision_loop():
     """دفترِ میزِ تصمیم باید حتی وقتی کسی صفحه را باز نکرده ثبت و داوری شود."""
     time.sleep(DECISION_WARM_DELAY)
@@ -1321,7 +1477,7 @@ def _decision_loop():
         log.exc("decision scorecard warm-up")
     while True:
         try:
-            time.sleep(max(1.0, _next_decision_run(time.time()) - time.time()))
+            time.sleep(_decision_wait(time.time()))
             info = _decision_cycle()
             log.info("decision cycle", **info)
         except Exception:  # noqa: BLE001

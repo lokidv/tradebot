@@ -144,7 +144,14 @@ class DecisionsEndpointTests(unittest.TestCase):
     def test_cycle_collects_only_the_due_timeframes(self):
         day = 1_700_000_000 - (1_700_000_000 % 86400)
         stub = _Counter()
-        with mock.patch.object(main, "get_analysis", stub),                 mock.patch.dict(main._decision_state, {"last_boundary": day + 600}),                 mock.patch.object(decision, "resolve", return_value=0) as res:
+        # خانه‌های سالم (کندلِ همین مرز)؛ خانهٔ خطادار حالا دورِ بعد دوباره تحلیل می‌شود (test_livepath)
+        real = stub.__call__
+
+        def fresh(symbol, tf, max_age=None):
+            real(symbol, tf, max_age)
+            return {"symbol": symbol, "tf": tf, "zt": main._expected_bar(tf, day + 900),
+                    "price": 1.0, "z": 0.0, "votes_bull": 0, "votes_bear": 0, "trade": {}}
+        with mock.patch.object(main, "get_analysis", fresh),                 mock.patch.dict(main._decision_state, {"last_boundary": day + 600, "retry": {}}),                 mock.patch.object(decision, "resolve", return_value=0) as res:
             out = main._decision_cycle(now=day + 900 + main.DECISION_LAG)
             self.assertEqual(main._decision_state["last_boundary"], day + 900)
             again = main._decision_cycle(now=day + 900 + main.DECISION_LAG + 30)   # همان مرز: فقط داوری

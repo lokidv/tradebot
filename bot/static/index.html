@@ -1069,6 +1069,17 @@ async function loadEdgeHealth(){
     const el = $("#edgeBanner");
     if(!el || !d.ok){ if(el) el.innerHTML = ""; return; }
     const h = d.health || {}, fq = d.fill_quality || {};
+    const fqLine = fq.n
+      ? `پر شدن صبور ۱۴روز: ${fq.filled||0}/${fq.n} (${fmt(fq.fill_rate_pct,0)}٪)`
+        + (fq.avg_slip_r!=null ? ` · لغزش میانگین ${fmt(fq.avg_slip_r,2)}R` : "")
+      : "هنوز دادهٔ پر شدن صبور ثبت نشده";
+    if(d.active === false){                 // منبعِ جیب‌ها (دفترِ سایه) تغذیه نمی‌شود — نه «منجمد»، «غیرفعال»
+      el.innerHTML = `<div class="edgebanner frozen">
+        <div class="top"><span>📐 <b>جیبِ لبه</b> — غیرفعال: ${esc(h.advice||"")}</span><span class="num">inactive</span></div>
+        <p class="note" style="margin-top:8px;margin-bottom:0">${fqLine}</p>
+      </div>`;
+      return;
+    }
     const pockets = h.pockets || {};
     const keys = Object.keys(pockets);
     const frozen = h.verdict === "frozen";
@@ -1076,10 +1087,7 @@ async function loadEdgeHealth(){
       const p = pockets[k]||{};
       return `<span class="chip"><b>${k}</b> · ${p.grade||"B"} · n=${p.n} · ${fmt(p.avg_r,2)}R · LCB ${fmt(p.lcb_r,2)}</span>`;
     }).join("") || `<span class="chip">جیب فعالی نیست</span>`;
-    const fillLine = fq.n
-      ? `پر شدن صبور ۱۴روز: ${fq.filled||0}/${fq.n} (${fmt(fq.fill_rate_pct,0)}٪)`
-        + (fq.avg_slip_r!=null ? ` · لغزش میانگین ${fmt(fq.avg_slip_r,2)}R` : "")
-      : "هنوز دادهٔ پر شدن صبور ثبت نشده";
+    const fillLine = fqLine;
     el.innerHTML = `<div class="edgebanner${frozen?" frozen":""}">
       <div class="top">
         <span>📐 <b>سلامت جیب لبه</b> — ${h.advice||"—"}</span>
@@ -1226,7 +1234,8 @@ function winCell(c){
   if(sc && sc.n) return `<span class="dm-rec" style="font-size:11.5px">${recLine(x)}<br><small class="mid">کارنامهٔ تصمیمِ ${TF}</small></span>`;
   if(c.win_rate!=null){
     const thin = !(c.bt_n >= 30);
-    return `<span style="${thin?"opacity:.45":""}" title="بک‌تستِ همین نماد${thin?" — نمونه کوچک است و قابلِ اتکا نیست":""}">${fmt(c.win_rate,0)}٪ <small>(n=${c.bt_n||0})</small>${thin?`<br><small class="dm-rec">نمونهٔ کم</small>`:""}</span>`;
+    const costT = c.cost!=null ? ` · کارمزدِ ${fmt(c.cost,2)}٪ (ردهٔ نقدشوندگیِ نماد، نه کارمزدِ ثابتِ کارنامه)` : "";
+    return `<span style="${thin?"opacity:.45":""}" title="بک‌تستِ همین نماد${costT}${thin?" — نمونه کوچک است و قابلِ اتکا نیست":""}">${fmt(c.win_rate,0)}٪ <small>(n=${c.bt_n||0})</small>${thin?`<br><small class="dm-rec">نمونهٔ کم</small>`:""}</span>`;
   }
   return `<small class="dm-rec">بی‌کارنامه</small>`;
 }
@@ -1459,13 +1468,14 @@ function renderStats(d){
   const longs = sided.filter(c=>c.side==="long").length, shorts = sided.length-longs;
   const avgEv = ok.length ? ok.reduce((s,c)=>s+(c.ev_pct||0),0)/ok.length : null;
   const ready = d.coins.filter(c=>!c.side && (c.readiness||0)>=80).length;
-  const ls = window.LSTATS, pt = window.PT;
+  const ls = window.LSTATS, pt = window.PT, lo = window.DEC && window.DEC.live_overall;
   $("#statsRow").innerHTML = `
     <div class="stat"><div class="lbl">سیگنال قابل معامله (${TF})</div><div class="val ${ok.length?"up":""}">${ok.length} <small>از ${d.coins.length} ارز</small></div></div>
     <div class="stat"><div class="lbl">جهت سیگنال‌ها</div><div class="val"><span class="up">▲${longs}</span> / <span class="dn">▼${shorts}</span> <small>· ${ready} ارز آماده >۸۰٪</small></div></div>
     <div class="stat"><div class="lbl">میانگین EV سیگنال‌های مجاز</div><div class="val ${avgEv>0?"up":avgEv<0?"dn":""}">${avgEv!=null?pct(avgEv):"—"}</div></div>
     <div class="stat"><div class="lbl">روند بیت‌کوین (${TF})</div><div class="val ${d.btc?(d.btc.dir==="صعودی"?"up":d.btc.dir==="نزولی"?"dn":"mid"):""}">${d.btc?d.btc.dir:"—"}</div></div>
-    <div class="stat"><div class="lbl">عملکرد زنده ۳۰ روز</div><div class="val">${ls&&ls.n?`${fmt(ls.win_rate,0)}٪ <small>از ${ls.n} سیگنال</small>`:"—"}</div></div>
+    ${ls ? `<div class="stat"><div class="lbl">عملکرد زنده ۳۰ روز</div><div class="val">${ls.n?`${fmt(ls.win_rate,0)}٪ <small>از ${ls.n} سیگنال</small>`:"—"}</div></div>`
+         : `<div class="stat"><div class="lbl" title="دفترِ رو-به-جلوی میزِ تصمیم، همهٔ خانه‌ها، پس از کارمزد — فقط نمایش">عملکرد زنده (دفترِ تصمیم)</div><div class="val">${lo&&lo.n?`${fmt(lo.win_rate,0)}٪ <small>از ${lo.n} معامله</small>`:"—"}</div></div>`}
     <div class="stat"><div class="lbl">سود/زیان دمو</div><div class="val">${pt?`<span class="${cls(pt.open)}">${fmt(pt.open,1)}$</span> <small>باز</small> · <span class="${cls(pt.closed)}">${fmt(pt.closed,1)}$</span> <small>بسته</small>`:"—"}</div></div>`;
 }
 let OV_CTL = null;
@@ -1512,9 +1522,24 @@ async function loadOverview(force){
   $("#pulseText").textContent = `موتور زنده — ${nCoins ? nCoins.toLocaleString("fa-IR") + " ارز × " : ""}۴ تایم‌فریم · مجوزِ ورود فقط از قفلِ ایمنی`;
   loadLiveStats().then(()=>{ if(window.OV) renderStats(window.OV); });
 }
+// عملکردِ زندهٔ «دفترِ رو-به-جلوی میزِ تصمیم» (فقط نمایش؛ روی هیچ تصمیمی اثر ندارد)
+function ledgerLine(){
+  const D = window.DEC, lo = D && D.live_overall, cp = D && D.scorecard_meta && D.scorecard_meta.cost_pct;
+  const basis = cp!=null ? `، پس از کارمزدِ ثابتِ ${faN(cp,2)}٪` : "";
+  return lo && lo.n > 0
+    ? `دفترِ رو-به-جلوی میزِ تصمیم (همهٔ خانه‌ها${basis}): <b>${faN(n100(lo.win_rate),0)}٪</b> برد از ${faN(lo.n)} معامله · میانگین ${bR(lo.avg_r)}${lo.open ? ` · ${faN(lo.open)} در انتظارِ داوری` : ""}`
+    : "دفترِ رو-به-جلوی میزِ تصمیم هنوز معاملهٔ داوری‌شده‌ای ندارد";
+}
 async function loadLiveStats(){
   try{
     const d = await jq(`/api/live-stats?tf=${TF}`);
+    const fb = d.feedback || {};
+    if(fb.active === false){
+      // دفترِ سایه از ژوئیه تغذیه نمی‌شود: آمارِ ۳۰روزه‌اش همیشه صفر بود و «ترمزِ خودکار» وجود نداشت
+      window.LSTATS = null;
+      $("#liveStats").innerHTML = `📡 عملکردِ زنده — ${ledgerLine()} · <span class="mid" title="${esc(fb.note_fa||"")}">⏸ تعلیقِ خودکار، جیبِ لبه و هشدارِ افت: <b>غیرفعال</b> — تصمیم‌ها همان قاعدهٔ کارنامه‌اند</span>`;
+      return;
+    }
     window.LSTATS = d.all;
     const s = d.stats || {}, a = d.all || {};
     const one = (x,l) => x.n ? `${l}: <b>${x.win_rate}٪</b> برد از ${x.n} سیگنال (میانگین ${x.avg_r>=0?"+":""}${x.avg_r}R)` : `${l}: هنوز سیگنال داوری‌شده‌ای نیست`;
@@ -1568,7 +1593,7 @@ async function openDetail(sym){
       ${t.edge_r!=null?`<div class="kv"><span>مدل مستقلِ بازده خالص</span><b class="num ${cls(t.edge_lcb_r)}">${fmt(t.edge_r,2)}R / LCB ${fmt(t.edge_lcb_r,2)}R</b></div>`:""}` : ""}
       <div class="kv"><span>هدف پیش‌بینی (${dur(f.horizon_min)})</span><b class="num ${cls(f.target_pct)}">${px(f.target)} (${pct(f.target_pct)})</b></div>
       <div class="kv"><span>بازه محتمل</span><b class="num">${px(f.cone_lo)} ← ${px(f.cone_hi)}</b></div>
-      <div class="kv"><span title="ستاپ‌های رویدادیِ همین نماد در پنجرهٔ زنده (~۴۲۰ کندل)، با بازهٔ ۹۵٪ ویلسون؛ قاعدهٔ z/رأی را نمی‌سنجد و کارنامهٔ تصمیم نیست">بک‌تستِ کوچکِ ستاپ‌ها${btThin(a.backtest) && a.backtest && a.backtest.win_rate!=null ? ` <small class="dm-rec">نمونهٔ کم</small>` : ""}</span><b class="num" ${btThin(a.backtest)?'style="opacity:.6"':""}>${btText(a.backtest)}</b></div>
+      <div class="kv"><span title="ستاپ‌های رویدادیِ همین نماد در پنجرهٔ زنده (~۴۲۰ کندل)، با بازهٔ ۹۵٪ ویلسون؛ قاعدهٔ z/رأی را نمی‌سنجد و کارنامهٔ تصمیم نیست">بک‌تستِ کوچکِ ستاپ‌ها${btThin(a.backtest) && a.backtest && a.backtest.win_rate!=null ? ` <small class="dm-rec">نمونهٔ کم</small>` : ""}${a.backtest && a.backtest.cost_pct!=null?` <small class="mid" title="ردهٔ نقدشوندگیِ همین نماد با فرضِ ورودِ میکر؛ کارنامهٔ تصمیم کارمزدِ ثابتِ خودش را دارد">(کارمزد ${fmt(a.backtest.cost_pct,2)}٪)</small>`:""}</span><b class="num" ${btThin(a.backtest)?'style="opacity:.6"':""}>${btText(a.backtest)}</b></div>
       <div class="divider"></div>
       ${t.side ? `
         <div class="kv"><span>${t.tradeable?"پیشنهاد معامله":"ستاپ مشاهده‌شده"}</span><b class="${t.tradeable?(t.side==="long"?"up":"dn"):"mid"}">${t.tradeable
