@@ -1975,6 +1975,11 @@ def status():
             for tf, d in t.get("tfs", {}).items() if d.get("feature_health")
         }
         st["models"] = {}
+
+        def _eff(tf_, key, ok):
+            # پرچمِ «معتبر» همان چیزی است که predict به کار می‌برد: این ساخت + هیسترزیسِ دو ساخت؛
+            # قبلاً این‌جا فقط تک‌ساخت بود و tf_trust «معتبر» نشان می‌داد در حالی که predict رد می‌کرد
+            return bool(ok and trusted_with_hysteresis(tf_, key, t))
         for tf, d in t.get("tfs", {}).items():
             m = d.get("model")
             if m:
@@ -1982,7 +1987,9 @@ def status():
                                     ("n_train", "n_oos", "oos_brier", "oos_brier_base",
                                      "oos_brier_skill", "oos_base", "oos_lift", "by_setup")}
                 st["models"][tf]["kind"] = m.get("kind", "logit")
-                st["models"][tf]["trusted"] = valid_version and _model_trusted(m, MIN_SETUP_LIFT)
+                ok = valid_version and _model_trusted(m, MIN_SETUP_LIFT)
+                st["models"][tf]["trusted_this_build"] = bool(ok)
+                st["models"][tf]["trusted"] = _eff(tf, "model", ok)
                 if m.get("kind") == "ensemble":
                     st["models"][tf]["members"] = m.get("member_kinds", [])
             dm = d.get("dir_model")
@@ -1990,12 +1997,16 @@ def status():
                 st["models"].setdefault(tf, {})
                 st["models"][tf]["dir_lift"] = dm["oos_lift"]
                 st["models"][tf]["dir_n"] = dm["n_train"] + dm["n_oos"]
-                st["models"][tf]["dir_trusted"] = valid_version and _model_trusted(dm, MIN_DIR_LIFT)
+                ok = valid_version and _model_trusted(dm, MIN_DIR_LIFT)
+                st["models"][tf]["dir_trusted_this_build"] = bool(ok)
+                st["models"][tf]["dir_trusted"] = _eff(tf, "dir_model", ok)
             em = d.get("edge_model")
             if em:
                 st["models"].setdefault(tf, {})
+                ok = valid_version and _edge_model_trusted(em)
                 st["models"][tf].update({
-                    "edge_trusted": valid_version and _edge_model_trusted(em),
+                    "edge_trusted": _eff(tf, "edge_model", ok),
+                    "edge_trusted_this_build": bool(ok),
                     "edge_n": em.get("n_oos"),
                     "edge_rank_ic": em.get("oos_rank_ic"),
                     "edge_lift_r": em.get("oos_lift_r"),
@@ -2005,8 +2016,10 @@ def status():
             if pm:
                 st["models"].setdefault(tf, {})
                 pst = pm.get("test") or {}
+                ok = valid_version and _policy_model_trusted(pm)
                 st["models"][tf].update({
-                    "policy_trusted": valid_version and _policy_model_trusted(pm),
+                    "policy_trusted": _eff(tf, "policy_model", ok),
+                    "policy_trusted_this_build": bool(ok),
                     "policy_n": pst.get("n"),
                     "policy_avg_net_r": pst.get("avg_net_r"),
                     "policy_lcb_net_r": pst.get("lcb_net_r"),
@@ -2021,8 +2034,10 @@ def status():
             if am:
                 st["models"].setdefault(tf, {})
                 ast = am.get("test") or {}
+                ok = valid_version and _action_policy_trusted(am)
                 st["models"][tf].update({
-                    "action_trusted": valid_version and _action_policy_trusted(am),
+                    "action_trusted": _eff(tf, "action_model", ok),
+                    "action_trusted_this_build": bool(ok),
                     "action_n": ast.get("n"),
                     "action_avg_net_r": ast.get("avg_net_r"),
                     "action_lcb_net_r": ast.get("lcb_net_r"),
@@ -2247,7 +2262,8 @@ def predict(tf, feats, risk_pct, legacy=None, cost=None, regime=None):
 
     m = d.get("model")
     # دروازه علمی: مدلی که در آزمون برون‌نمونه‌ای لیفت معنادار نشان نداده، حق صدور احتمال ندارد
-    if m and not _model_trusted(m, MIN_SETUP_LIFT):
+    # — و مثلِ بقیهٔ مدل‌ها فقط پس از دو ساختِ پیاپیِ موفق (calib-F12؛ یک ساختِ خوش‌شانس کافی نیست)
+    if m and not (_model_trusted(m, MIN_SETUP_LIFT) and trusted_with_hysteresis(tf, "model", t)):
         m = None
     if m and _model_nfeat(m) != len(feats):
         m = None                                   # مدل قدیمی با ویژگی‌های جدید ناسازگار است
@@ -2282,7 +2298,8 @@ def predict(tf, feats, risk_pct, legacy=None, cost=None, regime=None):
             out["policy_court_failed"] = True
             out["policy_avg_net_r"] = (policy_diag.get("policy_test") or {}).get("avg_net_r")
         em = d.get("edge_model")
-        if _edge_model_trusted(em) and _model_nfeat(em) == len(feats):
+        if (_edge_model_trusted(em) and trusted_with_hysteresis(tf, "edge_model", t)
+                and _model_nfeat(em) == len(feats)):
             out["edge_trusted"] = True
             out.update(_score_edge(em, feats, risk_pct, actual_cost, regime))
         return out

@@ -53,5 +53,58 @@ class TiedPredictionLiftTests(unittest.TestCase):
         self.assertAlmostEqual(calib._rank_corr(pred, actual), float(np.corrcoef(ra, rb)[0, 1]), places=12)
 
 
+def _setup_model_blob(n_feat=3):
+    return {"kind": "logit", "w": [0.1] + [0.3] * n_feat, "mu": [0.0] * n_feat, "sd": [1.0] * n_feat,
+            "n_feat": n_feat, "n_train": 500, "n_oos": 200, "oos_lift": 12.0, "oos_brier": 0.20,
+            "oos_base": 50.0, "platt": [1.0, 0.0], "avg_win_r": 1.8, "avg_loss_r": 1.0}
+
+
+def _edge_model_blob(n_feat=3):
+    return {"kind": "ridge_edge", "w": [0.05] + [0.1] * n_feat, "mu": [0.0] * n_feat,
+            "sd": [1.0] * n_feat, "n_feat": n_feat, "calibration": [1.0, 0.0],
+            "n_oos": 200, "oos_rank_ic": 0.10, "oos_lift_r": 0.30, "oos_mae_skill": 0.05,
+            "residual_sd": 0.8, "trained_cost_pct": 0.15}
+
+
+class SetupAndEdgeHysteresisTests(unittest.TestCase):
+    """calib-F12: مدلِ ستاپ و مدلِ edge هم مثلِ بقیه فقط پس از دو ساختِ پیاپیِ موفق."""
+
+    def _table(self, runs):
+        return {"version": calib.CALIB_VERSION, "built_at": 0.0,
+                "tfs": {"4h": {"model": _setup_model_blob(), "edge_model": _edge_model_blob(),
+                               "cells": {}}},
+                "trust_history": {"4h": {"model": list(runs), "edge_model": list(runs)}}}
+
+    def test_one_lucky_build_gives_no_setup_probability_or_edge(self):
+        with mock.patch.object(calib, "load", return_value=self._table([False, True])):
+            out = calib.predict("4h", [0.5, 0.2, -0.1], 1.0, legacy=None, cost=0.1)
+            st = calib.status()
+        self.assertTrue(out is None or out.get("source") != "model")
+        m = st["models"]["4h"]
+        self.assertTrue(m["trusted_this_build"])
+        self.assertFalse(m["trusted"])                        # tf_trust.setup_ok همان predict است
+        self.assertTrue(m["edge_trusted_this_build"])
+        self.assertFalse(m["edge_trusted"])
+
+    def test_two_consecutive_good_builds_turn_both_on(self):
+        with mock.patch.object(calib, "load", return_value=self._table([True, True])):
+            out = calib.predict("4h", [0.5, 0.2, -0.1], 1.0, legacy=None, cost=0.1)
+            st = calib.status()
+        self.assertEqual(out["source"], "model")
+        self.assertTrue(out["edge_trusted"])
+        self.assertIsNotNone(out.get("edge_r"))
+        self.assertTrue(st["models"]["4h"]["trusted"])
+        self.assertTrue(st["models"]["4h"]["edge_trusted"])
+
+    def test_edge_needs_its_own_history(self):
+        table = self._table([True, True])
+        table["trust_history"]["4h"]["edge_model"] = [True]   # اولین ساختِ نسخهٔ تازه
+        with mock.patch.object(calib, "load", return_value=table):
+            out = calib.predict("4h", [0.5, 0.2, -0.1], 1.0, legacy=None, cost=0.1)
+        self.assertEqual(out["source"], "model")
+        self.assertFalse(out["edge_trusted"])
+        self.assertIsNone(out.get("edge_r"))
+
+
 if __name__ == "__main__":
     unittest.main()
