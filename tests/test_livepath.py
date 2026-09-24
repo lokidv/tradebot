@@ -19,9 +19,11 @@ import _hermetic  # noqa: E402,F401  — پیش از هر ماژولِ ربات:
 
 import bracket  # noqa: E402
 import candidates  # noqa: E402
+import edge_book  # noqa: E402
 import engine  # noqa: E402
 import meta_gate  # noqa: E402
 import report  # noqa: E402
+import shadow  # noqa: E402
 
 H = 3_600_000
 
@@ -247,6 +249,65 @@ class ResolveRaceTests(_Ledger, unittest.TestCase):
         self.assertEqual(cb["model"], "tier")
         self.assertFalse(cb["funding_included"])
         self.assertIn("event_cost_pct", cb["pre_registered"])
+
+
+# ───────────────────────── LP-9 (+LP-6): ترتیبِ زمانیِ جیب‌ها و بلوکِ هر تایم‌فریم ─────────────────────────
+class _Shadow:
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = shadow.SHADOW_PATH
+        shadow.SHADOW_PATH = os.path.join(self.tmp.name, "signals.json")
+
+    def tearDown(self):
+        shadow.SHADOW_PATH = self._old
+        edge_book._cache.update(ts=0.0, pockets={}, suspended={}, health={})
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _resolved(ts, r_mult, setup="zx", side="long", tf="1h", sym="BTCUSDT"):
+        return {"id": f"{sym}{ts}", "ts": ts, "symbol": sym, "tf": tf, "side": side, "setup": setup,
+                "entry": 100.0, "sl": 99.0, "tp": 101.8, "r_mult": r_mult, "resolved_at": ts / 1000}
+
+
+class EdgeBookOrderTests(_Shadow, unittest.TestCase):
+    def _save_newest_first(self, old_r, new_r, n=30):
+        now = int(time.time() * 1000)
+        rows = [self._resolved(now - (n - i) * 20 * H // 2, old_r if i < n // 2 else new_r)
+                for i in range(n)]                                # قدیمی→جدید
+        shadow._save({"pending": [], "resolved": rows[::-1]})     # مثلِ shadow.resolve: جدیدترین اول
+
+    def test_recent_half_is_the_newest_trades_even_when_stored_newest_first(self):
+        self._save_newest_first(1.8, -1.0)                        # ۱۵ برد قدیمی، ۱۵ باختِ تازه
+        vals, stamps = edge_book._combo_rows(30)["1h|zx|long"]
+        self.assertEqual(stamps, sorted(stamps))
+        q = edge_book._series_quality(vals, stamps, edge_book.block_ms("1h"))
+        self.assertAlmostEqual(q["recent"], -1.0)
+        self.assertAlmostEqual(q["half1"], -1.0)
+        pockets, _susp, _h = edge_book.refresh(force=True)
+        self.assertNotIn("1h|zx|long", pockets)                   # قبلاً درجهٔ B می‌گرفت
+
+    def test_block_scales_with_the_timeframe(self):
+        self.assertEqual(edge_book.block_ms("1h"), edge_book.BLOCK_MS)
+        self.assertEqual(edge_book.block_ms("4h"), bracket.MAX_BARS * 4 * H)
+        self.assertEqual(edge_book.block_ms("15m"), bracket.MAX_BARS * H // 4)
+        self.assertEqual(edge_book.block_ms("?"), edge_book.BLOCK_MS)
+
+    def test_rule_rows_are_keyed_rule_not_zx(self):
+        now = int(time.time() * 1000)
+        shadow._save({"pending": [], "resolved": [self._resolved(now - H, 0.5, setup=None)]})
+        self.assertIn("1h|rule|long", edge_book._combo_rows(30))
+        self.assertIn("rule", shadow.stats("1h")["by_setup"])
+        self.assertNotIn("zx", shadow.stats("1h")["by_setup"])
+
+
+class ShadowDedupTests(_Shadow, unittest.TestCase):
+    def test_dedup_looks_at_the_newest_resolved_rows(self):
+        candle = int(time.time() * 1000) - 60_000
+        newest = self._resolved(candle, 1.0)
+        older = [self._resolved(candle - (i + 1) * H, 1.0, sym="ETHUSDT") for i in range(300)]
+        shadow._save({"pending": [], "resolved": [newest] + older})
+        ok = shadow.log_signal("BTCUSDT", "1h", "long", 100.0, 99.0, 101.8, "zx", 55, 0.4, candle, 60)
+        self.assertFalse(ok)                                       # قبلاً ۲۰۰تای قدیمی را می‌دید ⇒ تکرار
 
 
 if __name__ == "__main__":

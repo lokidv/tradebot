@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """ردیابی سایه — هر سیگنال قابل‌معامله‌ای که به کاربر نمایش داده می‌شود ثبت
-و بعداً با قیمت واقعی داوری می‌شود (برد/باخت/حدزمانی). عملکرد زنده = آینه بدون تعارف."""
+و بعداً با قیمت واقعی داوری می‌شود (برد/باخت/حدزمانی). عملکرد زنده = آینه بدون تعارف.
+
+⚠️ از ۱۶ جولای هیچ کدِ تولیدی ``log_signal`` را صدا نمی‌زند (جایگزین: ``candidates.py``)؛ پس این دفتر
+ردیفِ تازه نمی‌گیرد و تعلیق/جیب/drift که از آن خوانده می‌شدند در ``main`` «غیرفعال» اعلام شده‌اند
+(``main.LIVE_FEEDBACK_ACTIVE``)."""
 import json
 import os
 import threading
@@ -14,6 +18,8 @@ import tf_spec
 SHADOW_PATH = paths.data("signals_log.json")
 MIN_RISK_PCT = 0.05        # زیر این فاصله، گردکردنِ قیمت حدضرر را روی ورود می‌آورد و R بی‌معنا می‌شود
 MAX_ABS_R = 5.0            # هر |R| بزرگ‌تر، خطای داده است نه نتیجهٔ معامله
+RULE_SETUP = "rule"        # سیگنالِ بی‌ستاپِ رویدادی (قاعدهٔ z/رأی) — «zx» یعنی رویدادِ کراسِ z
+DEDUP_RECENT = 200         # تکرار فقط در میانِ این‌قدر از **تازه‌ترین** داوری‌ها سنجیده می‌شود
 _lock = threading.Lock()
 
 
@@ -69,7 +75,7 @@ def log_signal(symbol, tf, side, entry, sl, tp, setup, p_win, ev_pct, candle_ts,
         for p in db["pending"]:
             if p["symbol"] == symbol and p["tf"] == tf and p["side"] == side:
                 return False                       # هنوز یکی در جریان است
-        for r in db["resolved"][-200:]:
+        for r in db["resolved"][:DEDUP_RECENT]:    # resolved جدیدترین-اول است (resolve: insert(0))
             if r["symbol"] == symbol and r["tf"] == tf and r["ts"] == candle_ts and r["side"] == side:
                 return False
         db["pending"].append({
@@ -158,7 +164,7 @@ def stats(tf=None, days=30, since_ts=None):
         out["win_rate"] = round(len(wins) / len(rows) * 100, 1)
         out["avg_r"] = round(sum(r["r_mult"] for r in rows) / len(rows), 3)
         for r in rows:
-            setup = r.get("setup") or "zx"
+            setup = r.get("setup") or RULE_SETUP
             side = r.get("side") or "?"
             tf_r = r.get("tf") or "?"
             d = out["by_setup"].setdefault(setup, {"n": 0, "wins": 0, "sum_r": 0.0})
