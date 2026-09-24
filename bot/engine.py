@@ -619,7 +619,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         sg, st_ = setup_signal(cs, o, h, l, c, j)
         if sg != 0:
             if st_ in suspended:
-                break                                # ستاپِ معلق — انگار سیگنالی نبود
+                continue                             # ستاپِ معلق — انگار سیگنالی نبود: اسکن به کندلِ قبل می‌رود (break ستاپِ سالمِ n−2 را دور می‌انداخت)
             # اعتبار: قیمت از کندل ستاپ بیش از ۱٫۲ ATR خلاف جهت نرفته باشد
             if sg * (c[n - 1] - c[j]) >= -1.2 * float(cs["a14"][n - 1]):
                 live_sig, live_setup = sg, st_
