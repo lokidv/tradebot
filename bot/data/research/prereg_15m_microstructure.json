@@ -1,0 +1,42 @@
+{
+ "title": "15-minute signals for KuCoin futures: five order-flow and market-behaviour hypotheses",
+ "registered_at_utc": "2026-09-24",
+ "user_context": "The user trades BTC, ETH, BNB, SOL, TRX on KuCoin spot and futures and wants 15-minute signals.",
+ "cost_gate_result": "KuCoin futures maker 0.02%, taker 0.06%, spreads < 0.012% on BTC/ETH. Holding a single 15m bar with taker orders costs 62-155% of the median move, so trades hold 8 bars (2 hours). Spot is not viable at this horizon.",
+ "data": "Binance USD-M futures 15m klines with taker-buy volume (public archive), 2022-01..2026-08; prices of these five coins are arbitraged between Binance and KuCoin",
+ "trade_mechanics": {
+  "signal": "computed at the close of a 15m bar using only that bar and earlier bars",
+  "entry": "open of the next bar",
+  "exit": "close of the 8th bar held (2 hours), or a protective stop at 3 x ATR(14 bars) touched intrabar (stop fill at the stop, gap fill at the open)",
+  "one_position_per_coin": "a new signal while a trade is open is ignored",
+  "cost_primary": "0.14% round trip (futures taker 0.06% x 2 + 0.02% slippage)",
+  "cost_sensitivity": "0.04% (maker both sides) reported only; maker fills are uncertain until phase 3"
+ },
+ "definitions": {
+  "imb4": "sum(taker buy volume) / sum(volume) over the last 4 bars",
+  "z(x)": "(x - mean) / std of the same quantity over the prior 2880 bars (30 days), excluding the current bar",
+  "sigma1": "std of 1-bar returns over the prior 2880 bars",
+  "sigma4": "std of 4-bar returns over the prior 2880 bars"
+ },
+ "hypotheses": {
+  "M1_FLOW_MOMENTUM": "z(imb4) > 2 -> long; z(imb4) < -2 -> short (persistent aggressive flow carries information)",
+  "M2_ABSORPTION": "4-bar return < -1 sigma4 while z(imb4) > 1.5 -> long; 4-bar return > +1 sigma4 while z(imb4) < -1.5 -> short (passive side absorbing the aggressive side)",
+  "M3_CAPITULATION": "1-bar return < -4 sigma1 with volume > 4 x its prior-30-day median -> long; mirror -> short (forced flows overshoot)",
+  "M4_BREAKOUT_FLOW": "close above the highest high of the prior 96 bars with z(imb4) > 1 -> long; close below the lowest low of the prior 96 bars with z(imb4) < -1 -> short",
+  "M5_US_OPEN": "on weekdays, at the 14:00 UTC bar close: sign of the return from 13:30 to 14:00 UTC -> same-sign position for 8 bars (US equity open momentum)"
+ },
+ "family": "5 hypotheses x 5 coins = 25 tests",
+ "windows": {
+  "discovery": ["2022-01-01", "2024-06-30"],
+  "validation": ["2024-07-01", "2025-06-30"],
+  "holdout_one_shot": ["2025-07-01", "2026-08-31"]
+ },
+ "statistic": "mean net return per trade (%), block bootstrap with 1-day blocks",
+ "adopt_rule": {
+  "discovery": "mean > 0, Romano-Wolf p_adj < 0.10 across the 25 tests, at least 100 trades",
+  "validation": "mean > 0 and one-sided 90% lower bound > 0, at least 50 trades",
+  "holdout": "run once, only for tests that passed both; mean > 0 -> proceeds to the live demo forward test (phase 5); otherwise rejected",
+  "no_pass": "if nothing passes, no 15-minute signal is shipped and the user is told"
+ },
+ "no_changes_after_seeing_results": "definitions, parameters, windows, costs and rules above are fixed"
+}
