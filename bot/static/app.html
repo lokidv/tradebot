@@ -78,7 +78,7 @@
   th{font-weight:500;color:var(--chart);font-size:12px;text-align:start;padding:8px 10px;border-bottom:1px solid var(--rule)}
   td{padding:10px;border-bottom:1px solid var(--rule);vertical-align:middle}
   .scroll{overflow-x:auto;background:var(--slate);border:1px solid var(--rule);border-radius:12px}
-  input{background:var(--ink);border:1px solid var(--rule);color:var(--paper);border-radius:8px;padding:6px 10px;font-family:var(--body);font-size:14px}
+  input,select{background:var(--ink);border:1px solid var(--rule);color:var(--paper);border-radius:8px;padding:6px 10px;font-family:var(--body);font-size:14px}
   input.n{width:90px}
   label{font-size:13px;color:var(--chart)}
   .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:10px 0}
@@ -99,6 +99,7 @@
   <nav role="tablist">
     <button role="tab" aria-selected="true" data-p="week">این هفته</button>
     <button role="tab" aria-selected="false" data-p="daily">سیگنال‌های روزانه</button>
+    <button role="tab" aria-selected="false" data-p="desk">میزِ کوکوین</button>
     <button role="tab" aria-selected="false" data-p="demo">دمو و کارنامه</button>
     <button role="tab" aria-selected="false" data-p="settings">تنظیمات</button>
     <a href="/lab" title="ابزارهای پژوهش و جدول ۲۰۰ ارز">آزمایشگاه ↗</a>
@@ -134,6 +135,52 @@
     <p class="lede">شکستِ سقفِ ۲۰روزه روی همین پنج ارز. <b id="dailyVerdict"></b></p>
     <div class="scroll"><table><thead><tr><th>ارز</th><th>وضعیت</th><th>قیمتِ فعلی</th><th>حدضرر</th><th></th></tr></thead>
       <tbody id="dailyRows"><tr><td colspan="5" class="empty">در حالِ خواندن…</td></tr></tbody></table></div>
+  </section>
+
+  <!-- ═══ میزِ معاملهٔ کوکوین ═══ -->
+  <section class="page" id="p-desk" hidden>
+    <p class="lede">برای معاملهٔ کوتاه‌مدت روی فیوچرزِ کوکوین. <b>این‌جا سیگنالِ ۱۵دقیقه‌ای نیست:</b> ۲۵ آزمونِ ازپیش‌ثبت‌شده روی جریانِ سفارش هیچ لبه‌ای بعد از کارمزد پیدا نکرد.
+      این ابزارها روی چیزهایی کار می‌کنند که واقعاً نتیجه را می‌سازند: حجمِ درست، اهرمِ امن، کارمزد، ساعتِ مناسب، و اینکه روشِ خودتان با عدد جواب می‌دهد یا نه.</p>
+
+    <h2>ماشین‌حسابِ حجمِ پوزیشن</h2>
+    <div class="cell">
+      <div class="row">
+        <label>ارز <select id="dSym"></select></label>
+        <label>موجودیِ حساب (USDT) <input id="dBal" class="n" type="number" min="0" value="1000"></label>
+        <label>ریسکِ این معامله (٪ موجودی) <input id="dRisk" class="n" type="number" min="0.1" max="5" step="0.1" value="1"></label>
+      </div>
+      <div class="row">
+        <label>قیمتِ ورود <input id="dEntry" class="n" type="number" step="any"></label>
+        <label>حدضرر <input id="dStop" class="n" type="number" step="any"></label>
+        <label>نوعِ سفارش <select id="dFee"><option value="maker">محدود (maker ۰٫۰۲٪)</option><option value="taker">بازار (taker ۰٫۰۶٪)</option></select></label>
+        <label>اهرم (خالی = کمترینِ لازم) <input id="dLev" class="n" type="number" min="1" max="125" step="1"></label>
+        <button class="btn go" id="dCalc">حساب کن</button>
+      </div>
+      <div id="dOut" class="dim"></div>
+    </div>
+
+    <h2>ساعت‌هایی که حرکت از کارمزد بزرگ‌تر است · میانهٔ حرکتِ ۲ساعته در دو سالِ اخیر، به وقتِ تهران</h2>
+    <div class="cell"><div id="dHours" class="dim">در حالِ خواندن…</div>
+      <div class="dim" style="font-size:12px;margin-top:8px">ستونِ کهربایی یعنی کارمزدِ رفت‌وبرگشتِ سفارشِ بازار بیش از ۴۰٪ حرکتِ معمولِ آن ساعت را می‌خورد. این نمودار جهتِ قیمت را پیش‌بینی نمی‌کند؛ فقط نشان می‌دهد کِی هزینه کمتر جلوی سود را می‌گیرد.</div></div>
+
+    <h2>دفترِ معامله‌های واقعیِ شما</h2>
+    <div class="cell">
+      <div class="row">
+        <label>ارز <select id="jSym"></select></label>
+        <label>جهت <select id="jSide"><option value="long">لانگ</option><option value="short">شورت</option></select></label>
+        <label>ورود <input id="jEntry" class="n" type="number" step="any"></label>
+        <label>خروج <input id="jExit" class="n" type="number" step="any"></label>
+        <label>ارزشِ پوزیشن (USDT) <input id="jNot" class="n" type="number" step="any"></label>
+        <label>کارمزد (USDT) <input id="jFees" class="n" type="number" step="any" value="0"></label>
+        <label>حدضرر (اختیاری) <input id="jStop" class="n" type="number" step="any"></label>
+        <label>برچسبِ روش <input id="jSetup" style="width:120px" placeholder="مثلاً شکست"></label>
+        <button class="btn go" id="jAdd">ثبتِ معامله</button>
+      </div>
+      <div class="row"><label>سقفِ ضررِ روزانه (٪ موجودی) <input id="jLimit" class="n" type="number" min="0.5" max="20" step="0.5" value="3"></label></div>
+    </div>
+    <div class="strip" id="jStats" style="margin-top:14px"></div>
+    <div class="scroll" style="margin-top:14px"><table><thead><tr><th>ارز</th><th>جهت</th><th>ورود → خروج</th><th>سود/زیان</th><th>R</th><th>روش</th><th></th></tr></thead>
+      <tbody id="jRows"></tbody></table></div>
   </section>
 
   <!-- ═══ دمو و کارنامه ═══ -->
@@ -178,7 +225,7 @@ async function getJSON(u, opt){ const r = await fetch(u, opt); const j = await r
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.setAttribute("aria-selected", x === b));
   document.querySelectorAll(".page").forEach(p => p.hidden = p.id !== "p-" + b.dataset.p);
-  ({week: loadWeek, daily: loadDaily, demo: loadDemo, settings: loadSettings})[b.dataset.p]();
+  ({week: loadWeek, daily: loadDaily, desk: loadDesk, demo: loadDemo, settings: loadSettings})[b.dataset.p]();
 });
 
 /* ── نمودارِ امضا: قیمت در برابرِ خطِ ۲۸ روز پیش ── */
@@ -376,6 +423,82 @@ $("#tgSave").onclick = async () => {
     $("#tgToken").value = ""; toast("تنظیماتِ اعلان ذخیره شد."); loadSettings(); }catch(e){ toast(e.message); }
 };
 $("#tgTest").onclick = async () => { try{ await getJSON("/api/notify/test", {method: "POST"}); toast("پیامِ آزمایشی فرستاده شد."); }catch(e){ toast(e.message); } };
+
+/* ── میزِ کوکوین ── */
+let KC = null, HOURS = null;
+async function loadDesk(){
+  try{ KC = KC || await getJSON("/api/kucoin/contracts"); }catch(e){ $("#dOut").textContent = e.message; }
+  if(!$("#dSym").options.length){
+    const opts = Object.keys(KC || {}).map(s => `<option value="${s}">${coin(s)}</option>`).join("");
+    $("#dSym").innerHTML = opts; $("#jSym").innerHTML = opts;
+  }
+  const bal = store("dBal"); if(bal) $("#dBal").value = bal;
+  const lim = store("jLimit"); if(lim) $("#jLimit").value = lim;
+  fillEntry(); renderHours(); loadJournal();
+}
+function fillEntry(){ const s = (KC || {})[$("#dSym").value]; if(s && !$("#dEntry").value) $("#dEntry").value = s.mark; }
+$("#dSym").addEventListener("change", () => { $("#dEntry").value = ""; $("#dStop").value = ""; fillEntry(); renderHours(); });
+$("#dCalc").onclick = async () => {
+  store("dBal", $("#dBal").value);
+  try{
+    const r = await getJSON("/api/kucoin/size", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({sym: $("#dSym").value, balance: +$("#dBal").value, risk_pct: +$("#dRisk").value,
+        entry: +$("#dEntry").value, stop: +$("#dStop").value, fee_side: $("#dFee").value, leverage: +$("#dLev").value || null})});
+    if(!r.contracts){ $("#dOut").innerHTML = `<span class="warn">با این ریسک حتی یک قرارداد هم جا نمی‌شود — ریسک یا فاصلهٔ حدضرر را تغییر دهید.</span>`; return; }
+    $("#dOut").innerHTML = `<div style="font-size:16px;color:var(--paper);margin:6px 0">${r.side === "long" ? "لانگ" : "شورت"} ·
+      <b class="n">${r.contracts}</b> قرارداد · ارزشِ پوزیشن <b class="n">${px(r.notional)}</b> USDT · مارجین <span class="n">${px(r.margin)}</span> با اهرمِ <b class="n">${r.leverage}×</b></div>
+      <div>اگر حدضرر بخورد: <b class="n bad">−${px(r.loss_at_stop)}</b> USDT (${fa(r.loss_at_stop_pct, 2)}٪ حساب، با کارمزد) ·
+        کارمزدِ رفت‌وبرگشت <span class="n">${px(r.fees_round_trip)}</span> · فاصلهٔ حدضرر ${fa(r.stop_distance_pct, 2)}٪ · قیمت باید دست‌کم ${fa(r.breakeven_move_pct, 2)}٪ حرکت کند تا فقط کارمزد برگردد</div>
+      <div class="${r.liq_before_stop ? "bad" : "ok"}" style="margin-top:4px">${r.liq_before_stop
+        ? `⛔ قیمتِ لیکوئید (<span class="n">${px(r.liquidation)}</span>) پیش از حدضرر می‌رسد — اهرم را کم کنید.`
+        : `قیمتِ تقریبیِ لیکوئید <span class="n">${px(r.liquidation)}</span> — بعد از حدضرر است (مارجینِ ایزوله).`}</div>`;
+  }catch(e){ $("#dOut").textContent = e.message; }
+};
+async function renderHours(){
+  try{ HOURS = HOURS || await getJSON("/api/kucoin/hours"); }catch(e){ $("#dHours").textContent = e.message; return; }
+  const rows = (HOURS.assets || {})[$("#dSym").value] || [];
+  if(!rows.length){ $("#dHours").textContent = "دادهٔ ساعتی برای این ارز نیست."; return; }
+  const vals = rows.map(r => r.median_move_2h_pct || 0), mx = Math.max(...vals, 0.01), mn = Math.min(...vals);
+  const best = rows.filter(r => r.median_move_2h_pct >= mn + (mx - mn) * 0.75).map(r => r.hour_tehran);
+  $("#dHours").innerHTML = `<div class="dim" style="font-size:13px;margin-bottom:8px">حرکتِ معمول از <span class="n">${fa(mn, 2)}٪</span> تا <span class="n">${fa(mx, 2)}٪</span>؛ هزینهٔ رفت‌وبرگشت با سفارشِ بازار <span class="n">${fa(HOURS.cost_taker_pct, 2)}٪</span> و با سفارشِ محدود <span class="n">${fa(HOURS.cost_maker_pct, 2)}٪</span>.
+    پرتحرک‌ترین ساعت‌ها: <b style="color:var(--paper)">${best.map(h => fa(h)).join("، ")}</b></div>
+    <div style="display:flex;align-items:flex-end;gap:3px;height:120px;direction:ltr">${rows.map(r => {
+    const hgt = 12 + 88 * ((r.median_move_2h_pct || 0) - mn) / Math.max(mx - mn, 1e-9), bad = (r.cost_share_taker_pct || 999) > 40;
+    return `<div title="${r.hour_tehran}:00 — ${r.median_move_2h_pct}٪" style="flex:1;height:${hgt}%;background:${bad ? "var(--buoy)" : "var(--kelp)"};opacity:.85;border-radius:3px 3px 0 0"></div>`;
+  }).join("")}</div><div class="n" style="display:flex;gap:3px;font-size:10px;color:var(--chart)">${rows.map(r => `<div style="flex:1;text-align:center">${r.hour_tehran}</div>`).join("")}</div>`;
+}
+const esc = x => String(x ?? "").replace(/[<>&"']/g, c => ({"<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;"})[c]);
+const groupLine = g => Object.entries(g || {}).map(([k, v]) => `${esc(coin(k))}: <span class="n ${v.pnl >= 0 ? "ok" : "bad"}">${px(v.pnl)}</span> (${fa(v.n)})`).join(" · ");
+async function loadJournal(){
+  store("jLimit", $("#jLimit").value);
+  let s;
+  try{ s = await getJSON(`/api/journal?balance=${+$("#dBal").value || 0}&daily_limit_pct=${+$("#jLimit").value || 0}`); }catch(e){ return; }
+  if(!s.n){ $("#jStats").innerHTML = `<div class="cell">هنوز معامله‌ای ثبت نشده. هر معاملهٔ واقعی را بعد از بستن این‌جا ثبت کنید؛ بعد از ۳۰ معامله، این دفتر با عدد می‌گوید روشِ شما لبه دارد یا نه.</div>`; $("#jRows").innerHTML = ""; return; }
+  $("#jStats").innerHTML = `
+    <div class="cell"><div class="h">سود/زیانِ خالص · ${fa(s.n)} معامله</div><div class="v ${s.total_pnl >= 0 ? "ok" : "bad"} n">${px(s.total_pnl)} $</div><div class="dim" style="font-size:12px">کارمزدِ پرداختی ${px(s.fees)} $</div></div>
+    <div class="cell"><div class="h">نرخِ برد · میانگینِ برد / باخت</div><div class="v">${fa(s.win_rate)}٪</div><div class="dim n" style="font-size:12px">${px(s.avg_win)} / ${px(s.avg_loss)}</div></div>
+    <div class="cell"><div class="h">امیدِ ریاضیِ هر معامله</div><div class="v ${s.expectancy >= 0 ? "ok" : "bad"} n">${px(s.expectancy)} $</div>
+      <div class="dim" style="font-size:12px">${s.enough_data ? (s.expectancy_lcb90 > 0 ? "✅ با اطمینانِ ۹۰٪ مثبت است" : "هنوز از نظرِ آماری ثابت نشده") : `برای قضاوت دست‌کم ۳۰ معامله لازم است (${fa(s.n)} از ۳۰)`}</div></div>
+    <div class="cell"><div class="h">بیشترین افت · امروز</div><div class="v n">${px(s.max_drawdown)} $</div>
+      <div class="${s.daily_limit_hit ? "bad" : "dim"}" style="font-size:12px">امروز <span class="n">${px(s.today_pnl)}</span> $${s.daily_limit_hit ? " — ⛔ سقفِ ضررِ روزانه رسید؛ امروز دیگر معامله نکنید" : ""}</div></div>
+    <div class="cell"><div class="h">به تفکیکِ ارز</div><div style="font-size:12px">${groupLine(s.by_coin)}</div></div>
+    <div class="cell"><div class="h">به تفکیکِ روش</div><div style="font-size:12px">${groupLine(s.by_setup)}</div></div>`;
+  $("#jRows").innerHTML = s.trades.map(t => `<tr><td><b>${coin(t.sym)}</b></td><td>${t.side === "long" ? "لانگ" : "شورت"}</td>
+    <td class="n">${px(t.entry)} → ${px(t.exit)}</td><td class="n ${t.pnl >= 0 ? "ok" : "bad"}">${px(t.pnl)}</td>
+    <td class="n">${t.r == null ? "—" : t.r.toFixed(2)}</td><td class="dim">${esc(t.setup)}</td>
+    <td><button class="btn ghost" onclick="delTrade('${t.id}')">حذف</button></td></tr>`).join("");
+}
+$("#jLimit").addEventListener("change", loadJournal);
+$("#jAdd").onclick = async () => {
+  try{
+    await getJSON("/api/journal", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({sym: $("#jSym").value, side: $("#jSide").value, entry: +$("#jEntry").value, exit: +$("#jExit").value,
+        notional: +$("#jNot").value, fees: +$("#jFees").value || 0, stop: +$("#jStop").value || null, setup: $("#jSetup").value})});
+    ["jEntry", "jExit", "jNot", "jStop"].forEach(id => $("#" + id).value = ""); $("#jFees").value = 0;
+    toast("معامله ثبت شد."); loadJournal();
+  }catch(e){ toast(e.message); }
+};
+async function delTrade(id){ if(!confirm("این معامله از دفتر حذف شود؟")) return; await getJSON(`/api/journal/${id}`, {method: "DELETE"}); loadJournal(); }
 
 loadWeek();
 setInterval(() => { if(!$("#p-week").hidden) loadWeek(); }, 120000);

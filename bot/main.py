@@ -40,6 +40,7 @@ import trend
 import trend_exec
 import momentum
 import watchlist
+import kucoin_desk
 import notify
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
@@ -562,6 +563,73 @@ def trend_status(force: bool = False):
 def momentum_status(force: bool = False):
     """مومنتومِ ۲۸روزهٔ BTC/ETH (در بازار یا نقد، تصمیمِ دوشنبه) — سازگار در پژوهش، اثبات‌نشده."""
     return momentum.view(force=force)
+
+
+@app.get("/api/kucoin/contracts")
+def kucoin_contracts():
+    try:
+        return kucoin_desk.contracts()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"کوکوین پاسخ نداد: {e}")
+
+
+class SizeReq(BaseModel):
+    sym: str
+    balance: float
+    risk_pct: float = 1.0
+    entry: float
+    stop: float
+    fee_side: str = "taker"
+    leverage: float | None = None
+
+
+@app.post("/api/kucoin/size")
+def kucoin_size(req: SizeReq):
+    spec = kucoin_contracts().get(req.sym)
+    if not spec:
+        raise HTTPException(404, "قرارداد پیدا نشد")
+    try:
+        return kucoin_desk.size_position(req.balance, req.risk_pct, req.entry, req.stop, spec,
+                                         "maker" if req.fee_side == "maker" else "taker", req.leverage)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/kucoin/hours")
+def kucoin_hours():
+    return kucoin_desk.hours_table()
+
+
+class JournalReq(BaseModel):
+    sym: str
+    side: str
+    market: str = "futures"
+    entry: float
+    exit: float
+    notional: float
+    fees: float = 0.0
+    stop: float | None = None
+    setup: str = ""
+    opened_at: int | None = None
+    closed_at: int | None = None
+
+
+@app.get("/api/journal")
+def journal_get(balance: float | None = None, daily_limit_pct: float | None = None):
+    return kucoin_desk.journal_stats(daily_limit_pct, balance)
+
+
+@app.post("/api/journal")
+def journal_add(req: JournalReq):
+    if req.sym not in kucoin_desk.CONTRACT or req.side not in ("long", "short") or req.entry <= 0 or req.exit <= 0 or req.notional <= 0:
+        raise HTTPException(400, "جهت، قیمت‌ها و حجم را درست وارد کنید")
+    return kucoin_desk.add_trade(req.model_dump())
+
+
+@app.delete("/api/journal/{tid}")
+def journal_delete(tid: str):
+    kucoin_desk.delete_trade(tid)
+    return {"ok": True}
 
 
 class NotifyReq(BaseModel):

@@ -26,3 +26,4 @@ __pycache__/
 .pytest_cache/
 .venv/
 bot/data/notify.json
+bot/data/trade_journal.jsonl
