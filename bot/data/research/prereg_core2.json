@@ -1,0 +1,47 @@
+{
+ "title": "Core v2: a walk-forward LightGBM decision core per timeframe (5m, 15m, 1h, 4h, 1d) versus the current matrix rule",
+ "registered_at_utc": "2026-09-24",
+ "user_context": "The user trades BTC, ETH, BNB, SOL, TRX manually on KuCoin futures and asked for a stronger decision matrix: more indicators, market positioning data (buy vs sell volume and similar), a better AI core, and a 5-minute timeframe.",
+ "state_at_registration": "Discovery-only univariate IC tables were computed (bot/data/hist_research/core_v2_discovery_ic.json, 2022-01..2024-06). No model has been fitted. No validation or holdout statistic of any v2 model has been computed or looked at.",
+ "data_sources": {
+  "features_tier_A": "Binance SPOT klines with taker-buy volume (live: data-api.binance.vision /api/v3/klines, Binance's public market-data host that the engine already uses; history: data.binance.vision spot archive). Price, indicators, spot order flow (taker buy vs sell), cross-asset and calendar features.",
+  "features_kucoin_funding": "KuCoin futures funding-rate history (/api/v1/contract/funding-rates), the same source live and in history.",
+  "labels": "Binance USD-M futures klines from the public archive (um_<SYM>_<tf>.npz), as in the current scorecard; KuCoin perpetual prices track them closely.",
+  "excluded": "Binance futures open interest, long/short ratios, futures taker flow, premium index and funding cannot be fetched live from this machine except through a route around Binance's restricted-location block (fapi returns 451). That route is not used. These series, order-book depth and liquidations are therefore NOT model inputs. Live positioning from OKX/KuCoin public APIs is shown on the page as display-only context and recorded going forward; it has no training history with the same definition."
+ },
+ "features": {
+  "implementation": "bot/core_feats.py, one numpy code path for history and live; every window is trailing (bars <= t). The file hash at training time is written into the report.",
+  "groups": {
+   "G1_engine": ["z", "s_trend", "s_mom", "s_vol", "s_struct", "votes_net", "kdist", "adx", "chop", "rsi", "bbw_rank", "atr_rank", "vol_ts", "ema200_dist", "setup_code"],
+   "G2_indicators": ["stochrsi", "cci20", "mfi14", "willr14", "roc_s", "roc_m", "roc_l", "bb_pctb", "kelt_pos", "don20", "don55", "ichi_cloud", "ichi_tk", "vwap_dist", "svwap_dist (5m/15m/1h only)", "di_spread", "rv_ratio", "vol_z", "obv_slope", "clv", "clv4", "wick_up", "wick_dn"],
+   "G3_spot_order_flow": ["sflow_4", "sflow_16", "sflow_64", "sflow_4_z", "sflow_16_z", "sflow_64_z", "stbr1_z", "scvd_div_16", "scvd_div_64", "tsize_z", "ntrades_z"],
+   "G5_kucoin_funding": ["kfund_bp (8h-normalised last settled rate)", "kfund_z (90 settlements)", "kfund_persist (mean sign of last 9)"],
+   "G6_cross_asset": ["btc_roc_m", "btc_z", "btc_flow16_z", "rs_btc_m", "ethbtc_z", "breadth"],
+   "G7_calendar": ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "us_sess", "min_to_fund"]
+  },
+  "not_used": ["kNN vote (discovery IC -0.1% to -2.1%; kept in the rule only)", "coin id", "any OKX/KuCoin substitute for Binance futures positioning"],
+  "per_timeframe_windows": "z-score windows 5m 2016, 15m 960, 1h 720, 4h 360, 1d 180 bars; ROC short/mid/long 5m 6/24/96, 15m 4/16/64, 1h 3/12/48, 4h 3/12/42, 1d 3/10/30; z-scores use the prior window only and need half of it present",
+  "pruning": "Features may be dropped before the first fit only if they cannot be computed identically live (tail-parity test) or are constant; drops are listed in the report. No pruning after any fit."
+ },
+ "target": "For each bar i and side s: bracket.signal_trade on futures bars (entry at next open, stop 1R = engine bracket, target 1.8R, 40-bar cap, both-hit = loss), net R after 0.14% round-trip cost, clipped to [-2, 1.8]. Two regressors per timeframe: M_long and M_short predict E[net R].",
+ "model": "LightGBM regressor, objective huber (alpha 1.0), learning_rate 0.03, num_leaves 15, max_depth 5, min_data_in_leaf max(500, n/400) at 5m/15m, 200 at 1h, 100 at 4h; 1d num_leaves 7, min_data_in_leaf 60; feature_fraction 0.7, bagging_fraction 0.7, bagging_freq 1, lambda_l2 10, max_bin 63, deterministic, seed 42. Five coins pooled with equal total weight per coin; every second row at 5m. Early stopping on the last 15% of training rows by time (41-bar gap), patience 100, max 1500 rounds, then refit on all training rows with the best round count.",
+ "walk_forward": "Refit at the start of every calendar month of the validation window (and of the holdout window only if the timeframe is adopted). Training rows: t_i <= month start - 81 bars (41-bar label purge + 40-bar embargo). Out-of-sample predictions for each month come only from that month's model.",
+ "decision_rule_fixed": "long if E_L >= 0.05 and E_L - E_S >= 0.05; short if E_S >= 0.05 and E_S - E_L >= 0.05; otherwise wait. Margins {0, 0.10, 0.20} reported as sensitivity only.",
+ "trade_simulation": "As decision.replay: one open trade per coin and timeframe, entry at next open, net of 0.14% (0.10% maker-entry variant reported only).",
+ "baseline": "decision.replay of the current matrix rule on the same bars and window.",
+ "windows": {
+  "discovery": ["2022-01-01", "2024-06-30"],
+  "validation": ["2024-07-01", "2025-06-30"],
+  "holdout_one_shot": ["2025-07-01", "2026-08-31"]
+ },
+ "adopt_rule_per_timeframe_on_validation": [
+  "pooled mean net R of v2 >= current rule + 0.05R, and the weekly-block bootstrap 95% CI of the difference is above 0",
+  "pooled mean net R of v2 > 0 with n >= 100 trades (1d: n >= 40); one-sided weekly-block bootstrap p-value of mean <= 0, Holm-corrected across the 5 timeframes at alpha 0.10",
+  "at least 3 of 5 coins with mean net R > 0",
+  "no single coin contributes more than 50% of total net R"
+ ],
+ "holdout": "Run once, only for adopted timeframes: pass if mean net R > 0 with n >= 30 (1d: n >= 20). Pass -> the matrix uses v2 for that timeframe, labelled 'passed validation and holdout, live test pending'. Fail -> the timeframe keeps the current rule; v2's view is shown only as a labelled second opinion with its own out-of-sample record.",
+ "contamination_note": "The holdout window 2025-07..2026-08 overlaps the current rule's 2-year scorecard window (2024-08-31..2026-08-31) that is displayed in the UI. That scorecard describes the old rule and was not used to design v2, but the forward live ledger remains the only fully clean test.",
+ "authority": "v2 never sets tradeable, never writes gates.json and is never read by the autotrader.",
+ "no_changes_after_seeing_results": "features, target, model parameters, walk-forward, decision rule, windows, costs and adopt rules above are fixed"
+}
