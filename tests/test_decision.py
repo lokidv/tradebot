@@ -166,15 +166,17 @@ class FromAnalysisTests(unittest.TestCase):
         self.assertEqual(len(w), 4)
         self.assertTrue(w[0].startswith("ردِ سیاست"))
 
-    def test_policy_path_is_not_covered_by_the_scorecard(self):
+    def test_policy_side_never_becomes_the_table_decision(self):
+        # calib-F6 / LP-3: بی rule_trade تصمیمِ قاعده معلوم نیست ⇒ صبر؛ نظرِ سیاست فقط جدا
         a = _row("long")
         a["trade"].update(setup="ap", setup_observed=False)
         d = decision.from_analysis(a)
-        self.assertEqual(d["basis"], "policy")
-        self.assertFalse(d["scorecard_applies"])
-        self.assertTrue(any("سیاست" in x for x in d["warnings"]))
+        self.assertEqual((d["action"], d["basis"]), ("wait", None))
+        self.assertTrue(d["scorecard_applies"])
+        self.assertEqual(d["policy_opinion"]["side"], "long")
+        self.assertTrue(any("قاعده" in x for x in d["warnings"]))
         err = decision.from_analysis({"symbol": "SOLUSDT", "tf": "4h", "error": "x"})
-        self.assertEqual((err["warnings"], err["scorecard_applies"]), ([], True))
+        self.assertEqual((err["warnings"], err["scorecard_applies"], err["policy_opinion"]), ([], True, None))
 
     def test_collect_turns_a_missing_analysis_into_an_error(self):
         def ga(sym, tf):

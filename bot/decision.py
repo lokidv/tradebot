@@ -62,6 +62,14 @@ MAX_WARNINGS = 4
 SOURCE_ARCHIVE_FMT = "binance-futures-{tf}-archive"          # آرشیوِ بومیِ همان تایم‌فریم
 SOURCE_RESAMPLED_FMT = "binance-futures-{base}-archive→{tf}"   # فقط از آرشیوِ ریزتر، هرگز درشت‌تر
 SOURCE_FALLBACK = "binance-spot-history"
+# RULE-3: منبعِ هر عدد برچسب دارد — تصمیمِ زنده و دفتر روی کندل‌های اسپات (market.get_klines؛ جایگزینِ
+# نادرِ OKX هم اسپات است)، کارنامهٔ بازپخش روی آرشیوِ فیوچرزِ USDⓈ-M. حجمِ دو بازار فرق دارد.
+LIVE_VENUE = "binance-spot"
+SCORECARD_VENUE = "binance-usdm-futures"
+VENUE_NOTE_FA = ("تصمیم‌های زنده و دفترِ رو-به-جلو روی کندل‌های اسپاتِ بایننس ساخته و داوری می‌شوند (اگر بایننس "
+                 "در دسترس نباشد، اسپاتِ OKX)؛ کارنامهٔ بک‌تست روی کندل‌های فیوچرزِ USDⓈ-M بایننس است. حجمِ این دو "
+                 "بازار فرق دارد، پس حدودِ ۱۰٪ (4h و 1d) تا ۲۰–۳۰٪ (5m) سیگنال‌ها میانِ این دو یکی نیست؛ "
+                 "میانگینِ کل تقریباً یکی است.")
 
 VERDICT_FA = {"small": "نمونهٔ کم", "loss": "زیان‌ده", "positive": "مثبت (تأییدنشده)",
               "unclear": "نامشخص — بازه شامل صفر"}
@@ -83,8 +91,9 @@ SIDE_FA = {"long": "لانگ (خرید)", "short": "شورت (فروش)"}
 NOTE_FA = ("این‌ها تحلیلِ موتورِ چندشاخصه + هوش مصنوعی (kNN) هستند، نه لبهٔ تأییدشده. بازپخشِ دوسالهٔ همین قاعده "
            "پس از هزینهٔ رفت‌وبرگشتِ ۰٫۱۴٪ در 15m و 1h روی هر پنج ارز زیان‌ده است، در 4h حدوداً سربه‌سر است، "
            "و در 1d تعدادِ معامله‌ها برای قضاوت کافی نیست. در 5m حدضرر از همه کوچک‌تر است، پس همین هزینه سهمِ "
-           "بزرگ‌تری از هر R را می‌خورد. پیشنهادهای زنده‌ای که از ستاپِ معلق‌شده یا از مسیرِ "
-           "«سیاستِ انتخابِ عمل» می‌آیند در این بازپخش پوشش داده نشده‌اند. گونهٔ «ورودِ میکر» (۰٫۱۰٪) فقط برای "
+           "بزرگ‌تری از هر R را می‌خورد. پیشنهادهای زنده‌ای که از ستاپِ معلق‌شده می‌آیند در این بازپخش پوشش "
+           "داده نشده‌اند؛ «سیاستِ انتخابِ عمل» هرگز جای تصمیمِ قاعده را نمی‌گیرد و فقط جدا نشان داده می‌شود. "
+           "گونهٔ «ورودِ میکر» (۰٫۱۰٪) فقط برای "
            "مقایسه است و پرشدنِ سفارشِ محدود را تضمین نمی‌کند. هر پیشنهاد در دفترِ رو به جلو ثبت "
            "و داوری می‌شود؛ مجوزِ معامله فقط از gates.json می‌آید.")
 METHOD_FA = ("بازپخشِ علّیِ قاعدهٔ زنده روی آرشیوِ بومیِ فیوچرزِ بایننسِ همان تایم‌فریم (5m، 15m، 1h، 4h، 1d): ستاپِ رویدادیِ "
@@ -265,7 +274,8 @@ def _empty(sym, tf):
             "basis": None, "setup": None, "setup_fa": None,
             "entry": None, "sl": None, "tp": None, "rr": None, "risk_pct": None, "atr": None,
             "components": [], "votes_bull": 0, "votes_bear": 0, "z": None, "regime": None,
-            "reasons": [], "warnings": [], "scorecard_applies": True}
+            "reasons": [], "warnings": [], "scorecard_applies": True, "policy_opinion": None,
+            "venue": LIVE_VENUE, "variants": None, "variant_ref": None}
 
 
 # وضعیتِ موتور که هشدار است (مسدود/معلق/رد/قفل، یا احتیاطِ مشخص) — نه متن‌های عمومیِ «منتظر…» /
@@ -333,12 +343,34 @@ def _fa(x, d=2, signed=False):
     return (f"{x:+.{d}f}" if signed else f"{x:.{d}f}").translate(_FA_DIGITS)
 
 
+POLICY_NOTE_FA = ("نظرِ «سیاستِ انتخابِ عمل» (مدل) — فقط برای اطلاع؛ جای تصمیمِ قاعده را نمی‌گیرد و در دفتر "
+                  "ثبت نمی‌شود. این سیاست با رتبهٔ مقطعی میانِ دست‌کم ۸ ارز آزموده شده و این‌جا بی‌آن رتبه است، "
+                  "پس هیچ کارنامه‌ای آن را پوشش نمی‌دهد.")
+
+
+def _policy_opinion(tr, rule_side):
+    """جهتی که سیاستِ انتخابِ عمل تحمیل کرده بود، جدا از تصمیمِ قاعده (calib-F6 / LP-3)."""
+    side = tr.get("side") if tr.get("side") in ("long", "short") else None
+    return {"side": side, "same_as_rule": side == rule_side,
+            "entry": _num(tr.get("entry")), "sl": _num(tr.get("sl")), "tp": _num(tr.get("tp")),
+            "rr": _num(tr.get("rr")), "risk_pct": _num(tr.get("risk_pct")),
+            "policy_score": _num(tr.get("policy_score")), "policy_margin": _num(tr.get("policy_margin")),
+            "policy_trusted": bool(tr.get("policy_trusted")),
+            "market_rank_required": bool(tr.get("market_rank_required")),
+            "select_quantile": _num(tr.get("select_quantile")),
+            "tradeable": bool(tr.get("tradeable")), "note": POLICY_NOTE_FA}
+
+
 def from_analysis(a):
     """یک خروجیِ ``engine.analyze``/``main.get_analysis`` → یک تصمیم.
 
     ``action`` دقیقاً ``a["trade"]["side"]`` است (ستاپ، وگرنه قاعدهٔ z/رأی)؛ هیچ فیلترِ تازه‌ای
     اضافه نمی‌شود. ``setup`` فقط وقتی پر است که موتور واقعاً ستاپی دیده باشد (``setup_observed``)؛
     «zx» ای که analyze برای قاعدهٔ z پر می‌کند ستاپ حساب نمی‌شود.
+
+    استثنا: اگر «سیاستِ انتخابِ عمل» جهت را تحمیل کرده باشد (``setup == "ap"``)، جدول و دفتر روی
+    **قاعده** می‌مانند — تصمیم از ``a["rule_trade"]`` (خروجیِ بی‌تحمیلِ همان analyze) ساخته می‌شود و نظرِ
+    سیاست فقط در ``policy_opinion`` می‌آید. بی ``rule_trade`` تصمیمِ قاعده معلوم نیست ⇒ «صبر».
     """
     a = a or {}
     sym, tf = a.get("symbol") or a.get("sym"), a.get("tf")
@@ -349,6 +381,19 @@ def from_analysis(a):
         d["reasons"] = [str(err)]
         return d
     tr = a.get("trade") if isinstance(a.get("trade"), dict) else {}
+    rt = a.get("rule_trade") if isinstance(a.get("rule_trade"), dict) else None
+    if rt is not None:                                 # گونه‌های پیش‌ثبت‌شده از همان خروجیِ analyze
+        d["variants"] = {v: variant_side(v, tf, rt.get("setup_side"), rt.get("zrule_side"), rt.get("rsi14"))
+                         or "wait" for v in VARIANTS}
+        d["variant_ref"] = {"entry": _num(rt.get("entry")), "atr": _num(rt.get("atr14")),
+                            "rsi14": _num(rt.get("rsi14"))}
+    rule_missing = False
+    if tr.get("setup") == "ap":
+        rule_missing = rt is None
+        tr_rule = rt if rt is not None else {}
+        rule_side = tr_rule.get("side") if tr_rule.get("side") in ("long", "short") else None
+        d["policy_opinion"] = _policy_opinion(tr, rule_side)
+        tr = tr_rule
     z = _num(a.get("z"))
     comp_in = a.get("components") if isinstance(a.get("components"), dict) else {}
     comps, vb, vs = _component_votes(comp_in, _int(a.get("votes_bull")), _int(a.get("votes_bear")))
@@ -375,7 +420,9 @@ def from_analysis(a):
         d.update(readiness=readiness, strength=readiness, lean=lean)
     d["reasons"] = _reasons(d)
     d["warnings"] = _warnings(a, tr, side, d["basis"])
-    d["scorecard_applies"] = d["basis"] != "policy"    # مسیرِ سیاست در بازپخش نیست
+    if rule_missing:
+        d["warnings"] = (["تصمیمِ خودِ قاعده از موتور نیامد — تا تحلیلِ بعدی «صبر»"] + d["warnings"])[:MAX_WARNINGS]
+    d["scorecard_applies"] = d["basis"] != "policy"    # مسیرِ سیاست در بازپخش نیست (دیگر هرگز تصمیمِ جدول نیست)
     return d
 
 
@@ -735,6 +782,7 @@ def build_scorecards(loader=None, symbols=SYMBOLS, tfs=TFS):
                 cell = _stats([])
                 cell.update(error=str(e) or type(e).__name__, cost_pct=COST_PCT, source=src,
                             maker=_empty_maker())
+            cell["venue"] = venue_of_source(src)
             cell["elapsed_s"] = round(time.time() - t1, 2)
             cells[sym][tf] = cell
     out = {"version": SCORECARD_VERSION, "built_at": time.time(),
@@ -744,6 +792,16 @@ def build_scorecards(loader=None, symbols=SYMBOLS, tfs=TFS):
            "cells": cells}
     out.update(_window_meta(cells))
     return out
+
+
+def venue_of_source(src):
+    """برچسبِ بازارِ منبعِ کارنامه: آرشیوِ فیوچرز (بومی یا تجمیع‌شده) یا تاریخچهٔ اسپاتِ جایگزین."""
+    s = str(src or "")
+    if s.startswith("binance-futures"):
+        return SCORECARD_VENUE
+    if s == SOURCE_FALLBACK:
+        return LIVE_VENUE
+    return None
 
 
 def _window_meta(cells):
@@ -843,6 +901,7 @@ def record(decisions, now=None):
     """برای هر تصمیمِ لانگ/شورت روی یک کندلِ بسته یک ردیفِ «open» می‌افزاید (بی‌تکرار).
 
     خروجی: تعدادِ ردیف‌های تازه. تصمیمِ کهنه‌تر از ``STALE_BARS`` کندل (فیدِ مرده) ثبت نمی‌شود.
+    همان تصمیم‌ها گونه‌های پیش‌ثبت‌شده را هم در دفترِ جدای خودشان ثبت می‌کنند (``record_variants``).
     """
     now = time.time() if now is None else now
     added = 0
@@ -852,8 +911,8 @@ def record(decisions, now=None):
             if not isinstance(d, dict):
                 continue
             side = d.get("action")
-            if side not in ("long", "short"):
-                continue
+            if side not in ("long", "short") or d.get("basis") == "policy":
+                continue                            # دفتر فقط تصمیمِ قاعده را ثبت می‌کند، هرگز سیاست را
             sym, tf, ts = d.get("sym"), d.get("tf"), _int(d.get("candle_ts"))
             entry, sl, atr = _num(d.get("entry")), _num(d.get("sl")), _num(d.get("atr"))
             if not (sym and tf in TF_MINUTES and ts is not None and entry and sl is not None and atr):
@@ -870,10 +929,14 @@ def record(decisions, now=None):
                    "basis": d.get("basis"), "setup": d.get("setup"), "grade": d.get("grade"),
                    "strength": d.get("strength"), "z": d.get("z"),
                    "votes_bull": d.get("votes_bull"), "votes_bear": d.get("votes_bear"),
-                   "cost_pct": COST_PCT, "recorded_at": round(now, 3)}
+                   "cost_pct": COST_PCT, "venue": LIVE_VENUE, "recorded_at": round(now, 3)}
             _append(LEDGER_PATH, row)
             seen.add(rid)
             added += 1
+    try:
+        record_variants(decisions, now=now)         # دفترِ جدای گونه‌ها؛ خطایش دفترِ اصلی را نمی‌اندازد
+    except Exception:  # noqa: BLE001
+        log.exc("decision.record variants")
     return added
 
 
@@ -888,7 +951,9 @@ def _resolve_one(op, kl, now):
     ts = int(op["candle_ts"])
     bar_ms = TF_MINUTES[op["tf"]] * 60000
     base = {"kind": "result", "id": op["id"], "sym": op["sym"], "tf": op["tf"], "side": op["side"],
-            "candle_ts": ts, "resolved_at": round(now, 3)}
+            "candle_ts": ts, "venue": LIVE_VENUE, "resolved_at": round(now, 3)}
+    if op.get("variant"):
+        base["variant"] = op["variant"]             # دفترِ گونه‌ها — همان داوری
     atr = _num(op.get("atr"))
     if not atr or atr <= 0:
         base["skipped"] = "bad_row"
@@ -925,11 +990,38 @@ def resolve(get_klines, now=None):
 
     هیچ خطی بازنویسی نمی‌شود. ردیفِ ناقص/خراب نادیده گرفته می‌شود و هیچ‌وقت استثنا بیرون نمی‌آید
     (جز خطای نوشتنِ دیسک). چک و افزودن زیرِ یک قفل‌اند: «داوری‌شده؟» زیرِ قفل دوباره خوانده می‌شود،
-    پس دو فراخوانیِ هم‌زمان نتیجهٔ تکراری نمی‌افزایند. خروجی: تعدادِ ردیف‌های تازه داوری‌شده.
+    پس دو فراخوانیِ هم‌زمان نتیجهٔ تکراری نمی‌افزایند. خروجی: تعدادِ ردیف‌های تازه داوری‌شدهٔ دفترِ اصلی.
+
+    دفترِ گونه‌ها با **همین** مسیر و همان کندل‌ها (هر ارز × تایم‌فریم یک‌بار دریافت) داوری می‌شود و
+    سپس داوریِ یک‌بارهٔ پیش‌ثبت‌شده‌اش اگر موعدش رسیده باشد (``judge_variants``).
     """
     now = time.time() if now is None else now
+    memo = {}
+
+    def gk(sym, tf):
+        if (sym, tf) not in memo:
+            try:
+                memo[(sym, tf)] = (True, get_klines(sym, tf))
+            except Exception as e:  # noqa: BLE001 — همان خطا برای دفترِ دوم هم، بی درخواستِ دوباره
+                memo[(sym, tf)] = (False, e)
+        ok, val = memo[(sym, tf)]
+        if not ok:
+            raise val
+        return val
+
+    added = _resolve_ledger(LEDGER_PATH, gk, now)
+    try:
+        _resolve_ledger(VARIANTS_LEDGER_PATH, gk, now)
+        judge_variants(now=now)
+    except Exception:  # noqa: BLE001 — گونه‌ها هرگز دفترِ اصلی را نمی‌اندازند
+        log.exc("decision.resolve variants")
+    return added
+
+
+def _resolve_ledger(path, get_klines, now):
+    """داوریِ ردیف‌های بازِ یک دفترِ فقط‌افزودنی (اصلی یا گونه‌ها) — یک مسیرِ مشترک."""
     with _ledger_lock:
-        rows = _read_jsonl(LEDGER_PATH)
+        rows = _read_jsonl(path)
     done = _done_ids(rows)
     pending, seen = {}, set()
     for r in rows:
@@ -956,18 +1048,21 @@ def resolve(get_klines, now=None):
         if not found:
             continue
         with _ledger_lock:                          # چک + افزودن اتمی
-            done_now = _done_ids(_read_jsonl(LEDGER_PATH))
+            done_now = _done_ids(_read_jsonl(path))
             for res in found:
                 if res["id"] in done_now:
                     continue                        # فراخوانیِ دیگری همین حالا داوری کرد
-                _append(LEDGER_PATH, res)
+                _append(path, res)
                 done_now.add(res["id"])
                 added += 1
     return added
 
 
-def _cell_stats(opens, results):
-    """یک معامله در هر لحظه، مثلِ کارنامه: سیگنالی که پیش از خروجِ معاملهٔ قبلی آمده شمرده نمی‌شود."""
+def _cell_taken(opens, results):
+    """یک معامله در هر لحظه، مثلِ کارنامه: سیگنالی که پیش از خروجِ معاملهٔ قبلی آمده شمرده نمی‌شود.
+
+    خروجی: ``([(ردیفِ open، R خالص)…], تعدادِ باز، تعدادِ هم‌پوشان)``.
+    """
     taken, open_n, overlap = [], 0, 0
     blocked_until = -math.inf
     for op in sorted(opens, key=lambda r: _int(r["candle_ts"])):
@@ -983,12 +1078,19 @@ def _cell_stats(opens, results):
         net = _num(res.get("net_r"))
         if res.get("skipped") or net is None:
             continue
-        taken.append(net)
+        taken.append((op, net))
         ex = _int(res.get("exit_ts"))
         blocked_until = ex if ex is not None else ts
-    st = _stats(taken)
+    return taken, open_n, overlap
+
+
+def _cell_stats(opens, results):
+    """آمارِ یک خانه (یک معامله در هر لحظه) + فهرستِ R خالصِ معامله‌های شمرده‌شده."""
+    taken, open_n, overlap = _cell_taken(opens, results)
+    rs = [net for _, net in taken]
+    st = _stats(rs)
     st.update(open=open_n, signals=len(opens), overlapping=overlap)
-    return st, taken
+    return st, rs
 
 
 def _empty_live():
@@ -997,61 +1099,427 @@ def _empty_live():
     return st
 
 
-def live_stats():
-    """کارنامهٔ زندهٔ دفتر (بی‌تکرار بر اساسِ id) برای هر ارز × تایم‌فریم و کل.
+RULE_BASES = ("rule", "setup")
 
-    ردیفِ ناقص/خراب نادیده گرفته می‌شود؛ هیچ‌وقت استثنا بیرون نمی‌آید.
-    """
+
+def _basis_of(op):
+    """پایهٔ ردیف: ``policy`` (ردیف‌های قدیمیِ پیش از جداسازی) جدا؛ ردیفِ بی‌پایه قاعده حساب می‌شود."""
+    b = op.get("basis")
+    return b if b in ("setup", "policy") else "rule"
+
+
+def _ledger_rows(path, where):
     try:
-        rows = _read_jsonl(LEDGER_PATH)
+        return _read_jsonl(path)
     except Exception:  # noqa: BLE001
-        log.exc("decision.live_stats read")
-        rows = []
+        log.exc(where)
+        return []
+
+
+def _index(rows):
+    """ردیف‌های open (معتبر، بی‌تکرار) و result بر اساسِ id."""
     opens, results = {}, {}
     for r in rows:
         if _open_ok(r):
             opens.setdefault(r["id"], r)
         elif r.get("kind") == "result" and isinstance(r.get("id"), str):
             results.setdefault(r["id"], r)
-    by = {}
-    for op in opens.values():
-        by.setdefault((op["sym"], op["tf"]), []).append(op)
-    cells, all_r, all_open, all_sig = {}, [], 0, 0
-    for (sym, tf), ops in by.items():
+    return opens, results
+
+
+def _stream_stats(ops_by_cell, results, split_basis=False):
+    """کارنامهٔ هر خانه و کل برای یک جریانِ یک‌معامله‌در‌لحظه؛ ``split_basis`` سهمِ قاعده/ستاپ را هم می‌دهد."""
+    cells, all_taken, all_open, all_sig = {}, [], 0, 0
+    for (sym, tf), ops in ops_by_cell.items():
         try:
-            st, taken = _cell_stats(ops, results)
+            taken, open_n, overlap = _cell_taken(ops, results)
         except Exception:  # noqa: BLE001 — یک خانهٔ خراب نباید کلِ کارنامه را بیندازد
             log.exc("decision.live_stats cell", sym=sym, tf=tf)
             continue
+        st = _stats([net for _, net in taken])
+        st.update(open=open_n, signals=len(ops), overlapping=overlap)
+        if split_basis:
+            st["by_basis"] = {b: _stats([net for op, net in taken if _basis_of(op) == b]) for b in RULE_BASES}
         cells.setdefault(sym, {})[tf] = st
-        all_r += taken
-        all_open += st["open"]
-        all_sig += st["signals"]
-    overall = _stats(all_r)
+        all_taken += taken
+        all_open += open_n
+        all_sig += len(ops)
+    overall = _stats([net for _, net in all_taken])
     overall.update(open=all_open, signals=all_sig)
-    return {"cells": cells, "overall": overall}
+    if split_basis:
+        overall["by_basis"] = {b: _stats([net for op, net in all_taken if _basis_of(op) == b])
+                               for b in RULE_BASES}
+    return cells, overall
+
+
+def live_stats():
+    """کارنامهٔ زندهٔ دفتر (بی‌تکرار بر اساسِ id) برای هر ارز × تایم‌فریم و کل.
+
+    ``cells``/``overall`` فقط تصمیم‌های **قاعده** (پایهٔ rule/setup؛ همان چیزی که کارنامهٔ بازپخش
+    می‌سنجد) با ``by_basis`` برای سهمِ هرکدام. ردیف‌های قدیمیِ پایهٔ ``policy`` (پیش از آن‌که سیاست از
+    جدول جدا شود) هرگز با آن‌ها آمیخته نمی‌شوند و جریانِ جدای خودشان را در ``policy`` دارند.
+    ردیفِ ناقص/خراب نادیده گرفته می‌شود؛ هیچ‌وقت استثنا بیرون نمی‌آید.
+    """
+    opens, results = _index(_ledger_rows(LEDGER_PATH, "decision.live_stats read"))
+    rule_by, pol_by = {}, {}
+    for op in opens.values():
+        (pol_by if _basis_of(op) == "policy" else rule_by).setdefault((op["sym"], op["tf"]), []).append(op)
+    cells, overall = _stream_stats(rule_by, results, split_basis=True)
+    pcells, poverall = _stream_stats(pol_by, results)
+    return {"cells": cells, "overall": overall, "basis": "rule",
+            "policy": {"cells": pcells, "overall": poverall}}
+
+
+# ───────────────────────── ۳ب) گونه‌های پیش‌ثبت‌شدهٔ قاعده — آزمونِ فقط رو-به-جلو ─────────────────────────
+# bot/data/research/prereg_rule_variants_forward.json (۲۰۲۶-۰۹-۲۴): دقیقاً دو گونه، فقط تصمیم‌های ثبت‌شده پس از
+# انتشارِ این کد. همان کندل‌های زنده و بازار، همان براکت و هزینه، همان مسیرِ داوریِ دفترِ اصلی. قبولی فقط برچسب
+# است: قاعده خودکار عوض نمی‌شود و این بخش هرگز به gates.json یا autotrader دست نمی‌زند.
+VARIANTS_LEDGER_PATH = paths.data("decision_variants_ledger.jsonl")
+VARIANTS_PREREG = "prereg_rule_variants_forward.json"
+VARIANTS = ("z_only", "d1_no_short_rsi30")
+VARIANT_FA = {"z_only": "فقط قاعدهٔ z/رأی (بی‌لایهٔ ستاپ)، همهٔ تایم‌فریم‌ها",
+              "d1_no_short_rsi30": "همان قاعده، ولی در روزانه بی‌شورت وقتی RSI14 زیرِ ۳۰ است"}
+V2_TF = "1d"                 # تنها تایم‌فریمی که گونهٔ دوم می‌تواند با قاعده فرق کند
+V2_RSI = 30.0
+JUDGE_RULES = {              # موعدِ داوریِ یک‌باره — عیناً همان پیش‌ثبت
+    "z_only": {"tfs": ("15m", "1h", "4h"), "min_weeks": 26, "min_trades": 300},
+    "d1_no_short_rsi30": {"tfs": (V2_TF,), "min_weeks": 52, "min_differs": 10},
+}
+BOOT_N = 10000
+BOOT_SEED = 20260924
+BOOT_ALPHA = 0.05
+DAY_MS = 86_400_000
+WEEK_MS = 7 * DAY_MS
+MONDAY0_MS = 4 * DAY_MS      # ۱۹۷۰-۰۱-۰۵، نخستین دوشنبه پس از epoch (پنج‌شنبه)
+VARIANT_STATUS_FA = {"not_started": "هنوز چیزی ثبت نشده", "collecting": "در حالِ جمع‌آوری — هنوز داوری نشده",
+                     "pass": "قبول: بهتر از قاعده (فقط برچسب؛ قاعده عوض نمی‌شود)",
+                     "fail": "رد: برتری بر قاعده نشان نداد",
+                     "inconclusive": "بی‌نتیجه: تا موعد به‌اندازهٔ کافی با قاعده فرق نکرد"}
+VARIANTS_NOTE_FA = ("دو گونهٔ پیش‌ثبت‌شده (۲۰۲۶-۰۹-۲۴) فقط روی تصمیم‌های ثبت‌شده از این به بعد، با همان کندل‌ها، براکت و "
+                    "کارمزدِ دفترِ اصلی سنجیده می‌شوند. شواهدِ قبلی داده‌کاوی‌شده بود؛ تا موعدِ داوری این اعداد فقط برای "
+                    "اطلاع‌اند و داوری یک‌بار و با بوت‌استرپِ بلوک‌هفتگی انجام می‌شود. قبولی فقط برچسب است و قاعده، "
+                    "gates.json و ربات را عوض نمی‌کند.")
+_SIDES = ("long", "short")
+
+
+def variant_side(variant, tf, setup_side, zrule_side, rsi14, setup_layer=None):
+    """جهتِ یک گونه در یک کندل از دو لایهٔ قاعده (``rule_trade`` در engine.analyze) — ``None`` یعنی صبر.
+
+    قاعده = ستاپِ زنده (معتبر و معلق‌نشده)، وگرنه z/رأی. ``z_only`` لایهٔ ستاپ را برمی‌دارد و
+    ``setup_layer=True`` آن را برمی‌گرداند (آزمونِ هم‌ارزی: باید عیناً خودِ قاعده شود).
+    ``d1_no_short_rsi30`` همان قاعده است جز شورتِ 1d وقتی RSI14 کندلِ تصمیم زیرِ ۳۰ است (⇒ صبر، بی‌جایگزین).
+    """
+    if variant not in VARIANTS:
+        raise ValueError(f"گونهٔ ناشناخته: {variant}")
+    use_setup = (variant != "z_only") if setup_layer is None else bool(setup_layer)
+    side = setup_side if (use_setup and setup_side in _SIDES) else (zrule_side if zrule_side in _SIDES else None)
+    if variant == "d1_no_short_rsi30" and tf == V2_TF and side == "short":
+        r = _num(rsi14)
+        if r is not None and r < V2_RSI:
+            side = None
+    return side
+
+
+def variant_id(variant, sym, tf, candle_ts, side):
+    return f"{variant}|{ledger_id(sym, tf, candle_ts, side)}"
+
+
+def _prereg_sha():
+    import hashlib
+    try:
+        with open(paths.data("research", VARIANTS_PREREG), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def record_variants(decisions, now=None):
+    """گونه‌های هر تصمیمِ تازه را در ``decision_variants_ledger.jsonl`` (فقط افزودنی، بی‌تکرار) ثبت می‌کند.
+
+    گونه‌ها در ``from_analysis`` از **همان** خروجیِ analyze (همان پنجرهٔ کندلِ زنده) ساخته شده‌اند. لانگ/شورتِ
+    گونه ردیفِ «open» می‌شود (با همان قراردادِ دفترِ اصلی)؛ کندلی که گونه صبر می‌کند ولی قاعده معامله،
+    ردیفِ «skip» — تا شمارِ کندل‌های متفاوت معلوم باشد. نخستین فراخوانیِ معتبر ردیفِ «start» (t0) را
+    یک‌بار می‌نویسد. گونهٔ دوم فقط در 1d ثبت می‌شود (جای دیگر عیناً قاعده است). خروجی: تعدادِ ردیف‌های تازه.
+    """
+    now = time.time() if now is None else now
+    added = 0
+    with _ledger_lock:
+        rows = _read_jsonl(VARIANTS_LEDGER_PATH)
+        seen = {r.get("id") for r in rows if r.get("kind") in ("open", "skip")}
+        started = any(r.get("kind") == "start" for r in rows)
+        for d in decisions or []:
+            if not isinstance(d, dict) or d.get("error"):
+                continue
+            vs, ref = d.get("variants"), d.get("variant_ref")
+            if not isinstance(vs, dict) or not isinstance(ref, dict):
+                continue
+            sym, tf, ts = d.get("sym"), d.get("tf"), _int(d.get("candle_ts"))
+            if not (sym and tf in TF_MINUTES and ts is not None):
+                continue
+            if now * 1000 - int(ts) > STALE_BARS * TF_MINUTES[tf] * 60000:
+                continue                            # همان گاردِ کهنگیِ دفترِ اصلی
+            if not started:
+                _append(VARIANTS_LEDGER_PATH, {"kind": "start", "at": round(now, 3), "prereg": VARIANTS_PREREG,
+                                               "prereg_sha256": _prereg_sha(), "variants": list(VARIANTS)})
+                started = True
+            rule_side = d.get("action") if d.get("action") in _SIDES else "wait"
+            entry, atr, rsi14 = _num(ref.get("entry")), _num(ref.get("atr")), _num(ref.get("rsi14"))
+            for v in VARIANTS:
+                if v == "d1_no_short_rsi30" and tf != V2_TF:
+                    continue
+                side = vs.get(v)
+                if side in _SIDES:
+                    if not (entry and atr and atr > 0):
+                        continue
+                    lv = bracket.levels(entry, atr, 1 if side == "long" else -1)
+                    rid = variant_id(v, sym, tf, ts, side)
+                    row = {"kind": "open", "id": rid, "variant": v, "sym": sym, "tf": tf, "side": side,
+                           "candle_ts": int(ts), "entry": entry, "sl": engine.sig_round(float(lv["sl"])),
+                           "tp": engine.sig_round(float(lv["tp"])), "atr": atr,
+                           "risk_pct": round(float(lv["risk_pct"]), 4), "rule_side": rule_side, "rsi14": rsi14,
+                           "cost_pct": COST_PCT, "venue": LIVE_VENUE, "recorded_at": round(now, 3)}
+                elif rule_side in _SIDES:
+                    rid = variant_id(v, sym, tf, ts, "wait")
+                    row = {"kind": "skip", "id": rid, "variant": v, "sym": sym, "tf": tf, "side": "wait",
+                           "candle_ts": int(ts), "rule_side": rule_side, "rsi14": rsi14,
+                           "venue": LIVE_VENUE, "recorded_at": round(now, 3)}
+                else:
+                    continue
+                if rid in seen:
+                    continue
+                _append(VARIANTS_LEDGER_PATH, row)
+                seen.add(rid)
+                added += 1
+    return added
+
+
+def weekly_block_bootstrap(var_trades, rule_trades, n_boot=BOOT_N, seed=BOOT_SEED):
+    """آزمونِ یک‌طرفهٔ پیش‌ثبت‌شده روی «میانگینِ R خالصِ گونه منهای قاعده».
+
+    ورودی‌ها ``[(candle_ts, net_r)]``. بلوک = هفتهٔ UTC (از دوشنبه) بر اساسِ کندلِ سیگنال؛ اجتماعِ هفته‌هایی که
+    در هر یک از دو جریان معامله دارند با جای‌گذاری بازنمونه‌گیری می‌شود و هر تکرار هر دو میانگین را از همان
+    هفته‌ها می‌سازد (تکراری که یکی از دو جریانش خالی است کنار می‌رود).
+    ``p = (1 + #{تفاوت ≤ 0}) / (1 + #تکرارهای معتبر)``.
+    """
+    def wk(t):
+        return (int(t) - MONDAY0_MS) // WEEK_MS
+    vt = [(wk(t), float(r)) for t, r in var_trades if _num(r) is not None]
+    rt = [(wk(t), float(r)) for t, r in rule_trades if _num(r) is not None]
+    out = {"n_variant": len(vt), "n_rule": len(rt), "mean_variant": None, "mean_rule": None,
+           "diff": None, "p": None, "weeks": 0, "valid": 0}
+    if not vt or not rt:
+        return out
+    weeks = sorted({w for w, _ in vt} | {w for w, _ in rt})
+    ix = {w: i for i, w in enumerate(weeks)}
+    sums = np.zeros((4, len(weeks)))
+    for w, r in vt:
+        sums[0, ix[w]] += r
+        sums[1, ix[w]] += 1
+    for w, r in rt:
+        sums[2, ix[w]] += r
+        sums[3, ix[w]] += 1
+    mv, mr = sums[0].sum() / sums[1].sum(), sums[2].sum() / sums[3].sum()
+    draw = np.random.default_rng(seed).integers(0, len(weeks), size=(int(n_boot), len(weeks)))
+    bs = sums[:, draw].sum(axis=2)                  # (۴، n_boot)
+    ok = (bs[1] > 0) & (bs[3] > 0)
+    d = bs[0, ok] / bs[1, ok] - bs[2, ok] / bs[3, ok]
+    out.update(mean_variant=round(float(mv), 4), mean_rule=round(float(mr), 4), diff=round(float(mv - mr), 4),
+               p=round(float((1 + np.count_nonzero(d <= 0)) / (1 + int(ok.sum()))), 4),
+               weeks=len(weeks), valid=int(ok.sum()))
+    return out
+
+
+def _variant_rows():
+    return _ledger_rows(VARIANTS_LEDGER_PATH, "decision.variants read")
+
+
+def _start_of(rows):
+    ats = [_num(r.get("at")) for r in rows if r.get("kind") == "start"]
+    ats = [a for a in ats if a is not None]
+    return min(ats) if ats else None
+
+
+def _taken_by_cell(by, results):
+    cells = {}
+    for key, ops in by.items():
+        try:
+            taken, open_n, _ = _cell_taken(ops, results)
+        except Exception:  # noqa: BLE001
+            log.exc("decision.variants cell", sym=key[0], tf=key[1])
+            continue
+        cells[key] = (taken, open_n)
+    return cells
+
+
+def _variant_streams(vrows, mrows, start):
+    """معامله‌های شمرده‌شدهٔ هر گونه و قاعده (یک معامله در هر لحظه، هر ارز × تایم‌فریم جدا) از t0 به بعد."""
+    v_opens, v_results = _index(vrows)
+    m_opens, m_results = _index(mrows)
+    out = {}
+    for v in VARIANTS:
+        by = {}
+        for op in v_opens.values():
+            if op.get("variant") == v:
+                by.setdefault((op["sym"], op["tf"]), []).append(op)
+        out[v] = _taken_by_cell(by, v_results)
+    rule_by = {}
+    for op in m_opens.values():
+        rec = _num(op.get("recorded_at"))
+        if _basis_of(op) != "policy" and rec is not None and rec >= start:
+            rule_by.setdefault((op["sym"], op["tf"]), []).append(op)
+    out["rule"] = _taken_by_cell(rule_by, m_results)
+    return out
+
+
+def _pool(cells, tfs):
+    """معامله‌های ``[(candle_ts, net_r)]`` و تعدادِ بازِ چند تایم‌فریم، روی هر پنج ارز."""
+    trades, open_n = [], 0
+    for (_sym, tf), (taken, o) in cells.items():
+        if tf in tfs:
+            trades += [(int(op["candle_ts"]), net) for op, net in taken]
+            open_n += o
+    return trades, open_n
+
+
+def _differs(vrows, variant):
+    """کندل‌های متفاوت با قاعده: گونه معامله و قاعده جهتِ دیگر/صبر، یا گونه صبر و قاعده معامله."""
+    out = set()
+    for r in vrows:
+        if r.get("variant") != variant:
+            continue
+        if r.get("kind") == "skip" or (r.get("kind") == "open" and r.get("side") != r.get("rule_side")):
+            out.add((r.get("sym"), r.get("tf"), _int(r.get("candle_ts"))))
+    return out
+
+
+def _compact(trades):
+    st = _stats([r for _, r in trades])
+    return {k: st[k] for k in ("n", "avg_r", "win_rate", "total_r", "se")}
+
+
+def _mean_diff(a, b):
+    return round(a["avg_r"] - b["avg_r"], 4) if a["n"] and b["n"] else None
+
+
+def judge_variants(now=None):
+    """داوریِ یک‌بارهٔ پیش‌ثبت‌شده: هر گونه حداکثر یک ردیفِ «judgement» می‌گیرد که پس از آن ثابت است.
+
+    z_only: پس از ≥۲۶ هفته از t0 و ≥۳۰۰ معاملهٔ داوری‌شده روی 15m/1h/4h (تجمیعِ پنج ارز).
+    d1_no_short_rsi30: پس از ≥۵۲ هفته؛ با ≥۱۰ کندلِ متفاوت آزمون روی 1d، وگرنه «بی‌نتیجه».
+    قبولی = تفاوتِ مشاهده‌شده > ۰ و p ≤ ۰٫۰۵. خروجی: ردیف‌های تازهٔ داوری.
+    """
+    now = time.time() if now is None else now
+    vrows = _variant_rows()
+    start = _start_of(vrows)
+    if start is None:
+        return []
+    weeks = (now - start) / (WEEK_MS / 1000)
+    judged = {r.get("variant") for r in vrows if r.get("kind") == "judgement"}
+    due = [v for v in VARIANTS if v not in judged and weeks >= JUDGE_RULES[v]["min_weeks"]]
+    if not due:
+        return []
+    st = _variant_streams(vrows, _ledger_rows(LEDGER_PATH, "decision.variants main read"), start)
+    out = []
+    for v in due:
+        rule = JUDGE_RULES[v]
+        vt, _ = _pool(st[v], rule["tfs"])
+        rt, _ = _pool(st["rule"], rule["tfs"])
+        if len(vt) < rule.get("min_trades", 0):
+            continue                                # z_only: تا ۳۰۰ معامله جمع شود
+        differs = len(_differs(vrows, v))
+        row = {"kind": "judgement", "variant": v, "at": round(now, 3), "t0": start, "weeks": round(weeks, 2),
+               "tfs": list(rule["tfs"]), "differs": differs, "prereg": VARIANTS_PREREG,
+               "n_boot": BOOT_N, "seed": BOOT_SEED, "alpha": BOOT_ALPHA}
+        if differs < rule.get("min_differs", 0):
+            row.update(result="inconclusive", n_variant=len(vt), n_rule=len(rt), diff=None, p=None)
+        else:
+            bt = weekly_block_bootstrap(vt, rt)
+            win = bt["diff"] is not None and bt["diff"] > 0 and bt["p"] is not None and bt["p"] <= BOOT_ALPHA
+            row.update(bt, result="pass" if win else "fail")
+        out.append(row)
+    if out:
+        with _ledger_lock:                          # چک + افزودن اتمی: داوریِ دوم ممکن نیست
+            again = {r.get("variant") for r in _read_jsonl(VARIANTS_LEDGER_PATH) if r.get("kind") == "judgement"}
+            out = [r for r in out if r["variant"] not in again]
+            for row in out:
+                _append(VARIANTS_LEDGER_PATH, row)
+    return out
+
+
+def variant_stats(now=None):
+    """کارنامهٔ زندهٔ دو گونه کنارِ قاعده در همان دوره (از t0)، پیشرفت تا موعدِ داوری و حکمِ ثبت‌شده."""
+    now = time.time() if now is None else now
+    vrows = _variant_rows()
+    start = _start_of(vrows)
+    weeks = max(0.0, (now - start) / (WEEK_MS / 1000)) if start is not None else None
+    st = (_variant_streams(vrows, _ledger_rows(LEDGER_PATH, "decision.variants main read"), start)
+          if start is not None else None)
+    judged = {}
+    for r in vrows:
+        if r.get("kind") == "judgement" and r.get("variant") in VARIANTS:
+            judged.setdefault(r["variant"], r)
+    items = []
+    for v in VARIANTS:
+        rule = JUDGE_RULES[v]
+        per_tf = {}
+        for tf in (TFS if v == "z_only" else (V2_TF,)):
+            vt, vo = _pool(st[v], (tf,)) if st else ([], 0)
+            rt, ro = _pool(st["rule"], (tf,)) if st else ([], 0)
+            a, b = _compact(vt), _compact(rt)
+            per_tf[tf] = {"variant": dict(a, open=vo), "rule": dict(b, open=ro), "diff": _mean_diff(a, b)}
+        vt, vo = _pool(st[v], rule["tfs"]) if st else ([], 0)
+        rt, _ = _pool(st["rule"], rule["tfs"]) if st else ([], 0)
+        a, b = _compact(vt), _compact(rt)
+        j = judged.get(v)
+        status = j.get("result") if j else ("collecting" if start is not None else "not_started")
+        items.append({
+            "key": v, "fa": VARIANT_FA[v], "judge_tfs": list(rule["tfs"]),
+            "pooled": {"variant": dict(a, open=vo), "rule": b, "diff": _mean_diff(a, b)},
+            "tfs": per_tf,
+            "differs": len(_differs(vrows, v)),
+            "progress": {"weeks": round(weeks, 2) if weeks is not None else None,
+                         "min_weeks": rule["min_weeks"], "trades": a["n"],
+                         "min_trades": rule.get("min_trades"), "min_differs": rule.get("min_differs")},
+            "status": status, "status_fa": VARIANT_STATUS_FA.get(status, status), "judgement": j,
+        })
+    return {"prereg": VARIANTS_PREREG, "started_at": start, "weeks": round(weeks, 2) if weeks is not None else None,
+            "venue": LIVE_VENUE, "cost_pct": COST_PCT, "note": VARIANTS_NOTE_FA, "items": items}
 
 
 # ───────────────────────── ۴) خروجیِ endpoint ─────────────────────────
-def payload(decisions, scorecard=None, live=None):
-    """بدنهٔ ``GET /api/decisions``: هر خانه = تصمیم + کارنامهٔ دوساله + کارنامهٔ زنده."""
+def payload(decisions, scorecard=None, live=None, variants=None):
+    """بدنهٔ ``GET /api/decisions``: هر خانه = تصمیم + کارنامهٔ دوساله + کارنامهٔ زنده (+ گونه‌های پیش‌ثبت‌شده)."""
     sc = scorecard if scorecard is not None else scorecards(wait=False)
     lv = live if live is not None else live_stats()
+    if variants is None:
+        try:
+            variants = variant_stats()
+        except Exception:  # noqa: BLE001 — دفترِ گونه‌ها هرگز جدول را نمی‌اندازد
+            log.exc("decision.payload variants")
+            variants = None
     sc = sc if isinstance(sc, dict) else {}
     lv = lv if isinstance(lv, dict) else {}
     sc_cells = sc.get("cells") or {}
     lv_cells = lv.get("cells") or {}
+    lv_pol = (lv.get("policy") or {}).get("cells") or {}
     cells = {sym: {} for sym in SYMBOLS}
     for d in decisions or []:
         sym, tf = d.get("sym"), d.get("tf")
         if not sym or not tf:
             continue
         cell = dict(d)
-        cell["scorecard"] = (sc_cells.get(sym) or {}).get(tf)
+        scc = (sc_cells.get(sym) or {}).get(tf)
+        if isinstance(scc, dict) and "venue" not in scc:     # کشِ ساخته‌شده پیش از برچسب
+            scc = dict(scc, venue=venue_of_source(scc.get("source")))
+        cell["scorecard"] = scc
         cell["live"] = (lv_cells.get(sym) or {}).get(tf) or _empty_live()
+        cell["live_policy"] = (lv_pol.get(sym) or {}).get(tf)     # فقط ردیف‌های قدیمیِ سیاست، جدا
         cells.setdefault(sym, {})[tf] = cell
     meta = {k: sc.get(k) for k in ("built_at", "window_from", "window_to", "window_days_actual",
                                     "window_days_min", "source", "window_days", "knn_window", "method")}
+    venues = sorted({v for row in sc_cells.values() if isinstance(row, dict) for c in row.values()
+                     if isinstance(c, dict) for v in [c.get("venue") or venue_of_source(c.get("source"))] if v})
+    meta["venue"] = "، ".join(venues) if venues else SCORECARD_VENUE     # پیش‌فرض: آرشیوِ فیوچرز
     meta["building"] = bool(sc.get("building"))
     meta["cost_pct"] = sc.get("cost_pct") if sc.get("cost_pct") is not None else COST_PCT
     meta["maker_cost_pct"] = (sc.get("maker_cost_pct") if sc.get("maker_cost_pct") is not None
@@ -1062,6 +1530,11 @@ def payload(decisions, scorecard=None, live=None):
         "cells": cells,
         "scorecard_meta": meta,
         "live_overall": lv.get("overall"),
+        "live_venue": LIVE_VENUE,              # تصمیم و دفتر: اسپات؛ کارنامه: scorecard_meta.venue
+        "venue_note": VENUE_NOTE_FA,
+        "live_basis": "rule",                  # کارنامهٔ زنده فقط تصمیم‌های قاعده است
+        "live_policy_overall": (lv.get("policy") or {}).get("overall"),
+        "variants": variants,
         "note": NOTE_FA,
     }
 
