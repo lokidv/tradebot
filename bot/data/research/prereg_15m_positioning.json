@@ -1,0 +1,58 @@
+{
+ "title": "15-minute signals, round 2: trader positioning, basis, BTC lead and a walk-forward linear model",
+ "registered_at_utc": "2026-09-24",
+ "why_round_2": "Round 1 (prereg_15m_microstructure.json, 5 order-flow hypotheses x 5 coins) passed 0 of 25. The user asked for another serious attempt at a 15m long/short signal. Round 2 uses data round 1 did not have: open interest, long/short account ratios, taker volume ratio and the futures premium index. Testing a second family after a failure raises the chance of a false discovery; the untouched one-shot holdout below is the guard against that.",
+ "data": {
+  "prices": "Binance USD-M futures 15m klines with taker-buy volume (same files as round 1)",
+  "positioning": "Binance futures 'metrics' archive, 5-minute rows: sum_open_interest, count_toptrader_long_short_ratio, sum_toptrader_long_short_ratio, count_long_short_ratio, sum_taker_long_short_vol_ratio",
+  "premium": "Binance premiumIndexKlines 15m (close of the premium index)",
+  "state_at_registration": "files downloaded; no statistic, chart or relationship has been computed or looked at"
+ },
+ "alignment_no_lookahead": {
+  "bar": "15m bar with open time t closes at t+15m; the signal is computed at that close",
+  "metrics": "the latest metrics row with create_time <= t+15m-5m (one 5-minute row of extra lag, in case rows are published late)",
+  "premium": "the premium kline with the same open time t (it closes at t+15m)"
+ },
+ "trade_mechanics": "identical to round 1: entry at next bar open, exit at close of the 8th bar held (2h) or a 3 x ATR(14) protective stop touched intrabar; one position per coin; signals during a trade are ignored",
+ "cost_primary": "0.14% round trip (taker 0.06% x 2 + 0.02% slippage)",
+ "cost_secondary_descriptive_only": "0.10% (maker entry 0.02% + taker exit 0.06% + 0.02% slippage); reported, cannot make a test pass",
+ "definitions": {
+  "z(x)": "(x - mean) / std over the prior 2880 bars (30 days) of the same 15m-sampled quantity, current bar excluded",
+  "sigma_k": "std of k-bar returns over the prior 2880 bars",
+  "r_k": "close / close k bars earlier - 1",
+  "dOI4": "log(OI now / OI 4 bars earlier), using aligned OI",
+  "acct": "count_long_short_ratio (all accounts)",
+  "top": "sum_toptrader_long_short_ratio (top traders, by position)",
+  "taker": "sum_taker_long_short_vol_ratio",
+  "prem": "premium index close"
+ },
+ "hypotheses": {
+  "P1_OI_UNWIND_FADE": "r4 < -sigma4 and z(dOI4) < -2 -> long; r4 > +sigma4 and z(dOI4) < -2 -> short (moves made by positions closing tend to exhaust)",
+  "P2_OI_BUILD_FOLLOW": "r4 > +sigma4 and z(dOI4) > 2 -> long; r4 < -sigma4 and z(dOI4) > 2 -> short (moves made by new positions tend to continue)",
+  "P3_CROWD_FADE": "z(acct) > 2 -> short; z(acct) < -2 -> long (fade a crowded retail side)",
+  "P4_TOP_VS_CROWD": "d = z(top) - z(acct); d > 2 -> long; d < -2 -> short (follow top traders when they disagree with the crowd)",
+  "P5_BASIS_FADE": "z(prem) > 2.5 -> short; z(prem) < -2.5 -> long (stretched futures premium reverts)",
+  "P6_BTC_LEAD": "alts only (ETH, BNB, SOL, TRX): BTC r1 > 3 sigma1(BTC) and alt r1 < sigma1(alt) -> long alt; BTC r1 < -3 sigma1(BTC) and alt r1 > -sigma1(alt) -> short alt (lagging catch-up)",
+  "P7_LINEAR_MODEL": {
+   "features": ["z(imb4) as in round 1", "r1/sigma1", "r4/sigma4", "r16/sigma16", "z(dOI4)", "z(acct)", "z(top)", "z(taker)", "z(prem)", "BTC r4/sigma4(BTC)", "sin and cos of hour of day (UTC)"],
+   "target": "1 if close[i+8] > open[i+1] else 0",
+   "model": "logistic regression, L2 penalty lambda = 1.0 on features standardized with training-set mean and std; fitted by Newton iterations",
+   "walk_forward": "refit at the start of every calendar month on all earlier bars whose target is fully known before that month; first predictions 2022-07-01",
+   "signal": "long if predicted p >= the 95th percentile of the model's own in-sample training predictions; short if p <= the 5th percentile"
+  }
+ },
+ "family": "P1-P5 and P7 x 5 coins + P6 x 4 alts = 34 tests",
+ "windows": {
+  "discovery": ["2022-01-01", "2024-06-30"],
+  "validation": ["2024-07-01", "2025-06-30"],
+  "holdout_one_shot": ["2025-07-01", "2026-08-31"]
+ },
+ "statistic": "mean net return per trade (%), block bootstrap with 1-day blocks",
+ "adopt_rule": {
+  "discovery": "mean > 0, Romano-Wolf p_adj < 0.10 across the 34 tests, at least 100 trades",
+  "validation": "mean > 0 and one-sided 90% lower bound > 0, at least 50 trades",
+  "holdout": "run once, only for tests that passed both; at least 30 trades and mean > 0 -> shown to the user as a candidate and sent to a live demo forward test; otherwise rejected",
+  "no_pass": "if nothing passes, no 15-minute signal is shipped and the user is told"
+ },
+ "no_changes_after_seeing_results": "definitions, parameters, windows, costs and rules above are fixed"
+}
