@@ -39,6 +39,7 @@ import gates
 import trend
 import trend_exec
 import momentum
+import watchlist
 import notify
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
@@ -836,7 +837,12 @@ def overview(tf: str = "1h"):
     if tf not in TFS:
         raise HTTPException(400, "تایم‌فریم نامعتبر")
     try:
-        symbols, tickers = market.get_top_symbols(TOP_N + 6)   # چند ارز اضافه، تا کم‌سابقه‌ها جایگزین داشته باشند
+        # فقط فهرستِ پنج‌ارزیِ کاربر (watchlist.py) — به‌جای ۲۰۰ ارزِ برتر، تا همه‌چیز سریع‌تر باشد
+        symbols = list(watchlist.SYMBOLS)
+        try:
+            _, tickers = market.get_top_symbols(50)
+        except Exception:  # noqa: BLE001, silent-ok — تغییرِ ۲۴ساعته اختیاری است
+            tickers = {}
     except Exception:  # noqa: BLE001 — قطعیِ شبکه/DNS: پاسخِ مرتب به‌جای crash
         return {"tf": tf, "updated": time.time(), "coins": [],
                 "net_error": "اتصال به صرافی برقرار نیست (شبکه/DNS/فیلترینگ). اینترنت یا VPN را بررسی کنید؛ خودکار دوباره تلاش می‌شود.",

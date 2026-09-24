@@ -1,0 +1,202 @@
+{
+ "generated_at": 1790230763.996463,
+ "rule": "H3_TSMOM28",
+ "note": "descriptive backtest only for coins outside the BTC/ETH pre-registration; same windows and costs",
+ "assets": {
+  "BTCUSDT": {
+   "preregistered": true,
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 47.0,
+    "edge_daily_pct": 0.5259,
+    "mean_in_pct": 0.3497,
+    "mean_out_pct": -0.1761,
+    "strategy": {
+     "cagr_pct": 59.67,
+     "max_drawdown_pct": 34.03,
+     "sharpe": 1.228
+    },
+    "buy_and_hold": {
+     "cagr_pct": 2.12,
+     "max_drawdown_pct": 76.63,
+     "sharpe": 0.375
+    },
+    "switches": 28
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 55.9,
+    "edge_daily_pct": 0.1628,
+    "mean_in_pct": 0.1826,
+    "mean_out_pct": 0.0198,
+    "strategy": {
+     "cagr_pct": 34.01,
+     "max_drawdown_pct": 32.62,
+     "sharpe": 1.052
+    },
+    "buy_and_hold": {
+     "cagr_pct": 34.86,
+     "max_drawdown_pct": 52.97,
+     "sharpe": 0.878
+    },
+    "switches": 42
+   }
+  },
+  "ETHUSDT": {
+   "preregistered": true,
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 56.4,
+    "edge_daily_pct": 0.5017,
+    "mean_in_pct": 0.4382,
+    "mean_out_pct": -0.0635,
+    "strategy": {
+     "cagr_pct": 85.71,
+     "max_drawdown_pct": 59.68,
+     "sharpe": 1.221
+    },
+    "buy_and_hold": {
+     "cagr_pct": 47.33,
+     "max_drawdown_pct": 79.3,
+     "sharpe": 0.882
+    },
+    "switches": 27
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 50.3,
+    "edge_daily_pct": 0.3916,
+    "mean_in_pct": 0.2733,
+    "mean_out_pct": -0.1183,
+    "strategy": {
+     "cagr_pct": 46.83,
+     "max_drawdown_pct": 38.62,
+     "sharpe": 1.082
+    },
+    "buy_and_hold": {
+     "cagr_pct": 8.0,
+     "max_drawdown_pct": 67.55,
+     "sharpe": 0.44
+    },
+    "switches": 35
+   }
+  },
+  "BNBUSDT": {
+   "preregistered": false,
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 51.8,
+    "edge_daily_pct": 0.637,
+    "mean_in_pct": 0.6602,
+    "mean_out_pct": 0.0233,
+    "strategy": {
+     "cagr_pct": 131.85,
+     "max_drawdown_pct": 70.33,
+     "sharpe": 1.34
+    },
+    "buy_and_hold": {
+     "cagr_pct": 111.08,
+     "max_drawdown_pct": 70.86,
+     "sharpe": 1.201
+    },
+    "switches": 23
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 55.1,
+    "edge_daily_pct": 0.1461,
+    "mean_in_pct": 0.1927,
+    "mean_out_pct": 0.0466,
+    "strategy": {
+     "cagr_pct": 31.22,
+     "max_drawdown_pct": 44.03,
+     "sharpe": 0.858
+    },
+    "buy_and_hold": {
+     "cagr_pct": 39.6,
+     "max_drawdown_pct": 58.2,
+     "sharpe": 0.905
+    },
+    "switches": 49
+   }
+  },
+  "SOLUSDT": {
+   "preregistered": false,
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 48.4,
+    "edge_daily_pct": 1.2025,
+    "mean_in_pct": 1.1525,
+    "mean_out_pct": -0.05,
+    "strategy": {
+     "cagr_pct": 339.91,
+     "max_drawdown_pct": 67.1,
+     "sharpe": 1.926
+    },
+    "buy_and_hold": {
+     "cagr_pct": 175.7,
+     "max_drawdown_pct": 96.27,
+     "sharpe": 1.424
+    },
+    "switches": 26
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 53.3,
+    "edge_daily_pct": 0.2751,
+    "mean_in_pct": 0.3678,
+    "mean_out_pct": 0.0927,
+    "strategy": {
+     "cagr_pct": 67.32,
+     "max_drawdown_pct": 56.45,
+     "sharpe": 1.143
+    },
+    "buy_and_hold": {
+     "cagr_pct": 70.94,
+     "max_drawdown_pct": 76.26,
+     "sharpe": 1.056
+    },
+    "switches": 31
+   }
+  },
+  "TRXUSDT": {
+   "preregistered": false,
+   "discovery": {
+    "days": 911,
+    "time_in_market_pct": 54.6,
+    "edge_daily_pct": 0.0608,
+    "mean_in_pct": 0.2623,
+    "mean_out_pct": 0.2015,
+    "strategy": {
+     "cagr_pct": 24.02,
+     "max_drawdown_pct": 69.24,
+     "sharpe": 0.652
+    },
+    "buy_and_hold": {
+     "cagr_pct": 52.18,
+     "max_drawdown_pct": 69.51,
+     "sharpe": 0.911
+    },
+    "switches": 32
+   },
+   "confirmation": {
+    "days": 1158,
+    "time_in_market_pct": 63.0,
+    "edge_daily_pct": 0.1686,
+    "mean_in_pct": 0.2369,
+    "mean_out_pct": 0.0682,
+    "strategy": {
+     "cagr_pct": 45.45,
+     "max_drawdown_pct": 45.6,
+     "sharpe": 0.824
+    },
+    "buy_and_hold": {
+     "cagr_pct": 59.23,
+     "max_drawdown_pct": 51.11,
+     "sharpe": 0.95
+    },
+    "switches": 35
+   }
+  }
+ }
+}

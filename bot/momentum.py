@@ -20,7 +20,9 @@ import log
 import market
 import paths
 
-SYMBOLS = ("BTCUSDT", "ETHUSDT")
+import watchlist
+
+SYMBOLS = tuple(watchlist.SYMBOLS)
 LOOKBACK_DAYS = 28
 DAY_MS = 86_400_000
 WEEK_MS = 7 * DAY_MS
@@ -217,7 +219,20 @@ def evidence():
     with open(files[-1], encoding="utf-8") as f:
         rep = json.load(f)
     out = {"report": os.path.basename(files[-1])}
+    wfiles = sorted(glob.glob(paths.data("research", "momentum_watchlist_*.json")))
+    desc = {}
+    if wfiles:
+        with open(wfiles[-1], encoding="utf-8") as f:
+            desc = json.load(f).get("assets") or {}
     for sym in SYMBOLS:
+        if sym not in watchlist.PREREGISTERED:
+            # بیرون از پیش‌ثبت: فقط بک‌تستِ توصیفی با همان قاعده، پنجره‌ها و هزینه
+            d = desc.get(sym) or {}
+            out[sym] = {"verdict": "DESCRIPTIVE_ONLY", "p_adj": None, "preregistered": False,
+                        "confirmation": {k: (d.get("confirmation") or {}).get(k)
+                                         for k in ("strategy", "buy_and_hold", "time_in_market_pct")},
+                        "discovery": {k: (d.get("discovery") or {}).get(k) for k in ("strategy", "buy_and_hold")}}
+            continue
         v = (rep.get("results") or {}).get(f"{sym}:H3_TSMOM28") or {}
         conf, disc = v.get("confirmation") or {}, v.get("discovery") or {}
         out[sym] = {"verdict": v.get("verdict"), "p_adj": (v.get("romano_wolf_discovery") or {}).get("p_adj"),

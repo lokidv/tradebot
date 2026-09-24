@@ -32,6 +32,7 @@ import market
 import paths
 import research
 import stats
+import watchlist
 
 LEDGER_PATH = paths.data("trend_ledger.jsonl")
 RULE_KEYS = ("T_don20_long", "T_don55_long", "T_sma100_long")
@@ -39,18 +40,14 @@ RULES = {v["key"]: v for v in explore.VARIANTS if v["key"] in RULE_KEYS}
 # پیش از دادهٔ رو-به-جلو برگزیده شد: کمترین p_adj، مثبت در هر سه زیرِدوره، کمترین افت
 PRIMARY = "T_don20_long"
 TRACKING_START_MS = 1_789_430_400_000          # 2026-09-15 00:00 UTC
-SYMBOLS = tuple(research.MAJORS)
+SYMBOLS = tuple(watchlist.SYMBOLS)       # به خواستِ کاربر (۲۰۲۶-۰۹-۲۴) فقط پنج ارز؛ قبلاً ۲۰ ارزِ اصلیِ research.MAJORS
 # گسترش به ۵۰ ارز (explore.universe_report، data/research/universe_20260915_1657.json): رتبه‌های
 # ۲۱ تا ۵۰ جداگانه معیارِ ازپیش‌گفته را داشتند (+۰٫۳۹R، کرانِ پایین +۰٫۱۴، مثبت در هر دو نیمه و زیرِ
 # فشارِ هزینه). فهرست **ثابت** است، ۲۰۲۶-۰۹-۱۵ پیش از بسته‌شدنِ کندلِ آن روز فقط با حجمِ دلاریِ ۳۰
 # روزهٔ اسپاتِ بایننس انتخاب شد: ۳۰ ارزِ بزرگ‌ترِ غیرِ اصلی با دستِ‌کم ۴۰۰ روز سابقه (سهامِ
 # توکنی و ارزهای خیلی تازه بیرون می‌مانند)، بی‌استیبل/میخ‌شده/رپ‌شده، و بی‌طلا (PAXG: دارایی
 # دیگری است). کارنامهٔ رو-به-جلوی این‌ها جدا از ۲۰ ارزِ اصلی شمرده می‌شود.
-EXT_SYMBOLS = ("ZECUSDT", "SUIUSDT", "ENAUSDT", "TRUMPUSDT", "PEPEUSDT", "TAOUSDT", "WLDUSDT",
-               "DASHUSDT", "AAVEUSDT", "BMTUSDT", "XLMUSDT", "ONDOUSDT", "PENGUUSDT", "FETUSDT",
-               "INJUSDT", "HBARUSDT", "POLUSDT", "THEUSDT", "LSKUSDT", "ICPUSDT", "ZROUSDT",
-               "RAYUSDT", "ETHFIUSDT", "ZENUSDT", "VIRTUALUSDT", "CAKEUSDT", "SHIBUSDT", "OPUSDT",
-               "REZUSDT", "GPSUSDT")
+EXT_SYMBOLS = ()                          # گسترشِ ۳۰ ارزی حذف شد (کاربر فقط پنج ارز می‌خواهد)
 ALL_SYMBOLS = SYMBOLS + EXT_SYMBOLS
 KLINE_LIMIT = 420
 REFRESH_SEC = 1800

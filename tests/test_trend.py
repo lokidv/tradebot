@@ -150,13 +150,13 @@ class ForwardTrackingTests(unittest.TestCase):
             self.assertEqual(row["category"], "join" if days_after <= trend.JOIN_MAX_DAYS else "late")
             self.assertAlmostEqual(row["stop_distance_pct"], (row["last"] - row["stop"]) / row["last"] * 100)
 
-    def test_the_extension_is_thirty_distinct_non_major_coins(self):
-        self.assertEqual(len(trend.EXT_SYMBOLS), 30)
-        self.assertEqual(len(set(trend.ALL_SYMBOLS)), 50)
-        self.assertFalse(set(trend.SYMBOLS) & set(trend.EXT_SYMBOLS))
-        self.assertFalse([s for s in trend.EXT_SYMBOLS if explore._excluded(s)])
-        self.assertNotIn("PAXGUSDT", trend.EXT_SYMBOLS)                 # طلا دارایی دیگری است
-        self.assertEqual((trend.universe_of("BTCUSDT"), trend.universe_of("SUIUSDT")), ("majors", "top50"))
+    def test_only_the_users_five_coins_are_tracked(self):
+        """به خواستِ کاربر (۲۰۲۶-۰۹-۲۴) فقط پنج ارز خوانده و تحلیل می‌شود."""
+        import watchlist
+        self.assertEqual(trend.ALL_SYMBOLS, watchlist.SYMBOLS)
+        self.assertEqual(set(watchlist.SYMBOLS), {"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "TRXUSDT"})
+        self.assertEqual(trend.EXT_SYMBOLS, ())
+        self.assertEqual(trend.universe_of("BTCUSDT"), "majors")
 
     def test_forward_record_keeps_the_majors_and_the_extension_apart(self):
         rows = [{"kind": "exit", "rule": trend.PRIMARY, "sym": "BTCUSDT", "net_r": 1.0, "entry_ts": 1},

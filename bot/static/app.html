@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>میز تصمیم — BTC و ETH</title>
+<title>میز تصمیم — BTC، ETH، BNB، SOL، TRX</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Lalezar&family=Vazirmatn:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -43,13 +43,13 @@
   .lede b{color:var(--paper);font-weight:500}
 
   /* ── کارتِ تصمیم ── */
-  .decks{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .decks{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:18px}
   .deck{background:var(--slate);border:1px solid var(--rule);border-radius:14px;padding:20px 22px 18px;position:relative;overflow:hidden}
   .deck.in{border-top:3px solid var(--kelp)} .deck.out{border-top:3px solid var(--buoy)}
   .deck .asset{display:flex;justify-content:space-between;align-items:baseline}
   .deck .asset b{font-size:18px}
   .deck .price{font-size:17px}
-  .verdict{font-family:var(--display);font-size:64px;line-height:1.05;margin:10px 0 2px;letter-spacing:0}
+  .verdict{font-family:var(--display);font-size:56px;line-height:1.05;margin:10px 0 2px;letter-spacing:0}
   .in .verdict{color:var(--kelp)} .out .verdict{color:var(--buoy)}
   .since{color:var(--chart);font-size:13px}
   .chart{margin:14px -4px 6px;width:calc(100% + 8px);height:150px;display:block}
@@ -65,7 +65,7 @@
   .btn:disabled{opacity:.5;cursor:default}
   .tag{font-size:12px;color:var(--chart);border:1px solid var(--rule);border-radius:20px;padding:2px 10px}
 
-  .strip{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
   .cell{background:var(--slate);border:1px solid var(--rule);border-radius:12px;padding:14px 16px;font-size:14px}
   .cell .h{font-size:12px;color:var(--chart);margin-bottom:4px}
   .cell .v{font-size:17px}
@@ -95,7 +95,7 @@
 </head>
 <body>
 <header><div class="wrap bar">
-  <div class="brand">میز تصمیم <small>BTC و ETH · هفته‌ای یک تصمیم</small></div>
+  <div class="brand">میز تصمیم <small>BTC · ETH · BNB · SOL · TRX · هفته‌ای یک تصمیم</small></div>
   <nav role="tablist">
     <button role="tab" aria-selected="true" data-p="week">این هفته</button>
     <button role="tab" aria-selected="false" data-p="daily">سیگنال‌های روزانه</button>
@@ -131,9 +131,9 @@
 
   <!-- ═══ سیگنال‌های روزانه ═══ -->
   <section class="page" id="p-daily" hidden>
-    <p class="lede">شکستِ سقفِ ۲۰روزه روی ۵۰ ارزِ بزرگ. <b id="dailyVerdict"></b></p>
+    <p class="lede">شکستِ سقفِ ۲۰روزه روی همین پنج ارز. <b id="dailyVerdict"></b></p>
     <div class="scroll"><table><thead><tr><th>ارز</th><th>وضعیت</th><th>قیمتِ فعلی</th><th>حدضرر</th><th></th></tr></thead>
-      <tbody id="dailyRows"><tr><td colspan="5" class="empty">در حالِ خواندنِ قیمتِ ۵۰ ارز — بارِ اول تا یک دقیقه طول می‌کشد…</td></tr></tbody></table></div>
+      <tbody id="dailyRows"><tr><td colspan="5" class="empty">در حالِ خواندن…</td></tr></tbody></table></div>
   </section>
 
   <!-- ═══ دمو و کارنامه ═══ -->
@@ -219,7 +219,8 @@ let MOM = null;
 async function loadWeek(){
   try{ MOM = await getJSON("/api/momentum"); }catch(e){ $("#decks").innerHTML = `<div class="empty">قیمت‌ها خوانده نشد: ${e.message}. اتصالِ اینترنت را بررسی کنید و صفحه را تازه کنید.</div>`; return; }
   const d = MOM, ev = d.evidence || {};
-  $("#decks").innerHTML = ["BTCUSDT", "ETHUSDT"].map((sym, k) => {
+  const SYMS = Object.keys(d.assets || {});
+  $("#decks").innerHTML = SYMS.map((sym, k) => {
     const a = (d.assets || {})[sym];
     if(!a || !a.current) return `<div class="deck"><div class="empty">دادهٔ ${coin(sym)} نرسید.</div></div>`;
     const cur = a.current, pv = a.provisional_next || {}, live = a.live;
@@ -227,6 +228,7 @@ async function loadWeek(){
     const price = live ? live.price : cur.sunday_close;
     const thr = pv.threshold || cur.ref_close;
     const conf = (ev[sym] || {}).confirmation || {}, s = conf.strategy || {}, b = conf.buy_and_hold || {};
+    const desc = (ev[sym] || {}).verdict === "DESCRIPTIVE_ONLY";
     const gap = price && thr ? (price / thr - 1) * 100 : null;
     return `<article class="deck ${inm ? "in" : "out"}" aria-label="${coin(sym)}">
       <div class="asset"><b>${coin(sym)}</b><span class="price n">${px(price)}</span></div>
@@ -238,7 +240,7 @@ async function loadWeek(){
       <div class="next">دوشنبهٔ بعد (${until(a.next_decision_ms)}): اگر هفته همین الان بسته شود →
         <b class="${pv.in_market ? "k" : "o"}">${pv.in_market ? "در بازار" : "نقد"}</b></div>
       <div class="facts">
-        <div><span>این قاعده، نیمهٔ ۲۰۲۳ تا ۲۰۲۶</span>${fa(s.cagr_pct)}٪ در سال · افتِ ${fa(s.max_drawdown_pct)}٪</div>
+        <div><span>این قاعده، نیمهٔ ۲۰۲۳ تا ۲۰۲۶${desc ? " (بک‌تستِ توصیفی)" : ""}</span>${fa(s.cagr_pct)}٪ در سال · افتِ ${fa(s.max_drawdown_pct)}٪</div>
         <div><span>فقط نگه‌داری، همان دوره</span>${fa(b.cagr_pct)}٪ در سال · افتِ ${fa(b.max_drawdown_pct)}٪</div>
       </div>
       <div class="act">
@@ -251,6 +253,7 @@ async function loadWeek(){
   renderForward(); renderContext(); renderFee();
   $("#caveat").innerHTML = `<b>این روش اثبات‌نشده است.</b> در هر دو نیمهٔ داده (۲۰۲۱–۲۰۲۳ و ۲۰۲۳–۲۰۲۶) روی BTC و ETH مثبت بود، ولی آستانهٔ آماریِ
     ازپیش‌ثبت‌شده را نگذراند (BTC p=${fa((ev.BTCUSDT || {}).p_adj, 2)}). یک مدلِ ترکیبیِ ازپیش‌تعریف‌شده هم از آن ضعیف‌تر بود — پس بخشی از نتیجه ممکن است شانس باشد.
+    روی BNB، SOL و TRX هیچ آزمونِ ازپیش‌ثبت‌شده‌ای انجام نشده؛ عددهایشان فقط بک‌تستِ توصیفیِ همین قاعده است و آنجا بازده از نگه‌داری کمتر بود.
     <b>مزیتش دوری از بازارِ نزولی است</b> (کلِ ۲۰۲۲ بیرون ماند)، نه سودِ بیشتر در بازارِ صعودی؛ در بازارِ بی‌جهت چند ورود و خروجِ بی‌حاصل دارد و در بازارِ نزولی فقط نقد می‌ماند.
     پیش از پولِ واقعی: ۱۲ هفته کارنامهٔ زنده. بی‌اهرم، و فقط با مبلغی که از دست دادنش زندگی‌تان را مختل نکند. این توصیهٔ سرمایه‌گذاری نیست.`;
 }
@@ -258,7 +261,7 @@ async function loadWeek(){
 function renderForward(){
   const f = MOM.forward || {};
   const lab = {IN_PROGRESS: ["در جریان", "warn"], GO_SMALL: ["مجاز — فقط با مبلغِ کم", "ok"], NO_GO: ["رد — برای پولِ واقعی نه", "bad"], BRAKE: ["ترمز — نمایش متوقف", "bad"]};
-  $("#forward").innerHTML = ["BTCUSDT", "ETHUSDT"].map(sym => {
+  $("#forward").innerHTML = Object.keys(f).map(sym => {
     const x = f[sym] || {}, [t, c] = lab[x.verdict] || ["—", "dim"];
     return `<div class="cell"><div class="h">${coin(sym)} · ${fa(x.weeks)} از ۱۲ هفته</div>
       <div class="v ${c}">${t}</div>
@@ -291,7 +294,7 @@ function renderFee(){
     const a = rows[String(lo)].cagr_pct, b = rows[String(hi)].cagr_pct;
     return hi === lo ? a : a + (b - a) * (fee - lo) / (hi - lo);
   };
-  $("#feeOut").innerHTML = ["BTCUSDT", "ETHUSDT"].map(sym => {
+  $("#feeOut").innerHTML = Object.keys(t).map(sym => {
     const r = t[sym]; if(!r) return "";
     return `<div>${coin(sym)}: حدودِ ${fa(r.switches_per_year)} خرید یا فروش در سال · بازدهِ ۲۰۲۱ تا ۲۰۲۶ با این کارمزد ≈ <b class="n">${interp(r).toFixed(1)}٪</b> در سال
       (نگه‌داری <span class="n">${r.buy_and_hold.cagr_pct.toFixed(1)}٪</span>)</div>`;
