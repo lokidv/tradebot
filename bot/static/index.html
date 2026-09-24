@@ -1016,10 +1016,11 @@ async function loadCalibBanner(){
     const el = $("#calibBanner");
     if(d.building){
       const pctN = d.total ? Math.round(d.done/d.total*100) : 0;
-      setSL("slCalib", `<span class="sep">·</span> 🧠 آموزشِ مدل: <b>${faN(pctN)}٪</b>`);
+      // بازآموزی در پروسهٔ جدا شمارندهٔ پیشرفت ندارد: «۰/۰ · ۰٪» نشان نده
+      setSL("slCalib", `<span class="sep">·</span> 🧠 آموزشِ مدل: <b>${d.total ? faN(pctN) + "٪" : "…"}</b>`);
       el.innerHTML = `<div class="calbanner">
-        <div class="top"><span>🧠 <b>هستهٔ هوش مصنوعی در حال آموزش</b> — ${d.progress||"…"}</span>
-             <span class="num">${d.done||0}/${d.total||0} · ${pctN}٪</span></div>
+        <div class="top"><span>🧠 <b>هستهٔ هوش مصنوعی در حال آموزش</b> — ${esc(d.progress||"…")}</span>
+             <span class="num">${d.total ? `${d.done||0}/${d.total} · ${pctN}٪` : ""}</span></div>
         <div class="prog"><i style="width:${Math.max(pctN,3)}%"></i></div>
         <p class="note" style="margin-top:7px">سیاست نهاییِ احتمال/بازده روی سه پنجرهٔ زمانیِ جدا طراحی و آزموده می‌شود. تا اتمام test مستقل، ورود تازه مسدود است؛ چارت و پایش پوزیشن‌های قبلی فعال می‌ماند.</p></div>`;
       if(!window._calibTimer) window._calibTimer = setInterval(loadCalibBanner, 4000);
@@ -1943,10 +1944,16 @@ async function loadCalib(){
         </tr>`).join("") + `</tbody></table>
         <p class="note">🧠 هستهٔ هوش مصنوعی: برای هر تایم‌فریم، سه یادگیرنده (لجستیک، LightGBM، شبکهٔ عصبی) و یک مغزِ ترکیب‌کننده رقابت می‌کنند؛ برندهٔ آزمونِ برون‌نمونه‌ای (Walk-Forward) انتخاب می‌شود. لیفت = اختلاف وین‌ریتِ سیگنال‌های بالا/پایین‌رتبه روی داده‌ای که مدل هرگز ندیده.</p>`;
     }
+    // نسخهٔ مدلِ روی دیسک ≠ نسخهٔ کد ⇒ تحلیل‌ها بی‌مدل‌اند: جدولِ ساختِ قبلی «جاری» نیست
+    const vbad = d.version != null && d.required_version != null && d.version !== d.required_version;
+    const head = vbad ? `⚠️ مدلِ روی دیسک v${d.version} است ولی کد v${d.required_version} می‌خواهد — تا بازسازی، تحلیل‌ها بدونِ مدل‌اند (ساختِ قبلی ${fmt(d.age_hours,1)} ساعت پیش)`
+               : d.stale ? `⚠️ مدل کهنه است — آخرین ساخت ${fmt(d.age_hours,1)} ساعت پیش؛ بازسازی لازم است`
+               : `✅ آخرین ساخت: ${fmt(d.age_hours,1)} ساعت پیش`;
+    const prog = d.total ? ` — ${d.done}/${d.total}` : "";
     $("#calStatus").innerHTML = d.building
-      ? `⏳ در حال ساخت… (${d.progress||""} — ${d.done}/${d.total})`
+      ? `⏳ در حال ساخت… (${esc(d.progress||"")}${prog})` + (vbad ? `<br><small class="mid">${head}</small>` : "")
       : d.built_at
-        ? `✅ آخرین ساخت: ${fmt(d.age_hours,1)} ساعت پیش · سیگنال تاریخی: ${ev}` + mtable
+        ? `${head} · سیگنال تاریخی: ${ev}` + (vbad && mtable ? `<p class="note">جدولِ زیر مالِ ساختِ قبلی (v${d.version}) است و استفاده نمی‌شود.</p>` : "") + mtable
         : d.error ? `<span class="err">خطا: ${d.error}</span>` : "هنوز ساخته نشده";
   }catch(e){ $("#calStatus").textContent = "—"; }
 }

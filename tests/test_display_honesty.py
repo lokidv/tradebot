@@ -500,5 +500,48 @@ console.log(JSON.stringify(out));
         self.assertIn(note, out["fut"])
         self.assertIn(note, out["mix"])
 
+
+@unittest.skipUnless(shutil.which("node"), "node نصب نیست")
+class CalibSettingsStateTests(unittest.TestCase):
+    """پنلِ تنظیمات مدلِ ناهم‌نسخه یا کهنه را «✅ آخرین ساخت» و جدولِ جاری نشان نمی‌دهد."""
+
+    HARNESS = r"""
+const els = {};
+const $ = s => (els[s] = els[s] || {innerHTML: "", textContent: ""});
+const esc = s => String(s == null ? "" : s), fmt = x => String(x);
+let D = null;
+async function fetch(){ return {json: async () => D}; }
+%s
+(async () => {
+  const out = {};
+  const base = {built_at: 1, age_hours: 2.5, events: {"1h": 10},
+                models: {"1h": {kind: "logit", n_train: 5, oos_lift: 6.5, oos_brier: 0.2, by_setup: {}}}};
+  for (const [k, extra] of [["ok", {version: 23, required_version: 23, stale: false}],
+                            ["mismatch", {version: 22, required_version: 23, stale: true}],
+                            ["old", {version: 23, required_version: 23, stale: true}],
+                            ["building", {version: 22, required_version: 23, stale: true, building: true,
+                                          progress: "بازآموزی در پروسهٔ جدا"}]]) {
+    D = Object.assign({}, base, extra); await loadCalib(); out[k] = $("#calStatus").innerHTML;
+  }
+  console.log(JSON.stringify(out));
+})();
+"""
+
+    def test_stale_or_mismatched_model_is_not_shown_as_current(self):
+        with open(os.path.join(ROOT, "bot", "static", "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        js = self.HARNESS % _js_function(html, "async function loadCalib(){")
+        r = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        self.assertIn("✅ آخرین ساخت", out["ok"])
+        for k in ("mismatch", "old", "building"):
+            self.assertNotIn("✅", out[k], k)
+        self.assertIn("v22", out["mismatch"])
+        self.assertIn("استفاده نمی‌شود", out["mismatch"])
+        self.assertIn("کهنه", out["old"])
+        self.assertIn("در حال ساخت", out["building"])
+        self.assertNotIn("undefined", out["building"])
+
 if __name__ == "__main__":
     unittest.main()

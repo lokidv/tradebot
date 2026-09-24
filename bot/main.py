@@ -618,6 +618,21 @@ def _compute_analysis(symbol, tf):
 _rebuild_proc = {"p": None, "started": None}
 
 
+def _rebuild_running():
+    p = _rebuild_proc.get("p")
+    return p is not None and p.poll() is None
+
+
+def _calib_status():
+    """``calib.status()`` + بازآموزیِ پروسهٔ جدا. ``_state``ِ calib در همین پروسه از rebuild_models.py خبر ندارد،
+    پس بی این، در تمامِ مدتِ بازآموزی «building: false» گزارش می‌شد و UI مدلِ کهنه را جاری نشان می‌داد."""
+    st = calib.status()
+    if not st.get("building") and _rebuild_running():
+        st.update(building=True, progress=st.get("progress") or "بازآموزی در پروسهٔ جدا (rebuild_models.py)…",
+                  rebuild_started=_rebuild_proc.get("started"))
+    return st
+
+
 def _calib_builder():
     """بازآموزی در **پروسهٔ جدا** (rebuild_models.py)، نه داخلِ پروسهٔ معامله.
 
@@ -719,7 +734,7 @@ def bot_config(req: BotCfgReq):
 
 @app.get("/api/calib/status")
 def calib_status():
-    return calib.status()
+    return _calib_status()
 
 
 @app.get("/api/gates")
@@ -960,7 +975,7 @@ def health():
     if g["live_effective"]:
         warnings.append("معاملهٔ واقعی فعال است")
 
-    cs = calib.status()
+    cs = _calib_status()
     age_h = cs.get("age_hours")
     out["model"] = {"version": cs.get("version"), "required": cs.get("required_version"),
                     "age_hours": age_h, "stale": cs.get("stale"), "building": cs.get("building"),
@@ -1035,7 +1050,7 @@ def health():
 @app.get("/api/version")
 def version_info():
     """شناسهٔ دقیق کد و مدلِ در حال اجرا برای راستی‌آزمایی انتشار."""
-    cs = calib.status()
+    cs = _calib_status()
     return {
         "app_version": APP_VERSION,
         "ai_core_version": AI_CORE_VERSION,
@@ -1050,8 +1065,7 @@ def version_info():
 
 @app.post("/api/calib/rebuild")
 def calib_rebuild():
-    p = _rebuild_proc.get("p")
-    if calib.status().get("building") or (p is not None and p.poll() is None):
+    if calib.status().get("building") or _rebuild_running():
         return {"ok": False, "msg": "در حال ساخت است"}
     threading.Thread(target=_calib_builder, daemon=True).start()
     return {"ok": True}
@@ -1276,7 +1290,7 @@ def overview(tf: str = "1h"):
         sc = btc_a["score"]
         btc_state = {"score": sc, "z": btc_a.get("z"),
                      "dir": "صعودی" if sc >= 0.15 else "نزولی" if sc <= -0.15 else "خنثی"}
-    cs = calib.status()
+    cs = _calib_status()
     mtf = (cs.get("models") or {}).get(tf, {})
     dir_lift = mtf.get("dir_lift")
     setup_lift = mtf.get("oos_lift")
