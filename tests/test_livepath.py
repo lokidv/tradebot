@@ -308,6 +308,19 @@ class EdgeBookOrderTests(_Shadow, unittest.TestCase):
         self.assertIn("rule", shadow.stats("1h")["by_setup"])
         self.assertNotIn("zx", shadow.stats("1h")["by_setup"])
 
+    def test_rule_trades_never_form_a_pocket(self):
+        # انتخابِ صریح (نه اثرِ جانبیِ تغییرِ کلید): سری‌ای یکسان زیرِ «zx» جیب می‌شود و زیرِ «rule» نه
+        now = int(time.time() * 1000)
+        rows = [self._resolved(now - (60 - i) * 11 * H, 0.5, setup=s)           # ~۲۷ روز ⇒ بلوک‌های کافی
+                for s in (None, "zx") for i in range(60)]
+        for i, r in enumerate(rows):
+            r["id"] = f"r{i}"
+        shadow._save({"pending": [], "resolved": rows})
+        self.assertNotIn("rule", edge_book.ALLOWED_SETUPS)
+        pockets, _susp, _h = edge_book.refresh(force=True)
+        self.assertIn("1h|zx|long", pockets)
+        self.assertNotIn("1h|rule|long", pockets)
+
 
 class ShadowDedupTests(_Shadow, unittest.TestCase):
     def test_dedup_looks_at_the_newest_resolved_rows(self):
