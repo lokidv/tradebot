@@ -2203,9 +2203,11 @@ function scMetaHtml(D){                              // یک بار زیرِ م�
     out.push(`📜 <span class="v-pos">کارنامه در حال ساخت…</span>${m.cost_pct!=null ? ` (کارمزدِ رفت‌وبرگشت ${faN(m.cost_pct,2)}٪)` : ""}`);
   // RULE-3: منبعِ هر دو کارنامه — زنده روی اسپات، بک‌تست روی فیوچرز
   const ven = v => v === "binance-spot" ? "اسپاتِ بایننس" : v === "binance-usdm-futures" ? "فیوچرزِ USDⓈ-M بایننس" : (v ? String(v) : "");
-  out.push(`<span title="${esc(D.venue_note || "")}">📍 منبعِ داده: تصمیمِ زنده و دفترِ رو-به-جلو = کندل‌های ${esc(ven(D.live_venue || "binance-spot"))}` +
-           ` · کارنامهٔ بک‌تست = کندل‌های ${esc(String(m.venue || "binance-usdm-futures").split("، ").map(ven).join("، "))}` +
-           ` <small class="mid">(حجمِ دو بازار فرق دارد؛ بخشی از سیگنال‌ها یکی نیست)</small></span>`);
+  // کارنامه‌ای که بی‌آرشیوِ فیوچرز روی همان اسپات ساخته شده «دو بازارِ متفاوت» ندارد
+  const liveV = D.live_venue || "binance-spot", btV = String(m.venue || "binance-usdm-futures").split("، ");
+  out.push(`<span title="${esc(D.venue_note || "")}">📍 منبعِ داده: تصمیمِ زنده و دفترِ رو-به-جلو = کندل‌های ${esc(ven(liveV))}` +
+           ` · کارنامهٔ بک‌تست = کندل‌های ${esc(btV.map(ven).join("، "))}` +
+           (btV.some(v => v !== liveV) ? ` <small class="mid">(حجمِ دو بازار فرق دارد؛ بخشی از سیگنال‌ها یکی نیست)</small>` : "") + `</span>`);
   const lo = D.live_overall;
   if(lo && lo.n > 0)
     out.push(`📡 کارنامهٔ زنده (رو-به-جلو، همهٔ خانه‌ها، فقط تصمیم‌های قاعده، پس از کارمزد): n=${faN(lo.n)}` +

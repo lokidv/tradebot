@@ -454,5 +454,35 @@ async function jfetch(){ return NEXT(); }
         self.assertIn("خوانده نشد (boom)", out["failed"])
         self.assertNotIn(never, out["failed"])
 
+
+@unittest.skipUnless(shutil.which("node"), "node نصب نیست")
+class VenueNoteTests(unittest.TestCase):
+    """«حجمِ دو بازار فرق دارد» فقط وقتی کارنامه واقعاً روی بازارِ دیگری (فیوچرز) ساخته شده است."""
+
+    HARNESS = r"""
+const esc = s => String(s == null ? "" : s), faN = x => String(x), n100 = v => v, bR = v => v + "R";
+const tsFa = () => "", ymdFa = s => String(s);
+%s
+const base = {scorecard_meta: {window_from: "a", window_to: "b", cost_pct: 0.14}, live_venue: "binance-spot"};
+const out = {};
+for (const [k, v] of [["spot", "binance-spot"], ["fut", "binance-usdm-futures"], ["mix", "binance-spot، binance-usdm-futures"]])
+  out[k] = scMetaHtml(Object.assign({}, base, {scorecard_meta: Object.assign({}, base.scorecard_meta, {venue: v})}));
+console.log(JSON.stringify(out));
+"""
+
+    def test_markets_differ_note_only_for_a_different_venue(self):
+        with open(os.path.join(ROOT, "bot", "static", "index.html"), encoding="utf-8") as f:
+            html = f.read()
+        src = _js_function(html, "function srcFa(s){") + "\n" + _js_function(html, "function scMetaHtml(D){")
+        r = subprocess.run(["node", "-e", self.HARNESS % src], capture_output=True, text=True, encoding="utf-8",
+                           timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        note = "حجمِ دو بازار فرق دارد"
+        self.assertIn("کارنامهٔ بک‌تست = کندل‌های اسپاتِ بایننس", out["spot"])
+        self.assertNotIn(note, out["spot"])
+        self.assertIn(note, out["fut"])
+        self.assertIn(note, out["mix"])
+
 if __name__ == "__main__":
     unittest.main()
