@@ -308,6 +308,9 @@ class RunWindowTests(unittest.TestCase):
         self.assertEqual(res["label_tail_bars"], 0)
         self.assertGreater(res["oos_rows_label_unresolved"], 0)              # براکت‌های بازِ پایان ⇒ NaN
         self.assertTrue(np.isnan(oos["yL"][oos["t"] == w1 - D_MS]).all())
+        for k in ("always_long", "always_short", "random_side"):
+            self.assertIn("mean", res["baselines"][k])
+        self.assertTrue({"v21", "rule", "always_long"} <= set(res["funding_kucoin"]))
         self.assertIsNotNone(res["ic"]["gross_label"])
         self.assertIsNotNone(res["ic"]["partial_given_cost"])
         self.assertIn("gL", oos)
@@ -343,6 +346,16 @@ class ReportFilesTests(unittest.TestCase):
             with open(os.path.join(d, "core2_1_validation_erratum.json"), "w", encoding="utf-8") as f:
                 f.write("{}")
             self.assertEqual(core2_1.latest_validation_report(d), (None, None))
+
+    def test_summary_has_a_descriptive_line(self):
+        r = {"v21": {"n": 1, "mean": 0.1, "coins_positive": 1, "max_coin_share": 1.0}, "rule": {"n": 1, "mean": 0.0},
+             "bootstrap": {"ci95": [0, 1], "diff_ci95": [0, 1], "p_one_sided": 0.5}, "holm_p": 1.0, "adopted": False,
+             "timings_s": {"wall": 1}, "baselines": {"random_side": {"mean": -0.03, "n": 9}},
+             "funding_kucoin": {"v21": {"mean_funding_r": -0.001}}}
+        lines = core2_1.summary_lines({"timeframes": {"1d": r}})
+        self.assertEqual(len(lines), 2)
+        self.assertIn("random_side=-0.030", lines[1])
+        self.assertIn("v21=-0.001", lines[1])
 
 
 def _git(d, *args):

@@ -69,6 +69,7 @@ SENS_MARGINS = (0.0, 0.10, 0.20)      # فقط حساسیت
 # پایانِ پنجره خوانده نمی‌شود و براکتی که تا پایانِ پنجره بسته نشده نامعلوم است (برچسب NaN، معامله شمرده نمی‌شود).
 LABEL_TAIL_BARS = 0
 GROSS_DECIMALS = 6               # گردکردنِ R ناخالص: نویزِ ممیزِ شناور (~1e-13) گره‌های حدضرر/هدف را نمی‌شکند
+BASELINE_SEED = 42               # بذرِ خطِ پایهٔ «جهتِ تصادفی» (به‌علاوهٔ اندیسِ ارز)
 
 BOOT_B = 2000
 BOOT_SEED = 42
@@ -665,6 +666,111 @@ def evaluate(tf, oos, w0, w1, fut, symbols=SYMBOLS, log=None):
     return v2, rule, replay_equal
 
 
+# ───────────────────────── خط‌های توصیفی (هرگز در پذیرش) ─────────────────────────
+DESCRIPTIVE_NOTE = ("Descriptive only - never used in adoption (adopt_checks does not read it). Same futures bars, "
+                    "window, one-trade-at-a-time replay and 0.14% cost as the rule baseline (audit labels-4/labels-5/"
+                    "RULE-6).")
+
+
+def baseline_trades(tf, w0, w1, fut, symbols=SYMBOLS, seed=BASELINE_SEED):
+    """خط‌های پایهٔ سادهٔ هم‌کندل: ``always_long``، ``always_short`` و ``random_side`` (جهتِ تصادفیِ بذردار، بذر =
+    ``seed`` + اندیسِ ارز) روی همان ``window_bars`` و همان حلقهٔ ``replay_sides`` (یک معامله در لحظه، پشتِ‌سرِ‌هم) ⇒
+    ``{نام: {نماد: معامله‌ها}}``. فقط توصیفی: نشان می‌دهد نتیجه‌ای از «بتای بازار» یا «جهتِ تصادفی» جدا می‌شود یا نه."""
+    out = {"always_long": {}, "always_short": {}, "random_side": {}}
+    for k, s in enumerate(symbols):
+        sub = window_bars(fut[s], w0, w1)
+        st = sub["t"]
+        a14 = engine.atr(sub["h"], sub["l"], sub["c"], 14)
+        first = int(np.searchsorted(st, w0))
+        inw = ((st >= w0) & (st < w1)).astype(np.int8)
+        rnd = np.where(np.random.RandomState(int(seed) + k).rand(len(st)) < 0.5, 1, -1).astype(np.int8)
+        for name, side in (("always_long", inw), ("always_short", -inw), ("random_side", inw * rnd)):
+            out[name][s] = replay_sides(sub, side, first, COST, a14)
+    return out
+
+
+def _exit_ms(x, bar):
+    """لحظهٔ خروج برای شمارشِ تسویه‌ها: گپ = بازِ کندلِ خروج، سقفِ زمانی = بسته‌اش، حدضرر/هدف = میانه‌اش
+    (لحظهٔ دقیقِ لمس درونِ کندل معلوم نیست)."""
+    t = int(x["exit_t"])
+    if x.get("outcome") == bracket.OUTCOME_GAP_STOP:
+        return t
+    if x.get("outcome") == bracket.OUTCOME_TIMEOUT:
+        return t + bar
+    return t + bar // 2
+
+
+def funding_r(trades_by_sym, kfund, tf, symbols=SYMBOLS):
+    """فاندینگِ **تسویه‌شدهٔ کوکوین** (صرافیِ کاربر) برای هر معامله برحسبِ R، هم‌ترتیب با ``trade_array``:
+    ``−side × Σrate × 100 / risk_pct`` روی تسویه‌های ``ورود < t ≤ خروج`` (ورود = بازِ کندلِ بعد از سیگنال؛ خروج =
+    ``_exit_ms``). لانگ نرخِ مثبت را می‌پردازد. نبودِ فاندینگِ آن ارز ⇒ NaN. فقط توصیفی (پیش‌ثبت هزینه را ۰٫۱۴٪ می‌داند)."""
+    bar = BAR_MS[tf]
+    out = []
+    for s in symbols:
+        tr = trades_by_sym.get(s, [])
+        kf = (kfund or {}).get(s)
+        if not tr:
+            continue
+        if kf is None or not len(kf["t"]):
+            out.extend([np.nan] * len(tr))
+            continue
+        kt = np.asarray(kf["t"], dtype=np.int64)
+        o = np.argsort(kt, kind="stable")
+        kt = kt[o]
+        rate = np.asarray(kf["rate"], dtype=np.float64)[o]
+        cum = np.r_[0.0, np.cumsum(np.where(np.isfinite(rate), rate, 0.0))]
+        for x in tr:
+            a = int(np.searchsorted(kt, int(x["t"]) + bar, side="right"))
+            b = int(np.searchsorted(kt, _exit_ms(x, bar), side="right"))
+            sd = 1 if x["side"] == "long" else -1
+            out.append(-sd * (cum[b] - cum[min(a, b)]) * 100.0 / max(float(x["risk_pct"]), 0.05))
+    return np.asarray(out, dtype=np.float64)
+
+
+def funding_stats(trades_by_sym, kfund, tf, symbols=SYMBOLS, cost_pct=COST):
+    """خلاصهٔ ``funding_r``: میانگینِ فاندینگ (کل/لانگ/شورت) و میانگینِ خالص پس از فاندینگ روی معامله‌هایی که فاندینگ دارند."""
+    syms = list(symbols)
+    ta = trade_array(trades_by_sym, syms, cost_pct)
+    f = funding_r(trades_by_sym, kfund, tf, syms)
+    ok = np.isfinite(f)
+
+    def mean(m):
+        return float(f[m].mean()) if m.any() else None
+
+    return {"n": int(len(f)), "n_with_funding": int(ok.sum()), "mean_funding_r": mean(ok),
+            "long_mean_funding_r": mean(ok & (ta["side"] == 1)), "short_mean_funding_r": mean(ok & (ta["side"] == -1)),
+            "mean_net_r": float(ta["net"][ok].mean()) if ok.any() else None,
+            "mean_net_after_funding_r": float((ta["net"][ok] + f[ok]).mean()) if ok.any() else None}
+
+
+def descriptive_lines(tf, w0, w1, fut, systems, kfund=None, symbols=SYMBOLS, seed=BASELINE_SEED):
+    """خط‌های کنارِ هر نتیجهٔ اعتبارسنجی/holdout ⇒ ``(baselines, funding)`` — **فقط توصیفی**، ``adopt_checks`` آن‌ها را
+    نمی‌خواند. ``systems`` = ``{نام: {نماد: معامله‌ها}}`` (مثلاً مدل و قاعده) که فاندینگشان هم گزارش می‌شود."""
+    syms = list(symbols)
+    base = baseline_trades(tf, w0, w1, fut, syms, seed)
+    bl = {"note": DESCRIPTIVE_NOTE, "seed": int(seed), "cost_pct": COST}
+    for name, tb in base.items():
+        st = trade_stats(trade_array(tb, syms), syms)
+        bl[name] = dict(_compact(st), se=st["se"])
+    fl = {"note": DESCRIPTIVE_NOTE + " Settled KuCoin funding (the user's venue), entry < settlement <= exit; "
+                                    "stop/target exits at mid-bar.",
+          "source": "kfund_<SYM>.npz (KuCoin settled funding)"}
+    for name, tb in list(systems.items()) + list(base.items()):
+        fl[name] = funding_stats(tb, kfund, tf, syms)
+    return bl, fl
+
+
+def load_kfund_all(t_end, symbols=SYMBOLS):
+    """فاندینگِ کوکوینِ هر ارز تا ``t_end`` (انحصاری)؛ فایلِ غایب ⇒ ``None`` (خطِ فاندینگ خالی می‌ماند)."""
+    out = {}
+    for s in symbols:
+        try:
+            out[s] = load_kfund(s, t_end)
+        except (OSError, KeyError, ValueError):
+            out[s] = None
+    return out
+
+
 def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=None, allow_holdout=False):
     """یک تایم‌فریم روی یک پنجره: ساختِ داده، walk-forward، ارزیابی. هیچ کندلی (اسپات یا فیوچرز) در/پس از پایانِ
     پنجره بارگذاری نمی‌شود (ممیزی DATA-5): برچسبی که براکتش تا پایان بسته نشده NaN است و در IC نمی‌آید، و معاملهٔ
@@ -692,6 +798,7 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
     ta = trade_array(v2[MARGIN], syms)
     tr = trade_array(rule, syms)
     bt = block_bootstrap(ta["t"], ta["net"], tr["t"], tr["net"], w0, w1)
+    base, fund = descriptive_lines(tf, w0, w1, fut, {"v2": v2[MARGIN], "rule": rule}, load_kfund_all(w1 + 1), syms)
     sens = {}
     for mg, tb in v2.items():
         sens[f"margin_{mg:.2f}"] = {f"cost_{c:.2f}": _compact(trade_stats(trade_array(tb, syms, c), syms))
@@ -723,6 +830,7 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
            "oos_rows_label_unresolved": int((~(np.isfinite(oos["yL"]) & np.isfinite(oos["yS"]))).sum()),
            "v2": trade_stats(ta, syms), "rule": trade_stats(tr, syms),
            "rule_maker_0.10": _compact(trade_stats(trade_array(rule, syms, MAKER_COST), syms)),
+           "baselines": base, "funding_kucoin": fund,
            "bootstrap": bt, "sensitivity": sens, "importance_gain_top20": imp, "ic": ic_stats(oos, syms),
            "replay_equal_to_decision_replay": bool(replay_equal),
            "months": meta,
@@ -794,8 +902,10 @@ def assemble(results, tfs=TFS):
             "cost_pct": COST, "maker_cost_pct_descriptive": MAKER_COST,
             "holdout_touched": False,
             "futures_end": "window end (exclusive): labels and trades use no bar at/after it (audit DATA-5)",
+            "descriptive_only": ["ic", "baselines", "funding_kucoin", "sensitivity", "rule_maker_0.10"],
             "note_fa": ("فقط پنجرهٔ اعتبارسنجی (۲۰۲۴-۰۷ تا ۲۰۲۵-۰۶). هیچ آماری روی holdout حساب نشده است: برچسب و "
                         "معامله هیچ کندلی در/پس از پایانِ پنجره نمی‌خوانند و براکتِ بازمانده شمرده نمی‌شود. "
+                        "IC، خط‌های پایه و فاندینگ فقط توصیفی‌اند. "
                         "v2 هرگز tradeable را روشن نمی‌کند و به gates.json دست نمی‌زند."),
             "adopted": [tf for tf in tfs if cells[tf].get("adopted")],
             "timeframes": cells}
@@ -816,7 +926,26 @@ def summary_lines(report):
                    f"p={bt['p_one_sided']:.3f} holm={r['holm_p']:.3f} | coins+={v['coins_positive']} "
                    f"maxshare={f(v['max_coin_share'])} | ADOPT={'YES' if r['adopted'] else 'no'} | "
                    f"wall={r['timings_s']['wall']}s")
+        d = descriptive_summary(r, "v2")
+        if d:
+            out.append(d)
     return out
+
+
+def descriptive_summary(r, model_key):
+    """یک خطِ «فقط توصیفی» زیرِ نتیجهٔ هر تایم‌فریم: خط‌های پایه و فاندینگِ کوکوین (نبود ⇒ خالی)."""
+    b, fu = r.get("baselines"), r.get("funding_kucoin")
+    if not b and not fu:
+        return ""
+    f = (lambda x: "—" if x is None else f"{x:+.3f}")
+    parts = []
+    if b:
+        parts.append(" ".join(f"{k}={f((b.get(k) or {}).get('mean'))}(n={(b.get(k) or {}).get('n')})"
+                              for k in ("always_long", "always_short", "random_side")))
+    if fu:
+        parts.append("funding(KuCoin) " + " ".join(f"{k}={f((fu.get(k) or {}).get('mean_funding_r'))}"
+                                                   for k in (model_key, "rule", "always_long")))
+    return "      descriptive: " + " | ".join(parts)
 
 
 # ───────────────────────── نگهبانِ holdout ─────────────────────────

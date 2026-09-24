@@ -296,8 +296,8 @@ class WindowEndTests(unittest.TestCase):
 
 
 class RunWindowTests(unittest.TestCase):
-    """اجرای کاملِ v2 روی فایل‌های مصنوعیِ 1d (مدلِ ساختگیِ سریع): هیچ کندلی در/پس از پایانِ پنجره خوانده نمی‌شود و
-    برچسبِ بازماندهٔ پایان NaN است."""
+    """اجرای کاملِ v2 روی فایل‌های مصنوعیِ 1d (مدلِ ساختگیِ سریع): هیچ کندلی در/پس از پایانِ پنجره خوانده نمی‌شود،
+    برچسبِ بازماندهٔ پایان NaN است، و خط‌های توصیفی کنارِ نتیجه هستند."""
     SYMS = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "TRXUSDT")
 
     @classmethod
@@ -352,6 +352,9 @@ class RunWindowTests(unittest.TestCase):
         self.assertTrue(np.isnan(oos["yL"][oos["t"] == w1 - D_MS]).all())
         self.assertTrue(res["replay_equal_to_decision_replay"])
         self.assertGreater(res["v2"]["n"], 0)
+        for k in ("always_long", "always_short", "random_side"):
+            self.assertIn("mean", res["baselines"][k])
+        self.assertIsNotNone(res["funding_kucoin"]["rule"]["mean_funding_r"])
         self.assertIsNotNone(res["ic"]["gross_label"])
         json.dumps(core2.to_json(res))
 
@@ -406,6 +409,65 @@ class IcStatsTests(unittest.TestCase):
         self.assertIsNone(ic["partial_given_cost"])
         self.assertIsNotNone(ic["pooled"]["E_L~yL"])
         json.dumps(core2.to_json(ic))
+
+
+class DescriptiveLinesTests(unittest.TestCase):
+    """ممیزی labels-4/RULE-6/labels-5: همیشه‌لانگ/همیشه‌شورت/جهتِ تصادفی و فاندینگِ کوکوین — فقط توصیفی."""
+
+    def test_baselines_on_the_same_bars(self):
+        syms = ("A", "B")
+        fut = {s: synth(3000, seed=k + 9) for k, s in enumerate(syms)}
+        w0, w1 = int(fut["A"]["t"][2400]), int(fut["A"]["t"][2900])
+        b = core2.baseline_trades("1h", w0, w1, fut, symbols=syms)
+        self.assertEqual(b, core2.baseline_trades("1h", w0, w1, fut, symbols=syms))        # بذردار
+        self.assertNotEqual(b["random_side"], core2.baseline_trades("1h", w0, w1, fut, syms, seed=7)["random_side"])
+        for s in syms:
+            self.assertTrue(b["always_long"][s] and all(x["side"] == "long" for x in b["always_long"][s]))
+            self.assertTrue(b["always_short"][s] and all(x["side"] == "short" for x in b["always_short"][s]))
+            self.assertEqual({x["side"] for x in b["random_side"][s]}, {"long", "short"})
+            for x in b["always_long"][s] + b["random_side"][s]:
+                self.assertTrue(w0 <= x["t"] < w1 and x["exit_t"] < w1)
+            tr = b["always_long"][s]
+            for p, q in zip(tr, tr[1:]):                                        # پشتِ‌سرِ‌هم، یکی در لحظه
+                self.assertEqual(q["i"], p["exit_idx"])
+
+    def test_funding_sign_and_window(self):
+        bar = H_MS
+        kf = {"t": np.array([T0 + 1 * bar, T0 + 3 * bar, T0 + 6 * bar, T0 + 7 * bar], np.int64),
+              "rate": np.array([1e-4, 1e-4, 1e-4, 1e-4]), "interval_h": np.full(4, 8.0)}
+        base = {"t": T0, "exit_t": T0 + 5 * bar, "risk_pct": 1.0}
+        tb = {"A": [dict(base, side="long", outcome="timeout"),         # (T0+1h, T0+6h] ⇒ ۲ تسویه
+                    dict(base, side="short", outcome="timeout"),
+                    dict(base, side="long", outcome="stop"),             # میانهٔ کندل ⇒ فقط T0+3h
+                    dict(base, side="long", outcome="gap_stop")]}        # بازِ کندلِ خروج ⇒ فقط T0+3h
+        f = core2.funding_r(tb, {"A": kf}, "1h", ["A"])
+        self.assertTrue(np.allclose(f, [-0.02, 0.02, -0.01, -0.01]))
+        self.assertTrue(np.isnan(core2.funding_r(tb, {}, "1h", ["A"])).all())
+        st = core2.funding_stats({"A": [dict(tb["A"][0], gross_r=1.8)]}, {"A": kf}, "1h", ["A"])
+        self.assertAlmostEqual(st["mean_funding_r"], -0.02)
+        self.assertAlmostEqual(st["mean_net_after_funding_r"], st["mean_net_r"] - 0.02)
+
+    def test_lines_are_never_used_for_adoption(self):
+        res = {"v2": {"mean": 0.2, "n": 150, "coins_positive": 4, "max_coin_share": 0.3},
+               "rule": {"mean": 0.0}, "bootstrap": {"diff_ci95": [0.05, 0.4]}}
+        plain = core2.adopt_checks("1h", res, True)
+        noisy = dict(res, baselines={"always_long": {"mean": 9.9}}, funding_kucoin={"v2": {"mean_funding_r": -9.9}})
+        self.assertEqual(core2.adopt_checks("1h", noisy, True), plain)
+        with open(os.path.join(ROOT, "bot", "core2.py"), encoding="utf-8") as f:
+            src = f.read()
+        body = src[src.index("def adopt_checks"):src.index("# ───", src.index("def adopt_checks"))]
+        self.assertNotIn("baselines", body)
+        self.assertNotIn("funding", body)
+
+    def test_summary_shows_the_descriptive_line(self):
+        r = {"v2": {"n": 1, "mean": 0.1, "coins_positive": 1, "max_coin_share": 1.0}, "rule": {"n": 1, "mean": 0.0},
+             "bootstrap": {"ci95": [0, 1], "diff_ci95": [0, 1], "p_one_sided": 0.5}, "holm_p": 1.0, "adopted": False,
+             "timings_s": {"wall": 1}, "baselines": {"always_long": {"mean": 0.15, "n": 10}},
+             "funding_kucoin": {"rule": {"mean_funding_r": -0.02}}}
+        lines = core2.summary_lines({"timeframes": {"1d": r}})
+        self.assertEqual(len(lines), 2)
+        self.assertIn("always_long=+0.150", lines[1])
+        self.assertIn("rule=-0.020", lines[1])
 
 
 class ReportFilesTests(unittest.TestCase):

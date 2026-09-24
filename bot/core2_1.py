@@ -11,8 +11,9 @@
 اجرا رد می‌شود.
 
 پس از سنجاق (ممیزیِ ۲۰۲۶-۰۹) این فایل و ``core2.py`` برای مشخصه‌های بعدی اصلاح شدند: بی‌دُمِ فیوچرز پس از پایانِ
-پنجره، IC روی R ناخالص/جهت‌دار/جزئی و فاندینگِ کوکوین تا بسته‌شدنِ سطرِ آخر. پس هشِ کد با سنجاق یکی نیست و نگهبانِ
-holdout رد می‌کند — عمداً: در اعتبارسنجیِ v2.1 هیچ تایم‌فریمی پذیرفته نشد و holdout هرگز اجرا نمی‌شود.
+پنجره، IC روی R ناخالص/جهت‌دار/جزئی، فاندینگِ کوکوین تا بسته‌شدنِ سطرِ آخر، و خط‌های پایه/فاندینگِ توصیفی. پس هشِ
+کد با سنجاق یکی نیست و نگهبانِ holdout رد می‌کند — عمداً: در اعتبارسنجیِ v2.1 هیچ تایم‌فریمی پذیرفته نشد و holdout
+هرگز اجرا نمی‌شود.
 
 holdout (سخت‌گیرانه‌تر از v2): فقط برای تایم‌فریمِ پذیرفته، فقط وقتی
   ۱. سنجاقِ ``core2_1_validation_pin.json`` در گیت commit شده و هشِ گزارشِ اعتبارسنجی با آن برابر است،
@@ -336,7 +337,7 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
     """یک تایم‌فریم روی یک پنجره: ساختِ داده، walk-forward، ارزیابی. هیچ کندلی (اسپات یا فیوچرز) در/پس از پایانِ
     پنجره بارگذاری نمی‌شود (ممیزی DATA-5: پیش‌تر ۴۵ کندلِ فیوچرزِ دُم، برچسب و معاملهٔ پایانِ اعتبارسنجی را به
     کندل‌های holdout وابسته می‌کرد): برچسبِ بازمانده NaN و بیرون از IC، معاملهٔ بازمانده شمرده نمی‌شود — در
-    ``validation`` و ``holdout`` یکسان.
+    ``validation`` و ``holdout`` یکسان. خط‌های پایه و فاندینگِ کوکوین کنارِ نتیجه فقط توصیفی‌اند.
     ``holdout`` فقط با ``allow_holdout=True`` و فقط اگر ``holdout_guard`` اجازه دهد — **پیش از** خواندنِ هر داده."""
     if window not in ("validation", "holdout"):
         raise ValueError(window)
@@ -362,6 +363,8 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
     ta = core2.trade_array(v21[MARGIN], syms)
     tr = core2.trade_array(rule, syms)
     bt = core2.block_bootstrap(ta["t"], ta["net"], tr["t"], tr["net"], w0, w1)
+    base, fund = core2.descriptive_lines(tf, w0, w1, fut, {"v21": v21[MARGIN], "rule": rule},
+                                         core2.load_kfund_all(w1 + 1), syms)
     sens = {}
     for mg, tb in v21.items():
         sens[f"margin_{mg:.2f}"] = {f"cost_{c:.2f}": core2._compact(core2.trade_stats(core2.trade_array(tb, syms, c), syms))
@@ -394,6 +397,7 @@ def run_window(tf, window="validation", threads=NUM_THREADS, log=None, fit_fn=No
            "oos_rows_label_unresolved": int((~(np.isfinite(oos["yL"]) & np.isfinite(oos["yS"]))).sum()),
            "v21": core2.trade_stats(ta, syms), "rule": core2.trade_stats(tr, syms),
            "rule_maker_0.10": core2._compact(core2.trade_stats(core2.trade_array(rule, syms, MAKER_COST), syms)),
+           "baselines": base, "funding_kucoin": fund,
            "bootstrap": bt, "sensitivity": sens, "predictions": pred_stats(oos, syms),
            "importance_gain_top20": imp, "ic": core2.ic_stats(oos, syms),
            "replay_equal_to_decision_replay": bool(replay_equal),
@@ -459,9 +463,10 @@ def assemble(results, tfs=TFS):
             "cost_pct": COST, "maker_cost_pct_descriptive": MAKER_COST,
             "holdout_touched": False,
             "futures_end": "window end (exclusive): labels and trades use no bar at/after it (audit DATA-5)",
+            "descriptive_only": ["ic", "baselines", "funding_kucoin", "sensitivity", "rule_maker_0.10", "predictions"],
             "note_fa": ("فقط پنجرهٔ اعتبارسنجی (۲۰۲۵-۰۷ تا ۲۰۲۵-۱۲). هیچ آماری روی holdout (۲۰۲۶-۰۱ تا ۲۰۲۶-۰۸) حساب "
                         "نشده است: برچسب و معامله هیچ کندلی در/پس از پایانِ پنجره نمی‌خوانند و براکتِ بازمانده شمرده "
-                        "نمی‌شود. "
+                        "نمی‌شود. IC، خط‌های پایه و فاندینگ فقط توصیفی‌اند. "
                         "v2.1 هرگز tradeable را روشن نمی‌کند و به gates.json دست نمی‌زند."),
             "adopted": [tf for tf in tfs if cells[tf].get("adopted")],
             "timeframes": cells}
@@ -482,6 +487,9 @@ def summary_lines(report):
                    f"p={bt['p_one_sided']:.3f} holm={r['holm_p']:.3f} | coins+={v['coins_positive']} "
                    f"maxshare={f(v['max_coin_share'])} | ADOPT={'YES' if r['adopted'] else 'no'} | "
                    f"wall={r['timings_s']['wall']}s")
+        d = core2.descriptive_summary(r, "v21")
+        if d:
+            out.append(d)
     return out
 
 
