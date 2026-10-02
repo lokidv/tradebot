@@ -116,6 +116,9 @@
     <h2>کارنامهٔ زنده (از دوشنبه ۶ مهر)</h2>
     <div class="strip" id="forward"></div>
 
+    <h2>فاندینگ‌کَری (سایه) — سودِ بی‌ریسکِ جهت، ولی کم</h2>
+    <div class="strip" id="carry"></div>
+
     <h2>زمینهٔ بازار — فقط برای اطلاع، در تصمیم دخالت ندارد</h2>
     <div class="strip" id="context"></div>
 
@@ -297,7 +300,7 @@ async function loadWeek(){
       </div>
     </article>`;
   }).join("");
-  renderForward(); renderContext(); renderFee();
+  renderForward(); renderContext(); renderFee(); loadCarry();
   $("#caveat").innerHTML = `<b>این روش اثبات‌نشده است.</b> در هر دو نیمهٔ داده (۲۰۲۱–۲۰۲۳ و ۲۰۲۳–۲۰۲۶) روی BTC و ETH مثبت بود، ولی آستانهٔ آماریِ
     ازپیش‌ثبت‌شده را نگذراند (BTC p=${fa((ev.BTCUSDT || {}).p_adj, 2)}). یک مدلِ ترکیبیِ ازپیش‌تعریف‌شده هم از آن ضعیف‌تر بود — پس بخشی از نتیجه ممکن است شانس باشد.
     روی BNB، SOL و TRX هیچ آزمونِ ازپیش‌ثبت‌شده‌ای انجام نشده؛ عددهایشان فقط بک‌تستِ توصیفیِ همین قاعده است و آنجا بازده از نگه‌داری کمتر بود.
@@ -315,6 +318,19 @@ function renderForward(){
       <div class="dim" style="font-size:13px">قاعده ${pct(x.model_return_pct)} · نگه‌داری ${pct(x.buy_hold_return_pct)} · افت ${fa(x.model_max_dd_pct, 1)}٪ در برابرِ ${fa(x.buy_hold_max_dd_pct, 1)}٪</div></div>`;
   }).join("") + `<div class="cell"><div class="h">معیارِ ازپیش‌ثبت‌شده برای پولِ واقعی</div>
     <div style="font-size:13px">پس از ۱۲ هفته: بازده حداکثر ۵ واحد کمتر از نگه‌داری <b>و</b> افتِ کمتر از نگه‌داری. اگر افتِ زنده از ۱٫۵ برابرِ بدترین افتِ آزمون بگذرد، ترمز.</div></div>`;
+}
+
+async function loadCarry(){
+  let d;
+  try{ d = await getJSON("/api/carry"); }catch(e){ $("#carry").innerHTML = `<div class="cell"><div class="dim">دادهٔ کَری نرسید: ${e.message}</div></div>`; return; }
+  const lab = {IN_PROGRESS: ["در جریان", "warn"], GO_SMALL: ["مجاز — فقط با مبلغِ کم", "ok"], NO_GO: ["رد — برای پولِ واقعی نه", "bad"], BRAKE: ["ترمز", "bad"]};
+  $("#carry").innerHTML = Object.keys(d.assets || {}).map(sym => {
+    const x = d.assets[sym] || {}, [t, c] = lab[x.verdict] || ["—", "dim"];
+    return `<div class="cell"><div class="h">${coin(sym)} · ${fa(x.days, 0)} از ۸۴ روز</div>
+      <div class="v ${c}">${t}</div>
+      <div class="dim" style="font-size:13px">خالصِ روی سرمایه ${pct(x.net_return_pct, 2)} · نرخِ فاندینگِ ۷ روزِ اخیر ${x.last7d_rate_annual_pct == null ? "—" : fa(x.last7d_rate_annual_pct, 1) + "٪ سالانه روی نُشنال"}</div></div>`;
+  }).join("") + `<div class="cell"><div class="h">این چیست</div>
+    <div style="font-size:13px">اسپات بخر و همان مقدار پرپچوال بفروش؛ فاندینگ را بگیر. بک‌تست: حدود ۶ تا ۷٪ در سال با افتِ زیرِ ۱٪، ولی در ۲۰۲۵ و ۲۰۲۶ کمتر شده. اینجا فقط تسویه‌های واقعی ثبت می‌شود؛ سفارشی داده نمی‌شود. بیسِ ورود/خروج و ریسکِ صرافی حساب نشده، پس سقفِ سود است.</div></div>`;
 }
 
 function renderContext(){

@@ -1,0 +1,18 @@
+{
+ "title": "Funding carry shadow tracker: BTC and ETH cash-and-carry, forward only, no money",
+ "registered_at_utc": "2026-10-02",
+ "why": "tools/funding_carry_study.py (report funding_carry_20260922_1913.json) measured the 'always' variant at about 6% (BTC) and 7% (ETH) a year on capital with max drawdown near 1%, declining to 2.6% in 2025 and 0.9% in 2026 so far. That is a backtest on public archive rates. This tracker only records the funding that is actually published from now on, so the number can be checked forward.",
+ "rule": "Always in position: long spot plus short the same notional of the USDT perpetual. No switching, no parameters.",
+ "tracking_start_utc": "2026-09-28T00:00:00Z",
+ "symbols": ["BTCUSDT", "ETHUSDT"],
+ "accounting": "Return on total capital = funding rate / 2 per settlement (half the capital is spot, half is short collateral at 1x). One entry cost of 0.3% round trip x 1/2 x 1/2 of notional on capital is charged at the start; the exit cost is not charged while the position is held.",
+ "not_modelled": "Basis between spot and perpetual at entry and exit, margin top-ups, exchange risk, borrow or withdrawal costs. The tracker is an upper bound on what a real position would earn.",
+ "verdict_rule": {
+  "min_days": 84,
+  "GO_SMALL": "after at least 84 days, net return on capital after the entry cost is above 0 and the annualised pace is at least 2%",
+  "NO_GO": "after at least 84 days, otherwise",
+  "BRAKE": "at any time, if the live max drawdown on capital exceeds 3% (three times the worst backtest drawdown)"
+ },
+ "authority": "Never places an order, never touches gates.json, never read by the autotrader.",
+ "no_changes_after_seeing_results": "everything above is fixed"
+}

@@ -38,6 +38,7 @@ import advisor
 import gates
 import trend
 import trend_exec
+import carry
 import momentum
 import watchlist
 import kucoin_desk
@@ -609,6 +610,10 @@ def _startup():
             except Exception:  # noqa: BLE001
                 log.exc("momentum tracker")
             try:
+                carry.snapshot()                      # دفترِ فاندینگ‌کَری (فقط سایه، بدونِ سفارش)
+            except Exception:  # noqa: BLE001
+                log.exc("carry tracker")
+            try:
                 trend_exec.step()           # فقط تست‌نت؛ بی‌مجوز یا بی‌کلید کاری نمی‌کند
             except Exception:  # noqa: BLE001
                 log.exc("trend testnet executor")
@@ -678,6 +683,12 @@ def trend_status(force: bool = False):
 def momentum_status(force: bool = False):
     """مومنتومِ ۲۸روزهٔ BTC/ETH (در بازار یا نقد، تصمیمِ دوشنبه) — سازگار در پژوهش، اثبات‌نشده."""
     return momentum.view(force=force)
+
+
+@app.get("/api/carry")
+def carry_status(force: bool = False):
+    """ردیابِ سایهٔ فاندینگ‌کَری BTC/ETH — بک‌تست‌شده، رو-به-جلو در حال اندازه‌گیری؛ هیچ سفارشی نمی‌دهد."""
+    return carry.view(force=force)
 
 
 @app.get("/api/kucoin/contracts")
