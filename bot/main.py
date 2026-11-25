@@ -40,6 +40,7 @@ import trend
 import trend_exec
 import carry
 import momentum
+import signal_v3
 import watchlist
 import kucoin_desk
 import notify
@@ -718,6 +719,8 @@ def _startup():
     threading.Thread(target=_health_and_report, daemon=True).start()
     # میزِ تصمیم: ثبت/داوریِ دفترِ رو-به-جلو ~۲۰ ثانیه پس از هر مرزِ ۱۵دقیقه‌ای (فقط تحلیل)
     threading.Thread(target=_decision_loop, name="decision-ledger", daemon=True).start()
+    # سیگنالِ v3 (فقط 4h و 1d): کارنامهٔ رو-به-جلو و ترمز، با بسته‌شدنِ هر کندل از نو
+    threading.Thread(target=_signals_loop, name="signals-v3", daemon=True).start()
     autotrader.init(overview, DRIFT_CAP, get_analysis, health_fn=health)   # 🤖 ربات معامله‌گر خودکار
     autotrader.start()
 
@@ -816,6 +819,48 @@ def kucoin_size(req: SizeReq):
                                          "maker" if req.fee_side == "maker" else "taker", req.leverage)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+class SignalSizeReq(BaseModel):
+    sym: str
+    balance: float
+    risk_pct: float = 1.0
+    entry: float
+    stop: float
+
+
+@app.post("/api/signals/size")
+def signals_size(req: SignalSizeReq):
+    """حجمِ یک سیگنال در فیوچرزِ کوکوین از روی موجودی و ریسک. اگر حجمِ «از روی ریسک» به صفر قرارداد برسد،
+    کوچک‌ترین معاملهٔ ممکن و ریسکِ واقعی‌اش هم برمی‌گردد (``min``) تا کاربر بداند چه چیزی را به خطر می‌اندازد."""
+    spec = kucoin_contracts().get(req.sym)
+    if not spec:
+        raise HTTPException(404, "قرارداد پیدا نشد")
+    if not (req.balance > 0 and req.risk_pct > 0 and req.entry > 0 and req.stop > 0):
+        raise HTTPException(400, "موجودی، ریسک، ورود و حدضرر باید مثبت باشند")
+    try:
+        out = kucoin_desk.size_position(req.balance, req.risk_pct, req.entry, req.stop, spec, "taker")
+        out["min"] = kucoin_desk.min_position(req.balance, req.entry, req.stop, spec, "taker")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    out["contract"] = spec.get("contract")
+    out["risk_pct"] = req.risk_pct
+    out["too_small"] = out["contracts"] <= 0
+    return out
+
+
+@app.get("/api/signals")
+def signals_view(force: bool = False):
+    """سیگنال‌های v3 (فقط 4h و 1d) با برنامهٔ کاملِ معامله، کارنامهٔ رو-به-جلو از ۲۰۲۶-۰۹-۰۱ و ترمزِ هر تایم‌فریم.
+
+    ``actionable`` فقط وقتی درست است که کارنامه کامل و تازه باشد؛ وگرنه صفحه هیچ «بخر/بفروش»ی نشان نمی‌دهد.
+    این endpoint هیچ مجوزی نمی‌دهد و به gates.json و ربات دست نمی‌زند.
+    """
+    try:
+        return signal_v3.view(force=force)
+    except Exception as e:  # noqa: BLE001
+        log.exc("signals endpoint")
+        raise HTTPException(503, f"کارنامهٔ سیگنال‌ها ساخته نشد (دادهٔ بایننس در دسترس نیست): {e}")
 
 
 @app.get("/api/kucoin/hours")
@@ -1545,6 +1590,27 @@ def _decision_loop():
             time.sleep(60)
 
 
+SIGNALS_POLL = 60.0          # ثانیه؛ ساختِ واقعی فقط وقتی کندلِ 4h/1d تازه‌ای بسته شده (وگرنه همان کش)
+
+
+def _signals_tick():
+    """یک دورِ پس‌زمینهٔ سیگنالِ v3. جدا از دورِ دفترِ تصمیم است تا کندی یا قطعیِ دادهٔ بلندش آن را معطل نکند."""
+    try:
+        snap = signal_v3.snapshot()
+        return len(snap.get("signals") or [])
+    except Exception:  # noqa: BLE001
+        log.exc("signal v3 snapshot")
+        return None
+
+
+def _signals_loop():
+    """کارنامه و سیگنال‌های v3 باید حتی وقتی کسی صفحه را باز نکرده تازه بمانند."""
+    time.sleep(DECISION_WARM_DELAY)
+    while True:
+        _signals_tick()
+        time.sleep(SIGNALS_POLL)
+
+
 @app.get("/api/decisions")
 def decisions_view():
     """میزِ تصمیم: لانگ/شورت/صبرِ هر ارز × تایم‌فریم کنارِ کارنامهٔ دوسالهٔ خالص و دفترِ زنده.
@@ -1552,7 +1618,12 @@ def decisions_view():
     ``def`` همگام است عمداً: FastAPI آن را در threadpool اجرا می‌کند و حلقهٔ رویداد بسته نمی‌شود.
     """
     try:
-        return decision.refresh(_decision_lookup(), market.get_klines)
+        out = decision.refresh(_decision_lookup(), market.get_klines)
+        # سیاستِ نمایش (prereg_signal_v3.json): 5m/15m/1h فقط وضعیت‌اند؛ «بخر/بفروش» فقط از ‎/api/signals
+        out["signal_policy"] = {"signal_tfs": list(signal_v3.SIGNAL_TFS),
+                                "status_only_tfs": [tf for tf in decision.TFS if tf not in signal_v3.SIGNAL_TFS],
+                                "source": "/api/signals", "prereg": signal_v3.PREREG}
+        return out
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001

@@ -83,6 +83,25 @@ def size_position(balance, risk_pct, entry, stop, spec, fee_side="taker", levera
             "breakeven_move_pct": round(2 * fee * 100, 3), "stop_distance_pct": round(dist * 100, 3)}
 
 
+def min_position(balance, entry, stop, spec, fee_side="taker"):
+    """کوچک‌ترین پوزیشنِ قابلِ معامله (یک لات) و ریسکش.
+
+    حجمِ «از روی ریسک» رو به پایین به مضربِ لات گرد می‌شود؛ با موجودیِ کم به صفر قرارداد می‌رسد و
+    کاربر باید بداند کمترین معاملهٔ ممکن چند درصدِ موجودی را به خطر می‌اندازد.
+    """
+    dist = abs(entry - stop) / entry
+    if dist <= 0:
+        raise ValueError("حدضرر نباید با قیمتِ ورود برابر باشد")
+    fee = spec[fee_side]
+    lot = spec["lot"]
+    notional = lot * entry * spec["multiplier"]
+    loss = notional * (dist + 2 * fee)
+    return {"contracts": int(lot) if float(lot).is_integer() else lot, "notional": round(notional, 2),
+            "loss_at_stop": round(loss, 2),
+            "loss_at_stop_pct": round(loss / balance * 100, 3) if balance else None,
+            "min_leverage": round(max(1.0, notional / balance), 2) if balance > 0 else None}
+
+
 def hours_table(force=False):
     """میانهٔ حرکتِ ۲ساعته به تفکیکِ ساعتِ روز (تهران) در برابرِ هزینهٔ taker — از دادهٔ ۱۵دقیقه‌ای."""
     if not force and os.path.exists(HOURS_CACHE):
