@@ -1,0 +1,337 @@
+{
+ "title": "Signal v3: the matrix rule on 4h and 1d only, without the fd and sq setups and aligned with the coin's 28-day move. Forward-only test.",
+ "registered_at_utc": "2026-11-25",
+ "user_context": "The user trades BTC, ETH, BNB, SOL and TRX by hand on KuCoin futures and asked for signals that say where to buy, where the stop is and where to sell, with the best quality the evidence allows. The user agreed that 5m, 15m and 1h stop giving buy/sell calls.",
+ "why": "Over 2024-07..2025-12 the current rule lost 0.41R, 0.27R and 0.12R per trade at 5m, 15m and 1h after the 0.14% cost (50,094 / 18,809 / 4,822 trades) and was flat at 4h (+0.01R, n=1,272) and 1d (+0.04R, n=221); core2_validation_20260924_120620.json and core2_1_validation_20260924_135542.json. The audit (audit_core_20260924.md, sections 3.1, 3.2, 4.3) showed the loss below 4h is the cost against a narrow stop, and that the fd and sq setups did slightly worse than the rest of the rule. The only directional finding with support in this project is multi-week momentum (prereg_btc_eth_timing.json: consistent, not proven). v3 keeps the two timeframes where cost is small and adds the two changes those findings point to.",
+ "state_at_registration": {
+  "no_forward_statistic": "No statistic of v3, of any variant below or of the current rule has been computed by the author on any bar that opened on or after 2026-01-01. The design check below requested Binance spot klines with endTime = 2025-12-31 23:59:59.999 UTC, so no later bar was downloaded for it.",
+  "what_the_author_has_seen_of_the_forward_window": "On 2026-10-02 the live momentum tracker was run once. It showed, for the five coins, the 28-day change at the 2026-09-27 daily close (BTC +8.7%, ETH +11.2%, BNB +13.8%, SOL +19.9%, TRX -0.8%), the return of the week ending 2026-09-27, the prices of 2026-10-01, and five days of funding rates. No trade outcome of any rule in the forward window was computed or seen. The user's own server has shown the current rule's live decisions since then; the author has not seen them.",
+  "code": "bot/signal_v3.py (evaluate, simulate, window, replay) existed in the working tree and had been run only on the design window."
+ },
+ "design_check": {
+  "what": "Descriptive replay on Binance spot bars, signal bars 2022-01-01..2025-12-31, five coins, net of 0.14%, one trade at a time per coin and timeframe, only trades whose 40-bar cap had fully elapsed before 2026-01-01. With no setup skipped and no condition, signal_v3.evaluate reproduced decision.side_series bar for bar on all ten series.",
+  "status": "In-sample and data-mined. These numbers are not evidence for v3. The registered spec was chosen as the best of four nested specs on this table, so its row is optimistic.",
+  "selection": "Before this check the user was told v3 would have three conditions (spec D). The rule fixed before looking was: register D unless it is clearly worse than A. D is not worse than A on the pooled table, but the votes condition contributes nothing: at 4h it changes the mean by -0.006R (A to B) and -0.003R (C to D), and at 1d by -0.06R and -0.05R, because the 1d trades it removes did better than the ones it keeps. It also removes 16-19% of the trades. The 28-day trend condition raises the 4h mean in both halves and on both sides and barely changes 1d, where the rule already agrees with the 28-day move on 97% of its trades. The registered spec is therefore C: the votes condition is dropped. This is a deviation from the spec first announced and is reported to the user.",
+  "table": {
+   "4h": {
+    "current rule (decision.side_series)": {
+     "n": 3273,
+     "trades_per_week": 15.68,
+     "mean_net_r": 0.0073,
+     "se": 0.0236,
+     "win_pct": 38.8,
+     "mean_2022_2023": 0.0049,
+     "mean_2024_2025": 0.0096,
+     "long_mean": 0.0184,
+     "short_mean": -0.0047,
+     "by_year": {
+      "2022": -0.0273,
+      "2023": 0.0373,
+      "2024": 0.0149,
+      "2025": 0.0043
+     },
+     "per_coin": {
+      "BTCUSDT": 0.0324,
+      "ETHUSDT": 0.0121,
+      "BNBUSDT": 0.0,
+      "SOLUSDT": 0.0533,
+      "TRXUSDT": -0.0544
+     }
+    },
+    "A: rule without fd and sq": {
+     "n": 2672,
+     "trades_per_week": 12.8,
+     "mean_net_r": 0.031,
+     "se": 0.0263,
+     "win_pct": 39.6,
+     "mean_2022_2023": 0.0193,
+     "mean_2024_2025": 0.042,
+     "long_mean": 0.0321,
+     "short_mean": 0.0298,
+     "by_year": {
+      "2022": 0.0198,
+      "2023": 0.0189,
+      "2024": 0.0641,
+      "2025": 0.0203
+     },
+     "per_coin": {
+      "BTCUSDT": 0.0905,
+      "ETHUSDT": 0.0436,
+      "BNBUSDT": 0.0006,
+      "SOLUSDT": 0.0978,
+      "TRXUSDT": -0.0622
+     }
+    },
+    "B: A + at least 4 of 5 votes": {
+     "n": 2174,
+     "trades_per_week": 10.42,
+     "mean_net_r": 0.025,
+     "se": 0.0291,
+     "win_pct": 39.4,
+     "mean_2022_2023": -0.0087,
+     "mean_2024_2025": 0.0556,
+     "long_mean": 0.0246,
+     "short_mean": 0.0254,
+     "by_year": {
+      "2022": -0.0537,
+      "2023": 0.0347,
+      "2024": 0.0772,
+      "2025": 0.0335
+     },
+     "per_coin": {
+      "BTCUSDT": 0.0395,
+      "ETHUSDT": 0.0886,
+      "BNBUSDT": -0.0119,
+      "SOLUSDT": 0.0679,
+      "TRXUSDT": -0.0473
+     }
+    },
+    "C: A + 28-day trend alignment  <- registered": {
+     "n": 1822,
+     "trades_per_week": 8.73,
+     "mean_net_r": 0.0787,
+     "se": 0.032,
+     "win_pct": 41.3,
+     "mean_2022_2023": 0.0476,
+     "mean_2024_2025": 0.1099,
+     "long_mean": 0.0896,
+     "short_mean": 0.0664,
+     "by_year": {
+      "2022": 0.0306,
+      "2023": 0.0638,
+      "2024": 0.0701,
+      "2025": 0.1462
+     },
+     "per_coin": {
+      "BTCUSDT": 0.112,
+      "ETHUSDT": 0.11,
+      "BNBUSDT": -0.0029,
+      "SOLUSDT": 0.2165,
+      "TRXUSDT": -0.0201
+     }
+    },
+    "D: A + votes + trend (the three conditions first announced to the user)": {
+     "n": 1525,
+     "trades_per_week": 7.31,
+     "mean_net_r": 0.0755,
+     "se": 0.035,
+     "win_pct": 41.1,
+     "mean_2022_2023": 0.0461,
+     "mean_2024_2025": 0.1037,
+     "long_mean": 0.0914,
+     "short_mean": 0.0576,
+     "by_year": {
+      "2022": 0.0227,
+      "2023": 0.0679,
+      "2024": 0.0511,
+      "2025": 0.1502
+     },
+     "per_coin": {
+      "BTCUSDT": 0.1068,
+      "ETHUSDT": 0.1498,
+      "BNBUSDT": -0.0119,
+      "SOLUSDT": 0.1702,
+      "TRXUSDT": -0.0207
+     }
+    }
+   },
+   "1d": {
+    "current rule (decision.side_series)": {
+     "n": 542,
+     "trades_per_week": 2.6,
+     "mean_net_r": 0.1222,
+     "se": 0.0587,
+     "win_pct": 41.3,
+     "mean_2022_2023": 0.1645,
+     "mean_2024_2025": 0.0796,
+     "long_mean": 0.1853,
+     "short_mean": 0.0379,
+     "by_year": {
+      "2022": 0.0197,
+      "2023": 0.2914,
+      "2024": 0.0214,
+      "2025": 0.1413
+     },
+     "per_coin": {
+      "BTCUSDT": -0.0492,
+      "ETHUSDT": 0.2865,
+      "BNBUSDT": 0.0075,
+      "SOLUSDT": 0.2732,
+      "TRXUSDT": 0.1109
+     }
+    },
+    "A: rule without fd and sq": {
+     "n": 463,
+     "trades_per_week": 2.22,
+     "mean_net_r": 0.1544,
+     "se": 0.0641,
+     "win_pct": 42.3,
+     "mean_2022_2023": 0.2295,
+     "mean_2024_2025": 0.0815,
+     "long_mean": 0.2447,
+     "short_mean": 0.0313,
+     "by_year": {
+      "2022": 0.149,
+      "2023": 0.2924,
+      "2024": 0.0437,
+      "2025": 0.123
+     },
+     "per_coin": {
+      "BTCUSDT": 0.1395,
+      "ETHUSDT": 0.2829,
+      "BNBUSDT": 0.0624,
+      "SOLUSDT": 0.2091,
+      "TRXUSDT": 0.0928
+     }
+    },
+    "B: A + at least 4 of 5 votes": {
+     "n": 377,
+     "trades_per_week": 1.81,
+     "mean_net_r": 0.0953,
+     "se": 0.0704,
+     "win_pct": 40.3,
+     "mean_2022_2023": 0.1314,
+     "mean_2024_2025": 0.0595,
+     "long_mean": 0.1898,
+     "short_mean": -0.0446,
+     "by_year": {
+      "2022": -0.0483,
+      "2023": 0.256,
+      "2024": 0.0143,
+      "2025": 0.1148
+     },
+     "per_coin": {
+      "BTCUSDT": 0.0628,
+      "ETHUSDT": 0.2525,
+      "BNBUSDT": 0.0195,
+      "SOLUSDT": 0.1992,
+      "TRXUSDT": -0.0297
+     }
+    },
+    "C: A + 28-day trend alignment  <- registered": {
+     "n": 450,
+     "trades_per_week": 2.16,
+     "mean_net_r": 0.1262,
+     "se": 0.0648,
+     "win_pct": 41.3,
+     "mean_2022_2023": 0.2143,
+     "mean_2024_2025": 0.0389,
+     "long_mean": 0.2476,
+     "short_mean": -0.0429,
+     "by_year": {
+      "2022": 0.1326,
+      "2023": 0.2791,
+      "2024": -0.0365,
+      "2025": 0.1184
+     },
+     "per_coin": {
+      "BTCUSDT": 0.097,
+      "ETHUSDT": 0.2494,
+      "BNBUSDT": 0.0464,
+      "SOLUSDT": 0.2151,
+      "TRXUSDT": 0.0364
+     }
+    },
+    "D: A + votes + trend (the three conditions first announced to the user)": {
+     "n": 369,
+     "trades_per_week": 1.77,
+     "mean_net_r": 0.0741,
+     "se": 0.0709,
+     "win_pct": 39.6,
+     "mean_2022_2023": 0.1136,
+     "mean_2024_2025": 0.0338,
+     "long_mean": 0.181,
+     "short_mean": -0.0874,
+     "by_year": {
+      "2022": -0.0483,
+      "2023": 0.228,
+      "2024": -0.0181,
+      "2025": 0.095
+     },
+     "per_coin": {
+      "BTCUSDT": 0.0527,
+      "ETHUSDT": 0.2307,
+      "BNBUSDT": -0.0001,
+      "SOLUSDT": 0.194,
+      "TRXUSDT": -0.077
+     }
+    }
+   },
+   "pooled_4h_1d": {
+    "current rule (decision.side_series)": {
+     "n": 3815,
+     "mean_net_r": 0.0236
+    },
+    "A: rule without fd and sq": {
+     "n": 3135,
+     "mean_net_r": 0.0492
+    },
+    "B: A + at least 4 of 5 votes": {
+     "n": 2551,
+     "mean_net_r": 0.0354
+    },
+    "C: A + 28-day trend alignment  <- registered": {
+     "n": 2272,
+     "mean_net_r": 0.0881
+    },
+    "D: A + votes + trend (the three conditions first announced to the user)": {
+     "n": 1894,
+     "mean_net_r": 0.0752
+    }
+   }
+  },
+  "clustering": "Trades of the five coins bunch in the same weeks. For the registered spec, pooled over 4h and 1d (n=2272, mean +0.088R, sd 1.37R), the naive standard error is 0.029R and the weekly-cluster standard error is 0.044R, 1.5 times larger. So even in-sample the pooled mean is only about two standard errors from zero. The pre-registered bootstrap applied to the design window gives a 95% interval of +0.004R to +0.172R and p = 0.019 for the registered spec; like every number here that is in-sample and selected."
+ },
+ "spec": {
+  "implementation": "bot/signal_v3.py: evaluate() with its default arguments skip={fd, sq}, min_votes=None, trend=True. The constants of that file are checked against this document by signal_v3.check_prereg().",
+  "timeframes": [
+   "4h",
+   "1d"
+  ],
+  "coins": [
+   "BTCUSDT",
+   "ETHUSDT",
+   "BNBUSDT",
+   "SOLUSDT",
+   "TRXUSDT"
+  ],
+  "base": "The current matrix rule exactly as decision.side_series computes it (event setup of the last 2 closed bars if still valid, else z >= 1.2 with at least 3 of 5 bullish votes and at most 1 bearish, mirrored for shorts, causal kNN vote on the 420-bar window), with one change: a bar on which engine.setup_signal returns fd or sq is treated as having no setup. The scan then looks at the previous bar, and if no other setup is found the z/vote rule decides.",
+  "trend_condition": "M28 = close of the decision bar / close of the bar of the same series that opened exactly 28 days earlier - 1. A long needs M28 > 0, a short needs M28 < 0. If that earlier bar is missing, or M28 is exactly 0, the bar is wait.",
+  "votes_condition": "None.",
+  "bracket": "Unchanged, bot/bracket.py: entry at the open of the bar after the signal bar, stop 1R = max(1.3 x ATR14, 0.25% of entry), target 1.8R, 40-bar cap, stop wins if stop and target are touched in the same bar.",
+  "cost": "0.14% round trip (KuCoin futures taker 0.06% x 2 + 0.02% slippage). The 0.10% maker-entry variant is reported only."
+ },
+ "data": {
+  "venue": "Closed Binance spot klines, the bars the live decision is built from (data-api.binance.vision /api/v3/klines; the public spot archive holds the same bars).",
+  "window_of_bars": "For each coin and timeframe the replay runs on a slice that starts exactly 2000 bars before the first bar opening at or after t0 (or at the first bar of the series if there are fewer). The start is fixed so the result does not depend on how much history happens to be loaded.",
+  "t0": "2026-09-01 00:00 UTC = 1788220800000 ms. The first signal bar is the first bar opening at or after t0."
+ },
+ "sealed_holdout": "2026-01-01..2026-08-31 stays sealed (prereg_core2_1.json; audit section 6). Bars of that period are read only as indicator warm-up for decisions made from t0 on. No signal bar before t0 is simulated or counted, and signal_v3.replay refuses a start inside that period.",
+ "trade_simulation": "signal_v3.simulate, the same contract as decision.replay: one open trade per coin and timeframe, a signal on bar i enters at the open of bar i+1, signals that arrive before the open trade has closed are ignored (the exit bar itself may signal).",
+ "forward_record": "At any time the record counts only matured trades: taken trades whose signal bar i satisfies i + 40 <= index of the last closed bar. Every such trade is resolved by construction, so the record is not biased toward trades that ended quickly. Trades that are still open, and resolved trades that are not yet matured, are shown separately and never counted.",
+ "endpoint": "Mean net R per matured trade, pooled over 4h and 1d and the five coins, for signal bars in [t0, cutoff).",
+ "test": "One-sided weekly-block bootstrap of that mean. Blocks are UTC calendar weeks starting Monday 00:00, assigned by the open time of the signal bar; every calendar week from the week of t0 to the week of the last bar before the cutoff is a block, including weeks with no trade. The weeks are resampled with replacement (same number of weeks) 10000 times with numpy default_rng seed 20261125; each replicate's mean is the sum of net R over the drawn weeks divided by the number of trades in them, and a replicate with no trade counts as <= 0. p = (1 + number of replicates with mean <= 0) / 10001.",
+ "judgement": {
+  "look_1": "Signal bars in [2026-09-01, 2027-09-01). Computed once, at the first build of the forward record on or after 2027-10-15, when every such trade has matured. PASS if the mean is > 0 and p <= 0.01. FAIL (futility) if the mean is <= 0. Otherwise the test continues to look 2.",
+  "look_2": "Only if look 1 neither passed nor failed. Signal bars in [2026-09-01, 2028-09-01), computed once at the first build on or after 2028-10-15. PASS if the mean is > 0 and p <= 0.04, otherwise FAIL.",
+  "error_rate": "0.01 + 0.04 keeps the chance of a false PASS at or below 5% over both looks.",
+  "power": "Low, and stated so on purpose. With about 11 trades a week, a standard deviation of 1.37R per trade and the 1.5x weekly clustering measured in the design window, a true edge of 0.09R (the optimistic in-sample figure) has about a 10% chance of passing at look 1 and about 40% at look 2; a true edge of 0.15R has about 27% and 75%. A FAIL is therefore weak evidence against a small edge, and a PASS is strong evidence for one.",
+  "record": "Each judgement is appended once to bot/data/signal_v3_judgement.jsonl and is final. Until a judgement exists every number shown is descriptive."
+ },
+ "first_look": "The record from t0 to the registration date (about twelve weeks) is computed right after this file is committed and reported whatever it shows. It is descriptive and decides nothing except the brake below.",
+ "brake": {
+  "unit": "Each timeframe separately (4h, 1d), its matured trades of the five coins pooled, since t0.",
+  "rule": "A timeframe is muted while either holds: (1) it has at least 20 matured trades and their mean net R is below 0; (2) it has at least 100 matured trades and the mean net R of its latest 100 is below -0.10. It is unmuted as soon as neither holds.",
+  "effect": "A muted timeframe shows no buy/sell call. The replay keeps simulating every v3 signal, muted or not, so the record and the test are unaffected by the brake.",
+  "after_judgement": "After a final FAIL both timeframes are muted until a new pre-registration. After a PASS the signals are labelled as having passed the forward test; the brake stays in force."
+ },
+ "display_policy": "5m, 15m and 1h show the rule's state only and never a buy/sell call. On 4h and 1d a buy/sell call is shown only for a v3 signal of an unmuted timeframe, labelled as under forward test. The main decision ledger (decision_ledger.jsonl) and the pre-registered rule-variant test (prereg_rule_variants_forward.json) keep recording the current rule on all five timeframes exactly as before.",
+ "reported_only": [
+  "each timeframe, each coin, longs and shorts separately",
+  "v3 minus the current rule over the same weeks (decision.replay on the same slice), with the same block bootstrap of the difference",
+  "the 0.10% maker-entry cost",
+  "the same spec replayed on Binance USD-M futures archive bars, when those bars are available"
+ ],
+ "authority": "v3 never writes gates.json and is never read by the autotrader. A PASS is a label; it places no order and changes no gate.",
+ "no_changes_after_seeing_results": "Everything above is fixed. Any other filter, timeframe, exit or threshold needs its own pre-registration and its own t0."
+}
