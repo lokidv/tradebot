@@ -126,6 +126,32 @@ class BackgroundTests(unittest.TestCase):
             signal_v3.market_loader("BTCUSDT", "4h", now_ms=signal_v3.T0_MS + 100 * 4 * 3_600_000)
         self.assertEqual(calls, [("BTCUSDT", "4h", 2500)])
 
+    def test_loader_falls_back_to_the_other_binance_hosts_never_another_venue(self):
+        step = 4 * 3_600_000
+        now_ms = signal_v3.T0_MS + 100 * step + 5000
+        last_open = signal_v3.T0_MS + 100 * step              # کندلِ در حالِ شکل‌گیری
+        seen = []
+
+        def binance_json(path, params=None):
+            seen.append((path, dict(params or {})))
+            end = (params or {}).get("endTime", last_open)
+            hi = (end // step) * step
+            ts = [hi - k * step for k in range(1000)][::-1]
+            return [[t, "1", "2", "0.5", "1.5", "10", t + step - 1, "15", 7, "4", "6", "0"] for t in ts]
+
+        with mock.patch.object(market, "get_klines_long", side_effect=RuntimeError("data host down")), \
+                mock.patch.object(market, "_binance_json", binance_json), \
+                mock.patch.object(market, "_okx_klines", side_effect=AssertionError("OKX نباید صدا زده شود")):
+            kl = signal_v3.market_loader("BTCUSDT", "4h", now_ms=now_ms)
+        self.assertTrue(all(p == "/api/v3/klines" for p, _ in seen))
+        self.assertEqual(len(seen), 3)                                    # ۲۵۰۰ کندل ⇒ سه صفحهٔ ۱۰۰۰تایی
+        self.assertNotIn("endTime", seen[0][1])
+        t = kl["t"]
+        self.assertGreaterEqual(len(t), 2500)
+        self.assertEqual(int(t[-1]), last_open - step)                    # کندلِ باز حذف شده
+        self.assertTrue((t[1:] - t[:-1] == step).all())
+        self.assertEqual(kl["src"], "binance-spot")
+
 
 if __name__ == "__main__":
     unittest.main()

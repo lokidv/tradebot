@@ -554,16 +554,21 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(c["built_at"], a["built_at"])
         v = s3.view(loader=self.loader, now=now + 900)
         self.assertTrue(v["current"] and v["actionable"])
-        # یک کندلِ 4h بعد: کارنامه دیگر جاری نیست ⇒ دوباره ساخته می‌شود؛ داده هنوز کندلِ تازه را ندارد ⇒ بی‌اعتبار
-        later = now + 4 * 3600 + 5
-        d = s3.view(loader=self.loader, now=later)
+        # کندلِ 4h بعدی همین حالا بسته شد: دوباره ساخته می‌شود. داده هنوز کندلِ تازه را ندارد (صرافیِ دیررس) ⇒
+        # «جاری» نیست، ولی تا GRACE_SEC همان کارنامهٔ کندلِ قبل معتبر می‌ماند و «در حالِ تازه‌شدن» خوانده می‌شود.
+        boundary = (T0 + self.DAYS * D1 + H4) / 1000.0
+        d = s3.view(loader=self.loader, now=boundary + 5)
         self.assertEqual(len(calls), 8)
         self.assertFalse(d["current"])
-        self.assertFalse(d["actionable"])
-        s3.view(loader=self.loader, now=later + 5)                     # تا RETRY_SEC دوباره نمی‌سازد
+        self.assertTrue(d["refreshing"] and d["actionable"])
+        s3.view(loader=self.loader, now=boundary + 10)                 # تا RETRY_SEC دوباره نمی‌سازد
         self.assertEqual(len(calls), 8)
-        s3.view(loader=self.loader, now=later + s3.RETRY_SEC + 1)
+        s3.view(loader=self.loader, now=boundary + 5 + s3.RETRY_SEC + 1)
         self.assertEqual(len(calls), 12)
+        # پس از مهلت، کارنامه‌ای که هنوز کندلِ تازه را ندارد دیگر مبنای هیچ «بخر/بفروش»ی نیست
+        late = s3.view(loader=self.loader, now=boundary + s3.GRACE_SEC + 1)
+        self.assertFalse(late["actionable"])
+        self.assertFalse(late["refreshing"])
 
     def test_failed_build_keeps_the_last_snapshot_as_stale(self):
         first = s3.snapshot(loader=self.loader, now=self.now, force=True)

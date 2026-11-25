@@ -860,7 +860,7 @@ def signals_view(force: bool = False):
         return signal_v3.view(force=force)
     except Exception as e:  # noqa: BLE001
         log.exc("signals endpoint")
-        raise HTTPException(503, f"کارنامهٔ سیگنال‌ها ساخته نشد (دادهٔ بایننس در دسترس نیست): {e}")
+        raise HTTPException(503, f"کارنامهٔ سیگنال‌ها ساخته نشد: {e}")
 
 
 @app.get("/api/kucoin/hours")

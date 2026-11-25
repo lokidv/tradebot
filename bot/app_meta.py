@@ -5,6 +5,6 @@
 مستقل از زمانِ ساخت مدل بررسی کند.
 """
 
-APP_VERSION = "3.8.0"
+APP_VERSION = "3.9.0"
 AI_CORE_VERSION = "edge-health-21.0"
-RELEASE_DATE = "2026-07-24"
+RELEASE_DATE = "2026-11-25"

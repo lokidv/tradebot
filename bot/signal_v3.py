@@ -589,16 +589,50 @@ SNAPSHOT_PATH = paths.data("signal_v3_forward.json")       # آخرین کارن
 JUDGEMENT_PATH = paths.data("signal_v3_judgement.jsonl")   # حکم‌های یک‌باره (فقط افزودنی)
 STALE_AFTER_SEC = 3 * 86400       # کارنامهٔ کهنه‌تر از این دیگر مبنای «بخر/بفروش» نیست
 RETRY_SEC = 30.0                  # پس از ساختی که هنوز کندلِ تازه را نداشت (صرافیِ دیررس)، تا این‌قدر دوباره نمی‌سازد
+GRACE_SEC = 180.0                 # درست پس از بسته‌شدنِ یک کندل، کارنامهٔ کندلِ قبل تا این‌قدر معتبر می‌ماند (در حالِ ساختِ تازه)
 _lock = threading.Lock()
 _build_lock = threading.Lock()
 _cache = {"snap": None, "tried": 0.0}
 
 
 def market_loader(sym, tf, now_ms=None):
-    """کندل‌های بسته‌شدهٔ اسپاتِ بایننس برای بازپخش از T0 (``market.get_klines_long``؛ بی‌جایگزینِ ونیوی دیگر)."""
+    """کندل‌های بسته‌شدهٔ اسپاتِ بایننس برای بازپخش از T0.
+
+    اول ``market.get_klines_long`` (کشِ دنباله‌دار روی میزبانِ دادهٔ عمومی). اگر آن میزبان در دسترس نبود، همان
+    کندل‌ها از میزبان‌های دیگرِ **همان** بایننسِ اسپات صفحه‌به‌صفحه گرفته می‌شود — هرگز از ونیوی دیگر (حجمِ
+    OKX/کوکوین فرق دارد و سیگنال را عوض می‌کند).
+    """
     import market
     now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
-    return market.get_klines_long(sym, tf, bars_needed(tf, now_ms))
+    bars = bars_needed(tf, now_ms)
+    try:
+        return market.get_klines_long(sym, tf, bars)
+    except Exception as e:  # noqa: BLE001 — میزبانِ بعدیِ همان صرافی
+        log.warn("signal_v3 long klines: primary host failed, trying the other Binance hosts",
+                 symbol=sym, tf=tf, error=str(e) or type(e).__name__)
+        return _binance_long(market, sym, tf, bars, now_ms)
+
+
+def _binance_long(market, sym, tf, bars, now_ms):
+    """دست‌کم ``bars`` کندلِ بسته‌شدهٔ اسپات با صفحه‌بندیِ رو به عقب روی همهٔ میزبان‌های بایننس (``_binance_json``)."""
+    rows, end = {}, None
+    for _ in range(bars // market.LONG_PAGE + 2):
+        params = {"symbol": sym, "interval": market.TF_BINANCE[tf], "limit": market.LONG_PAGE}
+        if end is not None:
+            params["endTime"] = end
+        chunk = [market._binance_row(r) for r in market._binance_json("/api/v3/klines", params)]
+        if not chunk:
+            break
+        for r in chunk:
+            rows[r[0]] = r
+        end = chunk[0][0] - 1
+        if len(chunk) < market.LONG_PAGE or len(rows) > bars:
+            break
+    step = bar_ms(tf)
+    closed = [rows[t] for t in sorted(rows) if t + step <= now_ms]
+    if not closed:
+        raise RuntimeError(f"کندلِ بلندِ {sym} {tf} از هیچ میزبانِ بایننس دریافت نشد")
+    return market._long_arrays(closed, "binance-spot")
 
 
 def read_judgements(path=None):
@@ -657,13 +691,14 @@ def expected_last(tf, now_ms):
     return (int(now_ms) // step) * step - step
 
 
-def is_current(snap, now_ms):
-    """کارنامه کامل است و آخرین کندلِ بستهٔ هر خانه را دارد."""
+def is_current(snap, now_ms, grace_ms=0):
+    """کارنامه کامل است و آخرین کندلِ بستهٔ هر خانه را دارد (با ``grace_ms``: کندلی که همین حالا بسته شده
+    هنوز الزامی نیست — سرور در حالِ ساختنِ کارنامهٔ تازه است)."""
     if not isinstance(snap, dict) or snap.get("version") != VERSION or not snap.get("complete"):
         return False
     for sym, row in (snap.get("cells") or {}).items():
         for tf, cell in row.items():
-            if int(((cell or {}).get("bars") or {}).get("last_t") or 0) < expected_last(tf, now_ms):
+            if int(((cell or {}).get("bars") or {}).get("last_t") or 0) < expected_last(tf, int(now_ms) - int(grace_ms)):
                 return False
     return True
 
@@ -742,8 +777,10 @@ def view(force=False, loader=None, now=None):
     snap = dict(snapshot(force=force, loader=loader, now=now))
     age = now - float(snap.get("built_at") or 0)
     current = is_current(snap, int(now * 1000))
+    usable = current or is_current(snap, int(now * 1000), grace_ms=int(GRACE_SEC * 1000))
     snap["age_sec"] = round(age, 1)
     snap["current"] = bool(current)
-    snap["actionable"] = bool(current and not snap.get("stale") and age < STALE_AFTER_SEC)
+    snap["refreshing"] = bool(usable and not current)        # کندلی همین حالا بسته شده؛ کارنامهٔ تازه در راه است
+    snap["actionable"] = bool(usable and not snap.get("stale") and age < STALE_AFTER_SEC)
     snap["now_ms"] = int(now * 1000)
     return snap

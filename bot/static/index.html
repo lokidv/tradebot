@@ -1262,7 +1262,7 @@ function rowHtml(c){
     <td class="num"><span class="up">▲${c.votes_bull}</span> <span class="dn">▼${c.votes_bear}</span></td>
     <td>${gradeHtml(c.grade, c.side, c.tradeable)}${c.setup_fa?`<br><small class="mid">${c.setup_fa}</small>`:""}</td>
     <td class="num ${pUpCls(c)}">${pUpCell(c)}</td>
-    <td class="num">${c.side && c.tp && c.price
+    <td class="num">${c.side && c.tp && c.price && sigTf(TF)
         ? (()=>{const tpP=(c.tp/c.price-1)*100; return `<span class="${cls(tpP)}">${pct(tpP)}</span><br><small class="mid">هدف معامله ${px(c.tp)}</small>`;})()
         : `<span class="${cls(c.target_pct)}">${pct(c.target_pct)}</span>${(c.p_up>=55 && c.target_pct<0) || (c.p_up<=45 && c.target_pct>0) ? ` <small title="مدل جهت‌یاب و مسیر درِیفت اختلاف دارند — به احتمال کالیبره اعتماد کنید">⚠</small>` : ""}<br><small class="mid">${px(c.target)}</small>`}</td>
     <td class="num">${c.rr ? fmt(c.rr,1) : "—"}</td>
@@ -2635,7 +2635,7 @@ function renderSignals(){
        <label>ریسکِ هر معامله (٪) <input id="sgRisk" class="cfgin" type="number" min="0.05" max="5" step="0.05" value="${esc(risk)}" style="width:70px" onchange="sgSizeAll()"></label>
        <small>ریسک یعنی مبلغی که با خوردنِ حدضرر از دست می‌رود؛ ۱٪ پیشنهاد می‌شود.</small></div>` +
     hidden + cards + old + more;
-  setSL("sgMeta", `به‌روزرسانی: ${tsFa(S.built_at, true)}`);
+  setSL("sgMeta", `به‌روزرسانی: ${tsFa(S.built_at, true)}${S.refreshing ? " · کندلِ تازه‌ای بسته شد؛ در حالِ ساختِ دوباره…" : ""}`);
   sgSizeAll();
 }
 async function sgSizeAll(){
