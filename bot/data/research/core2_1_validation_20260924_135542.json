@@ -6,9 +6,20 @@
   "2025-12-31"
  ],
  "prereg": "bot/data/research/prereg_core2_1.json",
- "prereg_sha256": "fc0f8fc8864f57fa61e41470ca02d59245705b5c5f4504e0025b14c7c742b4c9",
- "created_utc": "2026-10-02 14:51:35",
- "core_feats_sha256": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+ "prereg_sha256_lf": "fc0f8fc8864f57fa61e41470ca02d59245705b5c5f4504e0025b14c7c742b4c9",
+ "created_utc": "2026-09-24 13:55:42",
+ "code_sha256_lf": {
+  "bot/core2_1.py": "8f7e0bbc6fa75272235fdf8a1b4392029f01c17368f0e1ed0eea2fab3ac3b225",
+  "bot/core2.py": "69196d72e2501b5e0fa45a465c71d0bd0c8aab651eb6638906ef84a2fdf5b23b",
+  "bot/core_feats.py": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+  "bot/bracket.py": "11aab4b0344c2dbb691c97100b64d64eac3e6b5ff31dc1ae0b444dc26e25542e",
+  "bot/decision.py": "0cacd5093193a30d2772116b2b0d7ab3ef3cb7a79699d9090a713b168d30e7e0",
+  "bot/engine.py": "85eced2503abf3ed52bd8767fde59a13fd68071e5ea1f846ca9f31b00c8e28a8",
+  "bot/tf_spec.py": "73c39809dc5135276861908d53b6c86a5b1f90b5f926b1692872344da9f23209",
+  "bot/watchlist.py": "bbf88cc3a8b4d660de7b5e4dfe43ee68dd44dc7a14f036a02b1364d308a01fcf",
+  "tools/train_core2_1.py": "7137dea6f8468de994b6d4aa1758205f8e280c0da111b1b73e55202b4126b8b6"
+ },
+ "core_feats_sha256_lf": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
  "complete": true,
  "holm_alpha": 0.1,
  "bootstrap": {
@@ -17,7 +28,7 @@
   "block": "calendar week (UTC, Mon), all 5 coins jointly"
  },
  "decision_rule": {
-  "primary": "E_L > 0 and E_L > E_S (short mirrored)",
+  "main": "long if E_L > 0 and E_L > E_S; short if E_S > 0 and E_S > E_L; else wait",
   "sensitivity_margins": [
    0.05,
    0.1
@@ -26,6 +37,7 @@
  "cost_pct": 0.14,
  "maker_cost_pct_descriptive": 0.1,
  "holdout_touched": false,
+ "note_fa": "فقط پنجرهٔ اعتبارسنجی (۲۰۲۵-۰۷ تا ۲۰۲۵-۱۲). هیچ آماری روی holdout (۲۰۲۶-۰۱ تا ۲۰۲۶-۰۸) حساب نشده است. v2.1 هرگز tradeable را روشن نمی‌کند و به gates.json دست نمی‌زند.",
  "adopted": [],
  "timeframes": {
   "5m": {
@@ -39,9 +51,20 @@
     "2025-07-01",
     "2025-12-31"
    ],
-   "run_utc": "2026-10-02 14:51:34",
+   "run_utc": "2026-09-24 13:52:38",
    "core_feats_sha256": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
-   "core2_1_sha256": "e618a6eb822dede57a00f1c60e9da34131ab920b728f28fdb3aa91b8166e5436",
+   "core_feats_sha256_lf": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+   "code_sha256_lf": {
+    "bot/core2_1.py": "8f7e0bbc6fa75272235fdf8a1b4392029f01c17368f0e1ed0eea2fab3ac3b225",
+    "bot/core2.py": "69196d72e2501b5e0fa45a465c71d0bd0c8aab651eb6638906ef84a2fdf5b23b",
+    "bot/core_feats.py": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+    "bot/bracket.py": "11aab4b0344c2dbb691c97100b64d64eac3e6b5ff31dc1ae0b444dc26e25542e",
+    "bot/decision.py": "0cacd5093193a30d2772116b2b0d7ab3ef3cb7a79699d9090a713b168d30e7e0",
+    "bot/engine.py": "85eced2503abf3ed52bd8767fde59a13fd68071e5ea1f846ca9f31b00c8e28a8",
+    "bot/tf_spec.py": "73c39809dc5135276861908d53b6c86a5b1f90b5f926b1692872344da9f23209",
+    "bot/watchlist.py": "bbf88cc3a8b4d660de7b5e4dfe43ee68dd44dc7a14f036a02b1364d308a01fcf",
+    "tools/train_core2_1.py": "7137dea6f8468de994b6d4aa1758205f8e280c0da111b1b73e55202b4126b8b6"
+   },
    "features": [
     "z",
     "s_trend",
@@ -123,10 +146,10 @@
     "deterministic": true,
     "force_col_wise": true,
     "seed": 42,
-    "num_threads": 4,
     "verbosity": -1
    },
    "rounds": 300,
+   "train_start": "2022-01-01",
    "train_warmup_bars": 2416,
    "subsample": 2,
    "dataset_rows": 2091680,
@@ -294,6 +317,27 @@
       "max_coin_share": null
      }
     }
+   },
+   "predictions": {
+    "E_L": {
+     "n": 264960,
+     "mean": -0.445317,
+     "p05": -0.574598,
+     "p50": -0.450619,
+     "p95": -0.29785,
+     "share_pos": 0.0
+    },
+    "E_S": {
+     "n": 264960,
+     "mean": -0.463032,
+     "p05": -0.609244,
+     "p50": -0.473984,
+     "p95": -0.278057,
+     "share_pos": 0.0
+    },
+    "bars_long": 0,
+    "bars_short": 0,
+    "bars_wait": 264960
    },
    "importance_gain_top20": {
     "long": [
@@ -611,14 +655,27 @@
       "TRXUSDT": 182632
      },
      "n_test": 44640,
+     "train_t_min": "2022-01-09 09:20",
      "train_t_max": "2025-06-30 17:10",
      "train_exit_close_max": "2025-06-30 20:35",
-     "fit_s": 22.4,
+     "fit_s": 29.3,
      "min_data_in_leaf": 2283,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 10.99,
-     "fit_s_short": 10.95
+     "long": {
+      "trees": 300,
+      "fit_s": 12.64,
+      "train_label_mean_w": -0.431081,
+      "train_pred_mean_w": -0.431086,
+      "train_pred_share_pos": 0.0
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 13.61,
+      "train_label_mean_w": -0.437133,
+      "train_pred_mean_w": -0.437224,
+      "train_pred_share_pos": 7e-06
+     }
     },
     {
      "month": 202508,
@@ -632,14 +689,27 @@
       "TRXUSDT": 187096
      },
      "n_test": 44640,
+     "train_t_min": "2022-01-09 09:20",
      "train_t_max": "2025-07-31 17:10",
      "train_exit_close_max": "2025-07-31 18:10",
-     "fit_s": 24.1,
+     "fit_s": 27.9,
      "min_data_in_leaf": 2339,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 12.38,
-     "fit_s_short": 11.2
+     "long": {
+      "trees": 300,
+      "fit_s": 13.57,
+      "train_label_mean_w": -0.431206,
+      "train_pred_mean_w": -0.431164,
+      "train_pred_share_pos": 0.0
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 13.91,
+      "train_label_mean_w": -0.438973,
+      "train_pred_mean_w": -0.439064,
+      "train_pred_share_pos": 1e-05
+     }
     },
     {
      "month": 202509,
@@ -653,14 +723,27 @@
       "TRXUSDT": 191560
      },
      "n_test": 43200,
+     "train_t_min": "2022-01-09 09:20",
      "train_t_max": "2025-08-31 17:10",
      "train_exit_close_max": "2025-08-31 20:35",
-     "fit_s": 23.8,
+     "fit_s": 27.4,
      "min_data_in_leaf": 2395,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 11.61,
-     "fit_s_short": 11.69
+     "long": {
+      "trees": 300,
+      "fit_s": 13.29,
+      "train_label_mean_w": -0.431343,
+      "train_pred_mean_w": -0.431308,
+      "train_pred_share_pos": 2e-06
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 13.69,
+      "train_label_mean_w": -0.439937,
+      "train_pred_mean_w": -0.43997,
+      "train_pred_share_pos": 7e-06
+     }
     },
     {
      "month": 202510,
@@ -674,14 +757,27 @@
       "TRXUSDT": 195880
      },
      "n_test": 44640,
+     "train_t_min": "2022-01-09 09:20",
      "train_t_max": "2025-09-30 17:10",
      "train_exit_close_max": "2025-09-30 20:10",
-     "fit_s": 23.9,
+     "fit_s": 29.2,
      "min_data_in_leaf": 2449,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 11.71,
-     "fit_s_short": 11.65
+     "long": {
+      "trees": 300,
+      "fit_s": 13.73,
+      "train_label_mean_w": -0.432576,
+      "train_pred_mean_w": -0.432517,
+      "train_pred_share_pos": 0.0
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 14.09,
+      "train_label_mean_w": -0.441799,
+      "train_pred_mean_w": -0.44177,
+      "train_pred_share_pos": 0.0
+     }
     },
     {
      "month": 202511,
@@ -695,14 +791,27 @@
       "TRXUSDT": 200344
      },
      "n_test": 43200,
+     "train_t_min": "2022-01-09 09:20",
      "train_t_max": "2025-10-31 17:10",
      "train_exit_close_max": "2025-10-31 19:25",
-     "fit_s": 23.3,
+     "fit_s": 30.0,
      "min_data_in_leaf": 2505,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 11.35,
-     "fit_s_short": 11.49
+     "long": {
+      "trees": 300,
+      "fit_s": 14.43,
+      "train_label_mean_w": -0.431954,
+      "train_pred_mean_w": -0.432001,
+      "train_pred_share_pos": 0.0
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 15.04,
+      "train_label_mean_w": -0.441463,
+      "train_pred_mean_w": -0.441526,
+      "train_pred_share_pos": 4e-06
+     }
     },
     {
      "month": 202512,
@@ -716,21 +825,34 @@
       "TRXUSDT": 204664
      },
      "n_test": 44640,
+     "train_t_min": "2022-01-09 09:20",
      "train_t_max": "2025-11-30 17:10",
      "train_exit_close_max": "2025-11-30 20:35",
-     "fit_s": 25.0,
+     "fit_s": 30.0,
      "min_data_in_leaf": 2559,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 12.29,
-     "fit_s_short": 12.19
+     "long": {
+      "trees": 300,
+      "fit_s": 15.14,
+      "train_label_mean_w": -0.433436,
+      "train_pred_mean_w": -0.433478,
+      "train_pred_share_pos": 0.0
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 14.32,
+      "train_label_mean_w": -0.439588,
+      "train_pred_mean_w": -0.439473,
+      "train_pred_share_pos": 9e-06
+     }
     }
    ],
    "timings_s": {
-    "dataset": 84.0,
-    "fit_total": 142.8,
-    "evaluate": 7.5,
-    "wall": 235.2
+    "dataset": 71.0,
+    "fit_total": 174.3,
+    "evaluate": 11.5,
+    "wall": 258.4
    },
    "holm_p": 1.0,
    "holm_reject": false,
@@ -755,9 +877,20 @@
     "2025-07-01",
     "2025-12-31"
    ],
-   "run_utc": "2026-10-02 14:47:39",
+   "run_utc": "2026-09-24 13:54:51",
    "core_feats_sha256": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
-   "core2_1_sha256": "e618a6eb822dede57a00f1c60e9da34131ab920b728f28fdb3aa91b8166e5436",
+   "core_feats_sha256_lf": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+   "code_sha256_lf": {
+    "bot/core2_1.py": "8f7e0bbc6fa75272235fdf8a1b4392029f01c17368f0e1ed0eea2fab3ac3b225",
+    "bot/core2.py": "69196d72e2501b5e0fa45a465c71d0bd0c8aab651eb6638906ef84a2fdf5b23b",
+    "bot/core_feats.py": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+    "bot/bracket.py": "11aab4b0344c2dbb691c97100b64d64eac3e6b5ff31dc1ae0b444dc26e25542e",
+    "bot/decision.py": "0cacd5093193a30d2772116b2b0d7ab3ef3cb7a79699d9090a713b168d30e7e0",
+    "bot/engine.py": "85eced2503abf3ed52bd8767fde59a13fd68071e5ea1f846ca9f31b00c8e28a8",
+    "bot/tf_spec.py": "73c39809dc5135276861908d53b6c86a5b1f90b5f926b1692872344da9f23209",
+    "bot/watchlist.py": "bbf88cc3a8b4d660de7b5e4dfe43ee68dd44dc7a14f036a02b1364d308a01fcf",
+    "tools/train_core2_1.py": "7137dea6f8468de994b6d4aa1758205f8e280c0da111b1b73e55202b4126b8b6"
+   },
    "features": [
     "z",
     "s_trend",
@@ -839,10 +972,10 @@
     "deterministic": true,
     "force_col_wise": true,
     "seed": 42,
-    "num_threads": 4,
     "verbosity": -1
    },
    "rounds": 300,
+   "train_start": "2022-01-01",
    "train_warmup_bars": 1360,
    "subsample": 1,
    "dataset_rows": 694455,
@@ -1016,6 +1149,27 @@
       "max_coin_share": 1.16878
      }
     }
+   },
+   "predictions": {
+    "E_L": {
+     "n": 88320,
+     "mean": -0.313197,
+     "p05": -0.490917,
+     "p50": -0.317343,
+     "p95": -0.117517,
+     "share_pos": 0.006612
+    },
+    "E_S": {
+     "n": 88320,
+     "mean": -0.33473,
+     "p05": -0.530356,
+     "p50": -0.330474,
+     "p95": -0.157152,
+     "share_pos": 0.002253
+    },
+    "bars_long": 584,
+    "bars_short": 199,
+    "bars_wait": 87537
    },
    "importance_gain_top20": {
     "long": [
@@ -1333,14 +1487,27 @@
       "TRXUSDT": 121147
      },
      "n_test": 14880,
+     "train_t_min": "2022-01-15 04:00",
      "train_t_max": "2025-06-30 03:45",
      "train_exit_close_max": "2025-06-30 13:45",
-     "fit_s": 14.1,
+     "fit_s": 16.7,
      "min_data_in_leaf": 1515,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 7.03,
-     "fit_s_short": 6.92
+     "long": {
+      "trees": 300,
+      "fit_s": 8.14,
+      "train_label_mean_w": -0.29547,
+      "train_pred_mean_w": -0.295661,
+      "train_pred_share_pos": 0.012684
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 8.39,
+      "train_label_mean_w": -0.300717,
+      "train_pred_mean_w": -0.300536,
+      "train_pred_share_pos": 0.003295
+     }
     },
     {
      "month": 202508,
@@ -1354,14 +1521,27 @@
       "TRXUSDT": 124123
      },
      "n_test": 14880,
+     "train_t_min": "2022-01-15 04:00",
      "train_t_max": "2025-07-31 03:45",
      "train_exit_close_max": "2025-07-31 13:30",
-     "fit_s": 14.8,
+     "fit_s": 17.9,
      "min_data_in_leaf": 1552,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 7.09,
-     "fit_s_short": 7.47
+     "long": {
+      "trees": 300,
+      "fit_s": 8.77,
+      "train_label_mean_w": -0.29586,
+      "train_pred_mean_w": -0.295711,
+      "train_pred_share_pos": 0.012264
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 8.92,
+      "train_label_mean_w": -0.303756,
+      "train_pred_mean_w": -0.303772,
+      "train_pred_share_pos": 0.0032
+     }
     },
     {
      "month": 202509,
@@ -1375,14 +1555,27 @@
       "TRXUSDT": 127099
      },
      "n_test": 14400,
+     "train_t_min": "2022-01-15 04:00",
      "train_t_max": "2025-08-31 03:45",
      "train_exit_close_max": "2025-08-31 12:00",
-     "fit_s": 15.4,
+     "fit_s": 17.4,
      "min_data_in_leaf": 1589,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 7.85,
-     "fit_s_short": 7.31
+     "long": {
+      "trees": 300,
+      "fit_s": 8.66,
+      "train_label_mean_w": -0.295285,
+      "train_pred_mean_w": -0.294976,
+      "train_pred_share_pos": 0.011294
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 8.62,
+      "train_label_mean_w": -0.305324,
+      "train_pred_mean_w": -0.30548,
+      "train_pred_share_pos": 0.002754
+     }
     },
     {
      "month": 202510,
@@ -1396,14 +1589,27 @@
       "TRXUSDT": 129979
      },
      "n_test": 14880,
+     "train_t_min": "2022-01-15 04:00",
      "train_t_max": "2025-09-30 03:45",
      "train_exit_close_max": "2025-09-30 12:30",
-     "fit_s": 16.1,
+     "fit_s": 18.4,
      "min_data_in_leaf": 1625,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 7.62,
-     "fit_s_short": 8.31
+     "long": {
+      "trees": 300,
+      "fit_s": 8.98,
+      "train_label_mean_w": -0.297215,
+      "train_pred_mean_w": -0.29729,
+      "train_pred_share_pos": 0.011005
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 9.24,
+      "train_label_mean_w": -0.307608,
+      "train_pred_mean_w": -0.307585,
+      "train_pred_share_pos": 0.00275
+     }
     },
     {
      "month": 202511,
@@ -1417,14 +1623,27 @@
       "TRXUSDT": 132955
      },
      "n_test": 14400,
+     "train_t_min": "2022-01-15 04:00",
      "train_t_max": "2025-10-31 03:45",
      "train_exit_close_max": "2025-10-31 12:00",
-     "fit_s": 15.5,
+     "fit_s": 18.0,
      "min_data_in_leaf": 1662,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 7.9,
-     "fit_s_short": 7.42
+     "long": {
+      "trees": 300,
+      "fit_s": 8.91,
+      "train_label_mean_w": -0.297344,
+      "train_pred_mean_w": -0.297102,
+      "train_pred_share_pos": 0.009757
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 8.83,
+      "train_label_mean_w": -0.306856,
+      "train_pred_mean_w": -0.306982,
+      "train_pred_share_pos": 0.003169
+     }
     },
     {
      "month": 202512,
@@ -1438,21 +1657,34 @@
       "TRXUSDT": 135835
      },
      "n_test": 14880,
+     "train_t_min": "2022-01-15 04:00",
      "train_t_max": "2025-11-30 03:45",
      "train_exit_close_max": "2025-11-30 12:45",
-     "fit_s": 16.3,
+     "fit_s": 18.5,
      "min_data_in_leaf": 1698,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 7.99,
-     "fit_s_short": 8.09
+     "long": {
+      "trees": 300,
+      "fit_s": 9.2,
+      "train_label_mean_w": -0.300772,
+      "train_pred_mean_w": -0.300822,
+      "train_pred_share_pos": 0.008901
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 9.11,
+      "train_label_mean_w": -0.304171,
+      "train_pred_mean_w": -0.304156,
+      "train_pred_share_pos": 0.003079
+     }
     }
    ],
    "timings_s": {
-    "dataset": 26.3,
-    "fit_total": 92.3,
-    "evaluate": 2.5,
-    "wall": 121.4
+    "dataset": 17.7,
+    "fit_total": 107.0,
+    "evaluate": 2.3,
+    "wall": 127.5
    },
    "holm_p": 1.0,
    "holm_reject": false,
@@ -1477,9 +1709,20 @@
     "2025-07-01",
     "2025-12-31"
    ],
-   "run_utc": "2026-10-02 14:45:38",
+   "run_utc": "2026-09-24 13:55:30",
    "core_feats_sha256": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
-   "core2_1_sha256": "e618a6eb822dede57a00f1c60e9da34131ab920b728f28fdb3aa91b8166e5436",
+   "core_feats_sha256_lf": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+   "code_sha256_lf": {
+    "bot/core2_1.py": "8f7e0bbc6fa75272235fdf8a1b4392029f01c17368f0e1ed0eea2fab3ac3b225",
+    "bot/core2.py": "69196d72e2501b5e0fa45a465c71d0bd0c8aab651eb6638906ef84a2fdf5b23b",
+    "bot/core_feats.py": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+    "bot/bracket.py": "11aab4b0344c2dbb691c97100b64d64eac3e6b5ff31dc1ae0b444dc26e25542e",
+    "bot/decision.py": "0cacd5093193a30d2772116b2b0d7ab3ef3cb7a79699d9090a713b168d30e7e0",
+    "bot/engine.py": "85eced2503abf3ed52bd8767fde59a13fd68071e5ea1f846ca9f31b00c8e28a8",
+    "bot/tf_spec.py": "73c39809dc5135276861908d53b6c86a5b1f90b5f926b1692872344da9f23209",
+    "bot/watchlist.py": "bbf88cc3a8b4d660de7b5e4dfe43ee68dd44dc7a14f036a02b1364d308a01fcf",
+    "tools/train_core2_1.py": "7137dea6f8468de994b6d4aa1758205f8e280c0da111b1b73e55202b4126b8b6"
+   },
    "features": [
     "z",
     "s_trend",
@@ -1561,10 +1804,10 @@
     "deterministic": true,
     "force_col_wise": true,
     "seed": 42,
-    "num_threads": 4,
     "verbosity": -1
    },
    "rounds": 300,
+   "train_start": "2022-01-01",
    "train_warmup_bars": 1120,
    "subsample": 1,
    "dataset_rows": 175315,
@@ -1738,6 +1981,27 @@
       "max_coin_share": 52.478926
      }
     }
+   },
+   "predictions": {
+    "E_L": {
+     "n": 22080,
+     "mean": -0.15036,
+     "p05": -0.342023,
+     "p50": -0.147252,
+     "p95": 0.036046,
+     "share_pos": 0.08981
+    },
+    "E_S": {
+     "n": 22080,
+     "mean": -0.169395,
+     "p05": -0.334504,
+     "p50": -0.170646,
+     "p95": 0.001331,
+     "share_pos": 0.051585
+    },
+    "bars_long": 1979,
+    "bars_short": 1134,
+    "bars_wait": 18967
    },
    "importance_gain_top20": {
     "long": [
@@ -2055,14 +2319,27 @@
       "TRXUSDT": 30567
      },
      "n_test": 3720,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-06-27 15:00",
      "train_exit_close_max": "2025-06-29 08:00",
-     "fit_s": 4.4,
+     "fit_s": 5.2,
      "min_data_in_leaf": 200,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 2.17,
-     "fit_s_short": 2.22
+     "long": {
+      "trees": 300,
+      "fit_s": 2.65,
+      "train_label_mean_w": -0.154244,
+      "train_pred_mean_w": -0.154243,
+      "train_pred_share_pos": 0.111604
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 2.56,
+      "train_label_mean_w": -0.148126,
+      "train_pred_mean_w": -0.148359,
+      "train_pred_share_pos": 0.09717
+     }
     },
     {
      "month": 202508,
@@ -2076,14 +2353,27 @@
       "TRXUSDT": 31311
      },
      "n_test": 3720,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-07-28 15:00",
      "train_exit_close_max": "2025-07-29 15:00",
-     "fit_s": 4.5,
+     "fit_s": 5.0,
      "min_data_in_leaf": 200,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 2.16,
-     "fit_s_short": 2.31
+     "long": {
+      "trees": 300,
+      "fit_s": 2.46,
+      "train_label_mean_w": -0.147042,
+      "train_pred_mean_w": -0.147099,
+      "train_pred_share_pos": 0.112338
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 2.5,
+      "train_label_mean_w": -0.156465,
+      "train_pred_mean_w": -0.156815,
+      "train_pred_share_pos": 0.084884
+     }
     },
     {
      "month": 202509,
@@ -2097,14 +2387,27 @@
       "TRXUSDT": 32055
      },
      "n_test": 3600,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-08-28 15:00",
      "train_exit_close_max": "2025-08-29 09:00",
-     "fit_s": 4.5,
+     "fit_s": 5.2,
      "min_data_in_leaf": 200,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 2.27,
-     "fit_s_short": 2.23
+     "long": {
+      "trees": 300,
+      "fit_s": 2.56,
+      "train_label_mean_w": -0.144543,
+      "train_pred_mean_w": -0.144413,
+      "train_pred_share_pos": 0.107085
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 2.59,
+      "train_label_mean_w": -0.157936,
+      "train_pred_mean_w": -0.158312,
+      "train_pred_share_pos": 0.078559
+     }
     },
     {
      "month": 202510,
@@ -2118,14 +2421,27 @@
       "TRXUSDT": 32775
      },
      "n_test": 3720,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-09-27 15:00",
      "train_exit_close_max": "2025-09-29 00:00",
-     "fit_s": 4.5,
+     "fit_s": 5.4,
      "min_data_in_leaf": 200,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 2.17,
-     "fit_s_short": 2.28
+     "long": {
+      "trees": 300,
+      "fit_s": 2.72,
+      "train_label_mean_w": -0.1459,
+      "train_pred_mean_w": -0.145866,
+      "train_pred_share_pos": 0.104452
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 2.63,
+      "train_label_mean_w": -0.157671,
+      "train_pred_mean_w": -0.158158,
+      "train_pred_share_pos": 0.077565
+     }
     },
     {
      "month": 202511,
@@ -2139,14 +2455,27 @@
       "TRXUSDT": 33519
      },
      "n_test": 3600,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-10-28 15:00",
      "train_exit_close_max": "2025-10-28 21:00",
-     "fit_s": 4.8,
+     "fit_s": 5.4,
      "min_data_in_leaf": 200,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 2.42,
-     "fit_s_short": 2.38
+     "long": {
+      "trees": 300,
+      "fit_s": 2.67,
+      "train_label_mean_w": -0.144343,
+      "train_pred_mean_w": -0.144171,
+      "train_pred_share_pos": 0.104502
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 2.65,
+      "train_label_mean_w": -0.160243,
+      "train_pred_mean_w": -0.160361,
+      "train_pred_share_pos": 0.074829
+     }
     },
     {
      "month": 202512,
@@ -2160,21 +2489,34 @@
       "TRXUSDT": 34239
      },
      "n_test": 3720,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-11-27 15:00",
      "train_exit_close_max": "2025-11-28 18:00",
-     "fit_s": 5.2,
+     "fit_s": 5.5,
      "min_data_in_leaf": 200,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 2.52,
-     "fit_s_short": 2.47
+     "long": {
+      "trees": 300,
+      "fit_s": 2.72,
+      "train_label_mean_w": -0.148456,
+      "train_pred_mean_w": -0.148327,
+      "train_pred_share_pos": 0.091983
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 2.73,
+      "train_label_mean_w": -0.157422,
+      "train_pred_mean_w": -0.157645,
+      "train_pred_share_pos": 0.078016
+     }
     }
    ],
    "timings_s": {
-    "dataset": 9.7,
-    "fit_total": 28.0,
-    "evaluate": 0.8,
-    "wall": 38.6
+    "dataset": 6.6,
+    "fit_total": 31.8,
+    "evaluate": 0.7,
+    "wall": 39.2
    },
    "holm_p": 1.0,
    "holm_reject": false,
@@ -2199,9 +2541,20 @@
     "2025-07-01",
     "2025-12-31"
    ],
-   "run_utc": "2026-10-02 14:44:59",
+   "run_utc": "2026-09-24 13:55:41",
    "core_feats_sha256": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
-   "core2_1_sha256": "e618a6eb822dede57a00f1c60e9da34131ab920b728f28fdb3aa91b8166e5436",
+   "core_feats_sha256_lf": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+   "code_sha256_lf": {
+    "bot/core2_1.py": "8f7e0bbc6fa75272235fdf8a1b4392029f01c17368f0e1ed0eea2fab3ac3b225",
+    "bot/core2.py": "69196d72e2501b5e0fa45a465c71d0bd0c8aab651eb6638906ef84a2fdf5b23b",
+    "bot/core_feats.py": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+    "bot/bracket.py": "11aab4b0344c2dbb691c97100b64d64eac3e6b5ff31dc1ae0b444dc26e25542e",
+    "bot/decision.py": "0cacd5093193a30d2772116b2b0d7ab3ef3cb7a79699d9090a713b168d30e7e0",
+    "bot/engine.py": "85eced2503abf3ed52bd8767fde59a13fd68071e5ea1f846ca9f31b00c8e28a8",
+    "bot/tf_spec.py": "73c39809dc5135276861908d53b6c86a5b1f90b5f926b1692872344da9f23209",
+    "bot/watchlist.py": "bbf88cc3a8b4d660de7b5e4dfe43ee68dd44dc7a14f036a02b1364d308a01fcf",
+    "tools/train_core2_1.py": "7137dea6f8468de994b6d4aa1758205f8e280c0da111b1b73e55202b4126b8b6"
+   },
    "features": [
     "z",
     "s_trend",
@@ -2282,10 +2635,10 @@
     "deterministic": true,
     "force_col_wise": true,
     "seed": 42,
-    "num_threads": 4,
     "verbosity": -1
    },
    "rounds": 300,
+   "train_start": "2022-01-01",
    "train_warmup_bars": 760,
    "subsample": 1,
    "dataset_rows": 43830,
@@ -2459,6 +2812,27 @@
       "max_coin_share": null
      }
     }
+   },
+   "predictions": {
+    "E_L": {
+     "n": 5520,
+     "mean": -0.013242,
+     "p05": -0.281316,
+     "p50": -0.017553,
+     "p95": 0.276139,
+     "share_pos": 0.458696
+    },
+    "E_S": {
+     "n": 5520,
+     "mean": -0.11337,
+     "p05": -0.373477,
+     "p50": -0.116543,
+     "p95": 0.159467,
+     "share_pos": 0.236051
+    },
+    "bars_long": 2489,
+    "bars_short": 1242,
+    "bars_wait": 1789
    },
    "importance_gain_top20": {
     "long": [
@@ -2776,14 +3150,27 @@
       "TRXUSDT": 7582
      },
      "n_test": 930,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-06-17 12:00",
      "train_exit_close_max": "2025-06-22 20:00",
-     "fit_s": 1.3,
+     "fit_s": 1.4,
      "min_data_in_leaf": 100,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 0.63,
-     "fit_s_short": 0.69
+     "long": {
+      "trees": 300,
+      "fit_s": 0.67,
+      "train_label_mean_w": -0.059813,
+      "train_pred_mean_w": -0.059874,
+      "train_pred_share_pos": 0.373648
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 0.7,
+      "train_label_mean_w": -0.077288,
+      "train_pred_mean_w": -0.077839,
+      "train_pred_share_pos": 0.353917
+     }
     },
     {
      "month": 202508,
@@ -2797,14 +3184,27 @@
       "TRXUSDT": 7768
      },
      "n_test": 930,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-07-18 12:00",
      "train_exit_close_max": "2025-07-25 04:00",
-     "fit_s": 1.3,
+     "fit_s": 1.5,
      "min_data_in_leaf": 100,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 0.63,
-     "fit_s_short": 0.63
+     "long": {
+      "trees": 300,
+      "fit_s": 0.72,
+      "train_label_mean_w": -0.048711,
+      "train_pred_mean_w": -0.048338,
+      "train_pred_share_pos": 0.400695
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 0.74,
+      "train_label_mean_w": -0.086774,
+      "train_pred_mean_w": -0.087367,
+      "train_pred_share_pos": 0.339058
+     }
     },
     {
      "month": 202509,
@@ -2818,14 +3218,27 @@
       "TRXUSDT": 7954
      },
      "n_test": 900,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-08-18 12:00",
      "train_exit_close_max": "2025-08-22 16:00",
-     "fit_s": 1.3,
+     "fit_s": 1.5,
      "min_data_in_leaf": 100,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 0.62,
-     "fit_s_short": 0.62
+     "long": {
+      "trees": 300,
+      "fit_s": 0.75,
+      "train_label_mean_w": -0.04413,
+      "train_pred_mean_w": -0.044674,
+      "train_pred_share_pos": 0.402062
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 0.7,
+      "train_label_mean_w": -0.090259,
+      "train_pred_mean_w": -0.091136,
+      "train_pred_share_pos": 0.32346
+     }
     },
     {
      "month": 202510,
@@ -2839,14 +3252,27 @@
       "TRXUSDT": 8134
      },
      "n_test": 930,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-09-17 12:00",
      "train_exit_close_max": "2025-09-18 20:00",
-     "fit_s": 1.3,
+     "fit_s": 1.6,
      "min_data_in_leaf": 100,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 0.66,
-     "fit_s_short": 0.63
+     "long": {
+      "trees": 300,
+      "fit_s": 0.78,
+      "train_label_mean_w": -0.040725,
+      "train_pred_mean_w": -0.040299,
+      "train_pred_share_pos": 0.407696
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 0.78,
+      "train_label_mean_w": -0.096873,
+      "train_pred_mean_w": -0.098114,
+      "train_pred_share_pos": 0.306958
+     }
     },
     {
      "month": 202511,
@@ -2860,14 +3286,27 @@
       "TRXUSDT": 8320
      },
      "n_test": 900,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-10-18 12:00",
      "train_exit_close_max": "2025-10-25 08:00",
-     "fit_s": 1.3,
+     "fit_s": 1.5,
      "min_data_in_leaf": 100,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 0.69,
-     "fit_s_short": 0.65
+     "long": {
+      "trees": 300,
+      "fit_s": 0.76,
+      "train_label_mean_w": -0.041089,
+      "train_pred_mean_w": -0.041402,
+      "train_pred_share_pos": 0.402043
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 0.77,
+      "train_label_mean_w": -0.091793,
+      "train_pred_mean_w": -0.092283,
+      "train_pred_share_pos": 0.323029
+     }
     },
     {
      "month": 202512,
@@ -2881,21 +3320,34 @@
       "TRXUSDT": 8500
      },
      "n_test": 930,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-11-17 12:00",
      "train_exit_close_max": "2025-11-21 08:00",
-     "fit_s": 1.4,
+     "fit_s": 1.5,
      "min_data_in_leaf": 100,
      "num_leaves": 15,
      "rounds": 300,
-     "fit_s_long": 0.7,
-     "fit_s_short": 0.68
+     "long": {
+      "trees": 300,
+      "fit_s": 0.77,
+      "train_label_mean_w": -0.047986,
+      "train_pred_mean_w": -0.048019,
+      "train_pred_share_pos": 0.394824
+     },
+     "short": {
+      "trees": 300,
+      "fit_s": 0.75,
+      "train_label_mean_w": -0.081848,
+      "train_pred_mean_w": -0.082563,
+      "train_pred_share_pos": 0.341929
+     }
     }
    ],
    "timings_s": {
-    "dataset": 1.9,
-    "fit_total": 7.9,
+    "dataset": 1.5,
+    "fit_total": 9.0,
     "evaluate": 0.3,
-    "wall": 10.2
+    "wall": 10.8
    },
    "holm_p": 1.0,
    "holm_reject": false,
@@ -2920,9 +3372,20 @@
     "2025-07-01",
     "2025-12-31"
    ],
-   "run_utc": "2026-10-02 14:44:44",
+   "run_utc": "2026-09-24 13:55:42",
    "core_feats_sha256": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
-   "core2_1_sha256": "e618a6eb822dede57a00f1c60e9da34131ab920b728f28fdb3aa91b8166e5436",
+   "core_feats_sha256_lf": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+   "code_sha256_lf": {
+    "bot/core2_1.py": "8f7e0bbc6fa75272235fdf8a1b4392029f01c17368f0e1ed0eea2fab3ac3b225",
+    "bot/core2.py": "69196d72e2501b5e0fa45a465c71d0bd0c8aab651eb6638906ef84a2fdf5b23b",
+    "bot/core_feats.py": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+    "bot/bracket.py": "11aab4b0344c2dbb691c97100b64d64eac3e6b5ff31dc1ae0b444dc26e25542e",
+    "bot/decision.py": "0cacd5093193a30d2772116b2b0d7ab3ef3cb7a79699d9090a713b168d30e7e0",
+    "bot/engine.py": "85eced2503abf3ed52bd8767fde59a13fd68071e5ea1f846ca9f31b00c8e28a8",
+    "bot/tf_spec.py": "73c39809dc5135276861908d53b6c86a5b1f90b5f926b1692872344da9f23209",
+    "bot/watchlist.py": "bbf88cc3a8b4d660de7b5e4dfe43ee68dd44dc7a14f036a02b1364d308a01fcf",
+    "tools/train_core2_1.py": "7137dea6f8468de994b6d4aa1758205f8e280c0da111b1b73e55202b4126b8b6"
+   },
    "features": [
     "z",
     "s_trend",
@@ -3004,10 +3467,10 @@
     "deterministic": true,
     "force_col_wise": true,
     "seed": 42,
-    "num_threads": 4,
     "verbosity": -1
    },
    "rounds": 150,
+   "train_start": "2022-01-01",
    "train_warmup_bars": 580,
    "subsample": 1,
    "dataset_rows": 7233,
@@ -3181,6 +3644,27 @@
       "max_coin_share": null
      }
     }
+   },
+   "predictions": {
+    "E_L": {
+     "n": 920,
+     "mean": -0.034777,
+     "p05": -0.333621,
+     "p50": -0.037192,
+     "p95": 0.295822,
+     "share_pos": 0.423913
+    },
+    "E_S": {
+     "n": 920,
+     "mean": -0.003845,
+     "p05": -0.36533,
+     "p50": -0.018107,
+     "p95": 0.41041,
+     "share_pos": 0.467391
+    },
+    "bars_long": 361,
+    "bars_short": 412,
+    "bars_wait": 147
    },
    "importance_gain_top20": {
     "long": [
@@ -3498,14 +3982,27 @@
       "TRXUSDT": 1197
      },
      "n_test": 155,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-04-11 00:00",
      "train_exit_close_max": "2025-05-10 00:00",
-     "fit_s": 0.4,
+     "fit_s": 0.2,
      "min_data_in_leaf": 60,
      "num_leaves": 7,
      "rounds": 150,
-     "fit_s_long": 0.09,
-     "fit_s_short": 0.08
+     "long": {
+      "trees": 150,
+      "fit_s": 0.08,
+      "train_label_mean_w": -0.010423,
+      "train_pred_mean_w": -0.015159,
+      "train_pred_share_pos": 0.441569
+     },
+     "short": {
+      "trees": 150,
+      "fit_s": 0.08,
+      "train_label_mean_w": -0.027366,
+      "train_pred_mean_w": -0.027646,
+      "train_pred_share_pos": 0.440893
+     }
     },
     {
      "month": 202508,
@@ -3519,14 +4016,27 @@
       "TRXUSDT": 1228
      },
      "n_test": 155,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-05-12 00:00",
      "train_exit_close_max": "2025-06-12 00:00",
      "fit_s": 0.2,
      "min_data_in_leaf": 60,
      "num_leaves": 7,
      "rounds": 150,
-     "fit_s_long": 0.08,
-     "fit_s_short": 0.08
+     "long": {
+      "trees": 150,
+      "fit_s": 0.08,
+      "train_label_mean_w": 0.027739,
+      "train_pred_mean_w": 0.023734,
+      "train_pred_share_pos": 0.501813
+     },
+     "short": {
+      "trees": 150,
+      "fit_s": 0.08,
+      "train_label_mean_w": -0.052473,
+      "train_pred_mean_w": -0.05285,
+      "train_pred_share_pos": 0.402933
+     }
     },
     {
      "month": 202509,
@@ -3540,14 +4050,27 @@
       "TRXUSDT": 1259
      },
      "n_test": 150,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-06-12 00:00",
      "train_exit_close_max": "2025-06-23 00:00",
      "fit_s": 0.2,
      "min_data_in_leaf": 60,
      "num_leaves": 7,
      "rounds": 150,
-     "fit_s_long": 0.08,
-     "fit_s_short": 0.09
+     "long": {
+      "trees": 150,
+      "fit_s": 0.1,
+      "train_label_mean_w": 0.018334,
+      "train_pred_mean_w": 0.013512,
+      "train_pred_share_pos": 0.486903
+     },
+     "short": {
+      "trees": 150,
+      "fit_s": 0.08,
+      "train_label_mean_w": -0.051888,
+      "train_pred_mean_w": -0.051814,
+      "train_pred_share_pos": 0.40511
+     }
     },
     {
      "month": 202510,
@@ -3561,14 +4084,27 @@
       "TRXUSDT": 1289
      },
      "n_test": 155,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-07-12 00:00",
      "train_exit_close_max": "2025-08-02 00:00",
      "fit_s": 0.2,
      "min_data_in_leaf": 60,
      "num_leaves": 7,
      "rounds": 150,
-     "fit_s_long": 0.09,
-     "fit_s_short": 0.08
+     "long": {
+      "trees": 150,
+      "fit_s": 0.08,
+      "train_label_mean_w": 0.041082,
+      "train_pred_mean_w": 0.037568,
+      "train_pred_share_pos": 0.529107
+     },
+     "short": {
+      "trees": 150,
+      "fit_s": 0.08,
+      "train_label_mean_w": -0.064886,
+      "train_pred_mean_w": -0.064583,
+      "train_pred_share_pos": 0.390083
+     }
     },
     {
      "month": 202511,
@@ -3582,14 +4118,27 @@
       "TRXUSDT": 1320
      },
      "n_test": 150,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-08-12 00:00",
      "train_exit_close_max": "2025-09-11 00:00",
      "fit_s": 0.2,
      "min_data_in_leaf": 60,
      "num_leaves": 7,
      "rounds": 150,
-     "fit_s_long": 0.09,
-     "fit_s_short": 0.08
+     "long": {
+      "trees": 150,
+      "fit_s": 0.09,
+      "train_label_mean_w": 0.055506,
+      "train_pred_mean_w": 0.050756,
+      "train_pred_share_pos": 0.547335
+     },
+     "short": {
+      "trees": 150,
+      "fit_s": 0.09,
+      "train_label_mean_w": -0.077072,
+      "train_pred_mean_w": -0.076332,
+      "train_pred_share_pos": 0.37454
+     }
     },
     {
      "month": 202512,
@@ -3603,21 +4152,34 @@
       "TRXUSDT": 1350
      },
      "n_test": 155,
+     "train_t_min": "2022-01-01 00:00",
      "train_t_max": "2025-09-11 00:00",
      "train_exit_close_max": "2025-10-11 00:00",
      "fit_s": 0.2,
      "min_data_in_leaf": 60,
      "num_leaves": 7,
      "rounds": 150,
-     "fit_s_long": 0.08,
-     "fit_s_short": 0.08
+     "long": {
+      "trees": 150,
+      "fit_s": 0.09,
+      "train_label_mean_w": 0.060291,
+      "train_pred_mean_w": 0.055663,
+      "train_pred_share_pos": 0.563941
+     },
+     "short": {
+      "trees": 150,
+      "fit_s": 0.09,
+      "train_label_mean_w": -0.083542,
+      "train_pred_mean_w": -0.082914,
+      "train_pred_share_pos": 0.361485
+     }
     }
    ],
    "timings_s": {
     "dataset": 0.3,
-    "fit_total": 1.3,
-    "evaluate": 4.9,
-    "wall": 6.5
+    "fit_total": 1.0,
+    "evaluate": 0.1,
+    "wall": 1.4
    },
    "holm_p": 1.0,
    "holm_reject": false,

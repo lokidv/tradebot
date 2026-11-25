@@ -1,0 +1,16 @@
+{
+ "what": "Independent replication of the core v2.1 validation. Not a validation report: the pinned report is core2_1_validation_20260924_135542.json and this file changes nothing about it.",
+ "created_utc": "2026-11-25",
+ "how": "A second session, unaware of the pinned run, wrote its own core2_1.py from prereg_core2_1.json, downloaded the archives again and ran the validation window on 2026-10-02 (commits b133e0a and 0030bfe on claude/zealous-mayer-eaah8y). Its report was core2_1_validation_20261002_145135.json; it is removed from the working tree so that core2.report_files keeps resolving the pinned report, and stays in git history at 0030bfe.",
+ "result": "Identical to the pinned report to six decimals on every timeframe: v2.1 trades and mean net R, the rule's trades and mean net R, and the one-sided bootstrap p-value.",
+ "numbers": {
+  "5m": {"v21_n": 0, "v21_mean": null, "rule_n": 15930, "rule_mean": -0.433132, "p_one_sided": 1.0},
+  "15m": {"v21_n": 190, "v21_mean": -0.002192, "rule_n": 6204, "rule_mean": -0.296032, "p_one_sided": 0.511744},
+  "1h": {"v21_n": 850, "v21_mean": -0.13717, "rule_n": 1548, "rule_mean": -0.17349, "p_one_sided": 0.995002},
+  "4h": {"v21_n": 591, "v21_mean": -0.100801, "rule_n": 402, "rule_mean": 0.035823, "p_one_sided": 0.967516},
+  "1d": {"v21_n": 112, "v21_mean": -0.121598, "rule_n": 82, "rule_mean": 0.131452, "p_one_sided": 0.823588}
+ },
+ "adopted": [],
+ "same_caveat": "The replication used the same 45-bar label tail as the pinned run, so the erratum's finding applies to it too: the last validation trades were resolved on bars from January 2026 (at most 14 days). See core2_1_validation_erratum.json for the numbers cut at 2026-01-01. No verdict changes.",
+ "kept_from_that_branch": "Only the funding-carry shadow tracker (bot/carry.py, tests/test_carry.py, prereg_carry_shadow.json). The duplicate core2_1.py, train_core2_1.py and test_core2_1.py were dropped in favour of the audited versions."
+}

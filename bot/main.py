@@ -48,7 +48,7 @@ import tf_spec
 from app_meta import APP_VERSION, AI_CORE_VERSION, RELEASE_DATE
 from datetime import datetime, timezone
 
-_mstate_cache: dict = {}   # tf -> (ts, {"breadth","dom","ethbtc"})
+_mstate_cache: dict = {}   # (tf, tk) -> (ts, سبدِ کامل؟, {"breadth","dom","ethbtc"})
 _susp_cache = {"ts": 0.0, "map": {}}
 
 # ── تک‌پروازیِ کمک‌تابع‌ها: پنج نخِ overview روی کشِ سرد هر کدام همین‌ها را از نو می‌ساختند
@@ -65,55 +65,79 @@ def _once(key):
         return lk
 
 
-def _market_state(tf):
-    """وضعیتِ کلِ بازار به‌صورت زنده (پهنای بازار، مومنتوم دامیننس BTC، مومنتوم ETH/BTC) — فقط از کشِ کندل‌ها."""
-    hit = _mstate_cache.get(tf)
-    if hit and time.time() - hit[0] < 300:
-        return hit[1]
+def _last_closed_open(tf, now=None):
+    """زمانِ بازِ آخرین کندلِ بسته‌شدهٔ ``tf`` از روی ساعت (بی شبکه)."""
+    bar = tf_spec.bar_ms(tf)
+    now_ms = int((time.time() if now is None else now) * 1000)
+    return (now_ms // bar) * bar - bar
+
+
+def _basket_klines(tf, tk):
+    """کندل‌های سبدِ مرجع که کندلِ ``tk`` را دارند — با get_klines، نه کشِ خام.
+
+    قبلاً ``get_klines_cached`` هر چه آخرین‌بار در کش بود را می‌داد: درونِ تحلیلِ BTC، کندل‌های
+    BTC تازه و بقیه یک کندل کهنه بودند (نخ‌هایشان پشتِ همان تحلیلِ BTC منتظر بودند). اگر صرافی
+    کندلِ ``tk`` را هنوز منتشر نکرده بود (کش دریافتِ بی آن را تا KLINE_TTL نگه می‌دارد)، یک‌بار مستقیم تازه می‌شود.
+    """
+    out = {}
+    for s in calib.MARKET_BASKET:
+        try:
+            kl = _klines_at(s, tf, tk)
+            if kl:
+                out[s] = kl
+        except Exception:  # noqa: BLE001 — ارزِ بی‌کندل از سبد کم می‌شود ⇒ دامیننس خنثی
+            log.exc(f"market-state klines {s} {tf}")
+    return out
+
+
+def _klines_at(symbol, tf, tk):
+    """کندل‌های بستهٔ ``symbol`` که کندلِ ``tk`` را دارند، وگرنه None.
+    اگر صرافی کندلِ ``tk`` را هنوز منتشر نکرده بود و کش همان دریافتِ بی آن را بدهد، یک‌بار مستقیم تازه می‌شود."""
+    kl = market.get_klines(symbol, tf)
+    if kl and kl["t"] and int(kl["t"][-1]) < tk:
+        kl = market._fetch_klines(symbol, tf, 420)
+    return kl if kl and tk in kl["t"] else None
+
+
+def _market_state(tf, tk=None):
+    """وضعیتِ کلِ بازار (مومنتوم دامیننس BTC و ETH/BTC) در **کندلِ تحلیل‌شده** ``tk``.
+
+    یک تعریف با آموزش (calib-F1): ``calib.market_state_at`` روی سبدِ ثابتِ پنج‌ارزی
+    (``calib.MARKET_BASKET`` = watchlist)، فقط وقتی همهٔ سبد همان کندل را دارد. کش با کلیدِ
+    (tf, tk) است، نه TTLِ ساعتی — حالتِ یک کندل برای همهٔ ارزهای همان کندل یکی است.
+    پهنای بازار عمداً خنثی (۰) است: نه ویژگیِ مدل است (features.DISABLED) و نه ورودیِ متا-گیت
+    تغییر می‌کند (با پنج ارز هم قبلاً همیشه ۰ بود).
+
+    بی ``tk`` (رژیمِ کلان، overview، یادداشتِ پوزیشن‌ها) فقط پهنا خوانده می‌شود که همیشه ۰ است:
+    حالتِ خنثی بی واکشیِ کندل‌های سبد. دامیننس و ETH/BTC فقط در کندلِ تحلیل‌شده ساخته می‌شوند.
+    """
+    if tf not in tf_spec.MODEL_TFS or tk is None:
+        return {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0}      # 5m مدلی ندارد / بی کندلِ تحلیل
+    tk = int(tk)
+    key = (tf, tk)
+    hit = _mstate_cache.get(key)
+    if hit and (hit[1] or time.time() - hit[0] < 60):
+        return hit[2]
     with _once(("mstate", tf)):
-        hit = _mstate_cache.get(tf)
-        if hit and time.time() - hit[0] < 300:
-            return hit[1]
-        return _market_state_build(tf)
+        hit = _mstate_cache.get(key)
+        if hit and (hit[1] or time.time() - hit[0] < 60):
+            return hit[2]
+        return _market_state_build(tf, tk)
 
 
-def _market_state_build(tf):
+def _market_state_build(tf, tk):
     out = {"breadth": 0.0, "dom": 0.0, "ethbtc": 0.0}
+    complete = False
     try:
-        symbols, _ = market.get_top_symbols(calib.CALIB_UNIVERSE_N)   # همان جمعیتِ آموزش
-        above = []
-        volq: dict = {}
-        btcv: dict = {}
-        for s in symbols:
-            kl = market.get_klines_cached(s, tf)
-            if not kl or len(kl["c"]) < 60:
-                continue
-            cc = np.array(kl["c"], float)
-            e50 = engine.ema(cc, 50)
-            above.append(1.0 if cc[-1] > e50[-1] else 0.0)
-            for t, c_, v_ in zip(kl["t"], kl["c"], kl["v"]):
-                volq[t] = volq.get(t, 0.0) + c_ * v_
-                if s == "BTCUSDT":
-                    btcv[t] = c_ * v_
-        if len(above) >= universe.MIN_POPULATION:
-            out["breadth"] = (sum(above) / len(above) - 0.5) * 2
-        dom_ts = sorted(t for t in btcv if volq.get(t, 0) > 0)
-        if len(dom_ts) > 60:
-            dm = calib.mom_norm_map(dom_ts, [btcv[t] / volq[t] for t in dom_ts])
-            if dm:
-                out["dom"] = list(dm.values())[-1]
-        kb, ke = market.get_klines_cached("BTCUSDT", tf), market.get_klines_cached("ETHUSDT", tf)
-        if kb and ke:
-            bb_ = dict(zip(kb["t"], kb["c"]))
-            ee_ = dict(zip(ke["t"], ke["c"]))
-            common = [t for t in ke["t"] if t in bb_]
-            if len(common) > 60:
-                em = calib.mom_norm_map(common, [ee_[t] / bb_[t] for t in common])
-                if em:
-                    out["ethbtc"] = list(em.values())[-1]
+        hists = _basket_klines(tf, tk)
+        complete = len(hists) == len(calib.MARKET_BASKET)
+        out = calib.market_state_at(hists, tk)
     except Exception:  # noqa: BLE001
         log.exc()
-    _mstate_cache[tf] = (time.time(), out)
+    # سبدِ ناقص (خطای شبکه) فقط ۶۰ ثانیه کش می‌شود تا در همان کندل دوباره ساخته شود
+    for k in [k for k in list(_mstate_cache) if k[0] == tf and k[1] < tk]:   # کلیدهای کندل‌های قبل
+        _mstate_cache.pop(k, None)
+    _mstate_cache[(tf, tk)] = (time.time(), complete, out)
     return out
 
 
@@ -135,9 +159,32 @@ def _model_era(tf=None):
         return None
 
 
+# ── بازخوردِ زنده: تعلیقِ خودکار (ستاپ/تایم‌فریم/ترکیب)، جیبِ لبه و هشدارِ drift ──
+# همه از signals_log.json (shadow) خوانده می‌شدند، ولی از ۱۶ جولای هیچ کدِ تولیدی در آن نمی‌نویسد
+# (shadow.log_signal فقط در تست‌ها صدا زده می‌شود؛ دفترِ جایگزین candidates.jsonl است). پس این «ترمزها»
+# هرگز فعال نمی‌شدند، در حالی که UI ترمزِ خودکار را القا می‌کرد. احیایشان تصمیمِ زنده را از کارنامهٔ
+# بازپخش (decision.replay، بی‌تعلیق) جدا می‌کرد؛ پس عمداً خاموش‌اند و API/UI صریحاً «غیرفعال» می‌گویند.
+LIVE_FEEDBACK_ACTIVE = False
+LIVE_FEEDBACK_NOTE_FA = ("تعلیقِ خودکارِ ستاپ/تایم‌فریم/ترکیب، جیبِ لبه و هشدارِ افتِ عملکرد غیرفعال‌اند: "
+                         "دفترِ سایه‌ای که از آن تغذیه می‌شدند از ژوئیه ثبتی ندارد. تصمیم‌ها دقیقاً همان قاعدهٔ "
+                         "کارنامه‌اند و هیچ ترمزِ خودکاری رویشان نیست؛ عملکردِ زنده در کارنامهٔ رو-به-جلوی "
+                         "میزِ تصمیم است.")
+
+
+def _live_feedback():
+    """وضعیتِ بازخوردِ زنده برای API/UI — صریح، نه ضمنی."""
+    state = "active" if LIVE_FEEDBACK_ACTIVE else "inactive"
+    return {"active": LIVE_FEEDBACK_ACTIVE, "suspension": state, "edge_pockets": state, "drift": state,
+            "source": "signals_log.json (shadow.log_signal) — بدونِ نویسندهٔ تولیدی از ۱۶ جولای",
+            "live_ledger": "decision_ledger.jsonl (/api/decisions → live_overall)",
+            "note_fa": None if LIVE_FEEDBACK_ACTIVE else LIVE_FEEDBACK_NOTE_FA}
+
+
 def _suspended_setups():
     """تعلیق سراسری فقط برای ستاپ‌های واقعاً سمی.
     تعلیقِ خفیفِ سراسری (مثل zx با −۰٫۰۱R) جیب‌های سوددهٔ تایم‌فریم‌محور را می‌کشت."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}                                  # منبع تغذیه نمی‌شود — هیچ تعلیقی (تصمیم = کارنامه)
     if time.time() - _susp_cache["ts"] < 120:
         return _susp_cache["map"]
     with _once("susp"):
@@ -162,6 +209,8 @@ def _suspended_setups_build():
 _tf_susp_cache = {"ts": 0.0, "map": {}}
 def _live_edge_book():
     """جیب‌های سودده و ترکیب‌های معلق — معیار LCB/نیمه‌ها در edge_book."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}, {}
     try:
         import edge_book
         with _once("edge_book"):                   # edge_book کشِ ۹۰ثانیه‌ای دارد ولی قفل ندارد
@@ -174,6 +223,8 @@ def _live_edge_book():
 def _suspended_tfs():
     """تایم‌فریم‌هایی که بازده خالص زندهٔ ۳۰روزه‌شان با n کافی مثبت نیست — معلق تا بهبود.
     اگر همان TF جیب سوددهٔ ترکیبی داشته باشد، تعلیقِ کل TF اعمال نمی‌شود."""
+    if not LIVE_FEEDBACK_ACTIVE:
+        return {}
     if time.time() - _tf_susp_cache["ts"] < 120:
         return _tf_susp_cache["map"]
     with _once("tf_susp"):
@@ -199,77 +250,64 @@ def _suspended_tfs_build():
     return m
 
 HTF_OF = tf_spec.HTF_OF   # 5m→1h، 15m/1h→4h، 4h→1d
-_rs_cache: dict = {}      # tf -> (ts, {sym: rank01})
 _fz_cache: dict = {}      # sym -> (ts, {"z", "persist", "crowded_long", "crowded_short"})
 _fz_pending: set = set()
 _oi_cache: dict = {}      # sym -> (ts, oi_stats)
 _oi_pending: set = set()
 _btc_macro_cache = {"ts": 0.0, "data": None}
-_macro_cache: dict = {}   # tf -> (ts, {"gold": x})
+_macro_cache: dict = {}   # (tf, tk) -> (ts, کندلِ tk بود؟, {"gold": x})
 
 
 def _rs_rank(tf):
-    """رتبه قدرت نسبی ۰..۱ هر ارز بین تاپ نمادها (بازده ۲۰ کندلی)."""
-    hit = _rs_cache.get(tf)
-    if hit and time.time() - hit[0] < 180:
-        return hit[1]
-    with _once(("rs", tf)):
-        hit = _rs_cache.get(tf)
-        if hit and time.time() - hit[0] < 180:
-            return hit[1]
-        return _rs_rank_build(tf)
+    """رتبهٔ قدرتِ نسبی — عمداً خنثی (۰٫۵ برای همه)، یک تعریف با آموزش (calib-F1).
+
+    تعریفِ قبلی رتبه بینِ ۱۰۰ ارزِ برتر با کفِ جمعیتِ ۴۰ بود، ولی برنامه زنده فقط پنج ارزِ
+    watchlist را می‌خواند؛ پس اجرا همیشه ۰٫۵ می‌گرفت و آموزش مقدارِ واقعی. حالا آموزش هم خنثی
+    است (``features.DISABLED``). رتبه‌گرفتن بینِ پنج ارز بندِ «قدرت نسبی»ِ متا-گیت را هم روشن
+    می‌کرد (آستانه‌هایش برای ۱۰۰ ارز تنظیم شده) — آن تصمیمِ محصولی جداست.
+    """
+    return {}
 
 
-def _rs_rank_build(tf):
-    now = time.time()
-    ranks = {}
-    try:
-        # همان جمعیتِ آموزش: ۱۰۰ ارزِ برتر، با حداقلِ جمعیت (وگرنه همه خنثی).
-        # قبلاً روی کشِ نیمه‌خالیِ پس از ری‌استارت، چند ارز رتبهٔ ۰ یا ۱ می‌گرفتند.
-        symbols, _ = market.get_top_symbols(calib.CALIB_UNIVERSE_N)
-        rets = {}
-        for s in symbols:
-            kl = market.get_klines_cached(s, tf)
-            if kl and len(kl["c"]) > 21:
-                rets[s] = kl["c"][-1] / kl["c"][-21] - 1
-        ranks = universe.rank_within(rets)
-    except Exception:  # noqa: BLE001
-        log.exc()
-    _rs_cache[tf] = (now, ranks)
-    return ranks
+def _macro(tf, tk=None):
+    """مومنتوم زندهٔ طلا (PAXG) در **کندلِ تحلیل‌شده** ``tk`` — همان منبع و نرمال‌سازیِ آموزش.
 
-
-def _macro(tf):
-    """مومنتوم زندهٔ طلا (PAXG) — از همان منبع و نرمال‌سازیِ آموزش (بدون skew).
+    قبلاً از ``get_history`` (کشِ دیسکِ ۲۴ساعته + کشِ حافظهٔ ۱۵دقیقه) آخرین مقدار برداشته می‌شد:
+    طلای زنده تا یک روز کهنه بود و روی 1h همبستگی‌اش با تعریفِ آموزش ~۰٫۴ (calib-F7). حالا
+    کندل‌های PAXG با همان تازگیِ کندلِ بسته‌ی تایم‌فریم (get_klines) و مقدار در خودِ ``tk``.
 
     شاخصِ دلار حذف شد: فایلِ dxy_daily.json هرگز پر نشد و ویژگی در تمامِ آموزش
     ثابتِ ۰ بود؛ زنده‌کردنش بعداً یعنی دادنِ ورودیِ ندیده به مدل.
     """
-    hit = _macro_cache.get(tf)
-    if hit and time.time() - hit[0] < 900:
-        return hit[1]
-    with _once(("macro", tf)):                     # تاریخچهٔ PAXG فقط یک‌بار صفحه‌بندی شود
-        hit = _macro_cache.get(tf)
-        if hit and time.time() - hit[0] < 900:
-            return hit[1]
-        return _macro_build(tf)
-
-
-def _macro_build(tf):
-    now = time.time()
-    out = {"gold": 0.0}
     if tf not in tf_spec.MODEL_TFS:
-        # طلا فقط ورودیِ مدل‌های calib است و 5m مدلی ندارد — صفحه‌بندیِ ۳۰۰۰ کندلِ ۵ دقیقه‌ایِ PAXG بی‌فایده است
-        _macro_cache[tf] = (now, out)
-        return out
+        # طلا فقط ورودیِ مدل‌های calib است و 5m مدلی ندارد — واکشیِ PAXG بی‌فایده است
+        return {"gold": 0.0}
+    tk = int(tk) if tk is not None else _last_closed_open(tf)
+    key = (tf, tk)
+    hit = _macro_cache.get(key)
+    if hit and (hit[1] or time.time() - hit[0] < 60):
+        return hit[2]
+    with _once(("macro", tf)):
+        hit = _macro_cache.get(key)
+        if hit and (hit[1] or time.time() - hit[0] < 60):
+            return hit[2]
+        return _macro_build(tf, tk)
+
+
+def _macro_build(tf, tk):
+    out = {"gold": 0.0}
+    found = False
     try:
-        gk = market.get_history("PAXGUSDT", tf, calib.BARS.get(tf, 3000))
-        gmap = calib.mom_norm_map(gk["t"], gk["c"])
-        if gmap:
-            out["gold"] = list(gmap.values())[-1]
+        gk = _klines_at("PAXGUSDT", tf, tk)
+        if gk:
+            gmap = calib.mom_norm_map(gk["t"], gk["c"])
+            found = tk in gmap
+            out["gold"] = float(gmap.get(tk, 0.0))          # همان gold_map.get(ts, 0.0) ِ آموزش
     except Exception:  # noqa: BLE001
         log.exc()
-    _macro_cache[tf] = (now, out)
+    for k in [k for k in list(_macro_cache) if k[0] == tf and k[1] < tk]:   # کلیدهای کندل‌های قبل
+        _macro_cache.pop(k, None)
+    _macro_cache[(tf, tk)] = (time.time(), found, out)   # بی‌کندلِ tk فقط ۶۰ ثانیه
     return out
 
 
@@ -336,6 +374,24 @@ def _symbol_cost(symbol):
     if qv >= 2e7:
         return 0.18
     return 0.30
+
+
+def _cost_basis():
+    """مبنای هزینهٔ هر دفتر/عدد — برچسبِ صریح کنارِ هر API (LP-10).
+
+    عمداً یکی نشده‌اند: کارنامه و دفترِ تصمیمِ قاعده با کارمزدِ ثابتِ ``decision.COST_PCT`` بازپخش/داوری
+    می‌شوند؛ دفترِ کاندیدها (که اثباتِ سایه با آزمونِ منجمد مقایسه‌اش می‌کند) مدلِ هزینهٔ پیش‌ثبت‌شده
+    (``costs.event_cost_pct``) را دارد و فقط جزءِ ردهٔ نقدشوندگی‌اش را. بک‌تستِ کوچکِ هر نماد همان رده را
+    از ``extras["cost"]`` می‌گیرد (همان عدد به مدل‌ها هم می‌رود، پس اینجا فقط برچسب می‌خورد).
+    """
+    return {
+        "decision_ledger": {"model": "flat", "cost_pct": decision.COST_PCT,
+                            "maker_cost_pct": decision.MAKER_COST_PCT,
+                            "desc_fa": "کارمزدِ ثابتِ رفت‌وبرگشت (تیکرِ فیوچرزِ کوکوین ×۲ + لغزش) — کارنامه و دفترِ تصمیم"},
+        "candidates": dict(candidates.COST_BASIS),
+        "symbol_backtest": {"model": "tier",
+                            "desc_fa": "ردهٔ نقدشوندگیِ همان نماد (۰٫۰۸ تا ۰٫۳۰٪، ورودِ میکر) — «cost»ِ هر ردیف"},
+    }
 
 
 def _funding_info(symbol):
@@ -462,30 +518,53 @@ def get_analysis(symbol: str, tf: str, max_age=None):
     return res
 
 
+_htf_z_cache: dict = {}   # (symbol, htf) -> (آخرین کندل, {ts: z خام})
+
+
+def _htf_sign_live(symbol, htf, tk):
+    """جهتِ تایم‌بالاتر با **همان** تابعِ آموزش (``calib._htf_sign``) روی zِ خام.
+
+    قبلاً zِ گردشدهٔ خروجیِ تحلیل (۲ رقم؛ z_prev ۳ رقم) با آستانهٔ ±۰٫۳ مقایسه می‌شد و zِ خامِ
+    (0.3, 0.305) به 0.30 می‌افتاد: htf_sign یک‌طرفه ±۱→۰ روی ~۰٫۲۴-۰٫۳۳٪ کندل‌ها (calib-F10).
+    z از همان کندل‌های تایم‌بالاتر که تحلیلش دید، یک‌بار برای هر کندلِ تازه حساب و کش می‌شود.
+    """
+    try:
+        hk = market.get_klines(symbol, htf)
+        last = int(hk["t"][-1])
+        hit = _htf_z_cache.get((symbol, htf))
+        if hit and hit[0] == last:
+            zmap = hit[1]
+        else:
+            cs = engine.component_series(*[np.asarray(hk[k], float) for k in ("o", "h", "l", "c", "v")])
+            zmap = {int(t): float(z) for t, z in zip(hk["t"], cs["z"])}
+            _htf_z_cache[(symbol, htf)] = (last, zmap)
+        return calib._htf_sign(zmap, tk, htf)
+    except Exception:  # noqa: BLE001
+        log.exc(f"htf_sign {symbol} {htf}")
+        return 0
+
+
 def _compute_analysis(symbol, tf):
     try:
         btc_z = None
         if symbol != "BTCUSDT":
             btc = get_analysis("BTCUSDT", tf)          # عمق بازگشت حداکثر ۱
             btc_z = btc.get("z") if "error" not in btc else None   # همان متغیر آموزش (z نه score)
+        # کندلِ تحلیل‌شده پیش از ورودی‌های مدل: همهٔ زمینه‌ها (فاندینگ، وضعیتِ بازار، طلا) در
+        # **همین** کندل (tk = زمانِ بازِ آخرین کندلِ بسته) ساخته می‌شوند، مثلِ آموزش
+        kl = market.get_klines(symbol, tf)
+        tk, bar_ms = int(kl["t"][-1]), tf_spec.bar_ms(tf)
         htf_sign = 0
         htf = HTF_OF.get(tf)
         if htf:
             ha = get_analysis(symbol, htf)             # زنجیره: 5m→1h→4h→1d→پایان، 15m→4h
             if "error" not in ha and ha.get("zt") is not None:
                 # هم‌ترازی دقیق با آموزش: کندلِ بستهٔ *قبل از* سطلِ تایم‌بالاترِ سیگنال (بدون نشتی/کندلِ در حال شکل‌گیری)
-                htf_p = tf_spec.bar_ms(htf)
-                try:
-                    ts_now = market.get_klines(symbol, tf)["t"][-1]
-                    want = (ts_now // htf_p) * htf_p - htf_p
-                    hz = ha.get("z_prev", 0.0) if ha["zt"] > want else ha.get("z", 0.0)
-                except Exception:  # noqa: BLE001
-                    hz = ha.get("z", 0.0)
-                htf_sign = 1 if (hz or 0) > 0.3 else -1 if (hz or 0) < -0.3 else 0
+                htf_sign = _htf_sign_live(symbol, htf, tk)
         finfo = _funding_info(symbol)
         oinfo = _oi_info(symbol)
         extras = {# ویژگیِ مدل با فرمولِ آموزش ساخته می‌شود، نه با z شلوغیِ متا-گیت
-                  "funding_z": features.live_funding_z(symbol),
+                  "funding_z": features.live_funding_z(symbol, tk, bar_ms),
                   "funding_crowd_z": float(finfo.get("z") or 0.0),
                   "funding_persist": int(finfo.get("persist") or 0),
                   "crowded_long": bool(finfo.get("crowded_long")),
@@ -497,8 +576,8 @@ def _compute_analysis(symbol, tf):
                   "oi_ok": bool(oinfo.get("ok")),
                   "rs_rank": _rs_rank(tf).get(symbol, 0.5),
                   "htf_sign": htf_sign}
-        extras.update(_macro(tf))
-        extras.update(_market_state(tf))
+        extras.update(_macro(tf, tk))
+        extras.update(_market_state(tf, tk))
         extras["cost"] = _symbol_cost(symbol)
         extras["symbol"] = symbol                    # گیت نماد را هم می‌سنجد
         extras["suspended"] = _suspended_setups()
@@ -515,7 +594,6 @@ def _compute_analysis(symbol, tf):
             extras["session"] = meta_gate.session_quality()
         except Exception:  # noqa: BLE001
             extras["session"] = {"tier": "mid", "mult": 0.92}
-        kl = market.get_klines(symbol, tf)
         # ⚰️ گاردِ فیدِ مرده: جفتِ حذف‌شده/بی‌معامله چارتِ یخ‌زده دارد و سیگنالش بی‌معناست (درسِ MATIC/DNT)
         if time.time() * 1000 - kl["t"][-1] > tf_spec.bar_ms(tf) * 3:
             age_d = (time.time() * 1000 - kl["t"][-1]) / 86400000
@@ -528,6 +606,10 @@ def _compute_analysis(symbol, tf):
             # analyze این دو را فقط در مسیرِ مجوزدار به status می‌برد؛ ماتریسِ تصمیم باید همیشه ببیندشان
             res["tf_suspended"] = extras["tf_suspended"]
             res["btc_z"] = btc_z
+            # منبعِ کندل‌ها: «okx» یعنی پشتیبان (حجمِ OKX، بی‌qv/n/tbv) — کارنامه روی بایننس است
+            res["data_src"] = kl.get("src")
+            if isinstance(res.get("backtest"), dict):   # مبنای هزینهٔ بک‌تستِ کوچک (نه ۰٫۱۴٪ِ کارنامه)
+                res["backtest"].update(cost_pct=extras["cost"], cost_basis="tier")
         res["symbol"] = symbol
     except Exception as e:  # noqa: BLE001
         res = {"symbol": symbol, "tf": tf, "error": str(e)}
@@ -535,6 +617,21 @@ def _compute_analysis(symbol, tf):
 
 
 _rebuild_proc = {"p": None, "started": None}
+
+
+def _rebuild_running():
+    p = _rebuild_proc.get("p")
+    return p is not None and p.poll() is None
+
+
+def _calib_status():
+    """``calib.status()`` + بازآموزیِ پروسهٔ جدا. ``_state``ِ calib در همین پروسه از rebuild_models.py خبر ندارد،
+    پس بی این، در تمامِ مدتِ بازآموزی «building: false» گزارش می‌شد و UI مدلِ کهنه را جاری نشان می‌داد."""
+    st = calib.status()
+    if not st.get("building") and _rebuild_running():
+        st.update(building=True, progress=st.get("progress") or "بازآموزی در پروسهٔ جدا (rebuild_models.py)…",
+                  rebuild_started=_rebuild_proc.get("started"))
+    return st
 
 
 def _calib_builder():
@@ -642,7 +739,7 @@ def bot_config(req: BotCfgReq):
 
 @app.get("/api/calib/status")
 def calib_status():
-    return calib.status()
+    return _calib_status()
 
 
 @app.get("/api/gates")
@@ -889,7 +986,7 @@ def health():
     if g["live_effective"]:
         warnings.append("معاملهٔ واقعی فعال است")
 
-    cs = calib.status()
+    cs = _calib_status()
     age_h = cs.get("age_hours")
     out["model"] = {"version": cs.get("version"), "required": cs.get("required_version"),
                     "age_hours": age_h, "stale": cs.get("stale"), "building": cs.get("building"),
@@ -964,7 +1061,7 @@ def health():
 @app.get("/api/version")
 def version_info():
     """شناسهٔ دقیق کد و مدلِ در حال اجرا برای راستی‌آزمایی انتشار."""
-    cs = calib.status()
+    cs = _calib_status()
     return {
         "app_version": APP_VERSION,
         "ai_core_version": AI_CORE_VERSION,
@@ -979,8 +1076,7 @@ def version_info():
 
 @app.post("/api/calib/rebuild")
 def calib_rebuild():
-    p = _rebuild_proc.get("p")
-    if calib.status().get("building") or (p is not None and p.poll() is None):
+    if calib.status().get("building") or _rebuild_running():
         return {"ok": False, "msg": "در حال ساخت است"}
     threading.Thread(target=_calib_builder, daemon=True).start()
     return {"ok": True}
@@ -1000,13 +1096,18 @@ def live_stats(tf: str | None = None):
     st = shadow.stats(tf)
     drift = None
     # drift با بازده خالص تشخیص داده می‌شود، نه win-rate خام که نسبت سود/ضرر را نادیده می‌گیرد.
-    if tf and st.get("n", 0) >= 20 and st.get("avg_r") is not None and st["avg_r"] <= 0:
+    # فقط وقتی بازخوردِ زنده فعال است: متنش «ورودها متوقف می‌شوند» است و بی‌تعلیقِ واقعی دروغ می‌شد.
+    if (LIVE_FEEDBACK_ACTIVE and tf and st.get("n", 0) >= 20 and st.get("avg_r") is not None
+            and st["avg_r"] <= 0):
         drift = (f"⚠️ عملکرد زندهٔ {tf} ({st['avg_r']:+.2f}R از {st['n']} سیگنال) "
                  "پس از هزینه مثبت نیست — ورودهای تازهٔ این تایم‌فریم متوقف می‌شوند.")
     return {"tf": tf, "stats": st, "all": shadow.stats(None), "drift": drift,
             "suspended": _suspended_setups(),
             "edge_pockets": _live_edge_book()[0],
             "suspended_combos": _live_edge_book()[1],
+            # stats/all/suspended/edge_pockets/drift از دفترِ سایهٔ بی‌نویسنده‌اند — «feedback» می‌گوید غیرفعال‌اند
+            "feedback": _live_feedback(),
+            "cost_basis": _cost_basis(),
             # دفترِ کاندیدها: همهٔ ستاپ‌های دیده‌شده، نه فقط مجازها
             "candidates": candidates.counts(),
             "candidate_stats": candidates.stats(tf),
@@ -1019,10 +1120,17 @@ def edge_health():
     try:
         import edge_book
         import fill_quality
-        h = edge_book.get_health()
         fq = fill_quality.summary(14)
-        return {"ok": True, "health": h, "fill_quality": fq,
+        if not LIVE_FEEDBACK_ACTIVE:                # منبعِ جیب‌ها تغذیه نمی‌شود: «منجمد» نه، «غیرفعال»
+            h = {"updated": time.time(), "pocket_count": 0, "pockets": {}, "suspended_count": 0,
+                 "verdict": "inactive", "advice": LIVE_FEEDBACK_NOTE_FA}
+            return {"ok": True, "active": False, "health": h, "fill_quality": fq, "scan_hint": [],
+                    "feedback": _live_feedback(),
+                    "version": {"app": APP_VERSION, "ai_core": AI_CORE_VERSION}}
+        h = edge_book.get_health()
+        return {"ok": True, "active": True, "health": h, "fill_quality": fq,
                 "scan_hint": edge_book.scan_tfs_for(["1h", "4h", "15m"]),
+                "feedback": _live_feedback(),
                 "version": {"app": APP_VERSION, "ai_core": AI_CORE_VERSION}}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
@@ -1193,7 +1301,7 @@ def overview(tf: str = "1h"):
         sc = btc_a["score"]
         btc_state = {"score": sc, "z": btc_a.get("z"),
                      "dir": "صعودی" if sc >= 0.15 else "نزولی" if sc <= -0.15 else "خنثی"}
-    cs = calib.status()
+    cs = _calib_status()
     mtf = (cs.get("models") or {}).get(tf, {})
     dir_lift = mtf.get("dir_lift")
     setup_lift = mtf.get("oos_lift")
@@ -1222,6 +1330,8 @@ def overview(tf: str = "1h"):
             "live_suspended": _suspended_tfs().get(tf),
             "edge_pockets": {k: v for k, v in _live_edge_book()[0].items()
                              if k.startswith(tf + "|")},
+            "live_feedback": _live_feedback(),       # live_suspended/edge_pockets/combo_suspended: غیرفعال؟
+            "cost_basis": _cost_basis(),             # «cost»ِ هر ردیف = ردهٔ نقدشوندگی، نه ۰٫۱۴٪ِ کارنامه
             "btc_macro": _btc_macro(),
             "breadth_macro": round((_market_state("1d") or {}).get("breadth", 0.0), 2),
             "calib": {"building": cs.get("building"), "progress": cs.get("progress"),
@@ -1240,18 +1350,21 @@ DECISION_LAG = 20.0          # ثانیه پس از هر مرزِ ۵دقیقه�
 # ۵ دقیقه = کوچک‌ترین تایم‌فریم (با ۹۰۰ ثانیه، decision.record با STALE_BARS=3 فقط ۱ از ۳ کندلِ 5m را می‌دید).
 # هر دور فقط تایم‌فریم‌هایی را تازه می‌کند که کندلشان از دورِ قبل بسته شده (5m همیشه، 1d فقط نیمه‌شبِ UTC).
 DECISION_PERIOD = 300
-_decision_state = {"last_boundary": None}   # آخرین مرزِ ۵دقیقه‌ای که تصمیم‌هایش جمع شد
+CANDIDATE_RESOLVE_LIMIT = 120   # داوریِ کاندیدها در هر دور (مثلِ ‎/api/live-stats)
+_decision_state = {"last_boundary": None,   # آخرین مرزِ ۵دقیقه‌ای که تصمیم‌هایش جمع شد
+                   "retry": {}}              # (sym, tf) -> openِ کندلی که هنوز دیده نشده (خطا/تحلیلِ کهنه)
 
 
-def _decision_lookup(symbols=None, tfs=None):
+def _decision_lookup(symbols=None, tfs=None, keys=None):
     """همهٔ تحلیل‌های ارز × تایم‌فریمِ میزِ تصمیم (۵×۵=۲۵) را موازی روی ``_pool`` می‌سازد
     و یک تابعِ جست‌وجوی ``(sym, tf) -> analysis`` برای ``decision.collect/refresh`` برمی‌گرداند.
+    ``keys`` (اختیاری): فقط همین خانه‌های ``(sym, tf)`` به‌جای ضربِ symbols × tfs.
 
     ترتیب: تایم‌فریمِ بالاتر و BTC اول — پیش‌نیازِ زنجیرهٔ HTF/BTCِ بقیه‌اند، پس منتظرها کمتر معطل می‌شوند.
     """
     symbols = tuple(symbols or decision.SYMBOLS)
     tfs = tuple(tfs or decision.TFS)
-    keys = sorted(((s, tf) for s in symbols for tf in tfs),
+    keys = sorted(keys if keys is not None else ((s, tf) for s in symbols for tf in tfs),
                   key=lambda k: (-tf_spec.MINUTES.get(k[1], 0), k[0] != "BTCUSDT"))
 
     def _one(k):
@@ -1284,23 +1397,100 @@ def _due_tfs(boundary, last_boundary=None):
     return tuple(tf for tf in decision.TFS if tf_spec.closed_between(tf, last_boundary, boundary))
 
 
+def _expected_bar(tf, boundary):
+    """openِ (ms) آخرین کندلِ بسته‌شدهٔ ``tf`` در مرزِ ``boundary`` (ثانیهٔ UTC).
+
+    همان ``_last_closed_open`` (کلیدِ کشِ حالتِ بازار/طلا)؛ یک تعریف تا چکِ کهنگیِ زمان‌بند و آن کلید از هم جدا نشوند.
+    """
+    return _last_closed_open(tf, int(boundary))
+
+
+def _collect_cells(cells):
+    """تصمیمِ خانه‌های ``cells`` (فهرستِ ``(sym, tf)``)، هر تایم‌فریم یک ``decision.collect``."""
+    if not cells:
+        return []
+    lookup = _decision_lookup(keys=cells)
+    by_tf = {}
+    for s, tf in cells:
+        by_tf.setdefault(tf, []).append(s)
+    out = []
+    for tf, syms in by_tf.items():
+        out += decision.collect(lookup, symbols=tuple(syms), tfs=(tf,)) or []
+    return out
+
+
+def _drop_analysis(keys):
+    """تحلیلِ کش‌شدهٔ این خانه‌ها دور انداخته می‌شود تا از نو ساخته شود (کشِ کندل تازگی را خودش می‌سنجد)."""
+    with _an_lock:
+        for k in keys:
+            _an_cache.pop(k, None)
+
+
+def _screen_decisions(decisions, boundary, retry):
+    """فقط تصمیم‌هایی که کندلِ مورد انتظارِ همین مرز را دارند برای ثبت می‌مانند.
+
+    * خطا ⇒ خانه در ``retry`` می‌ماند و دورِ ۵دقیقه‌ایِ بعد دوباره تحلیل می‌شود (LP-5)؛ قبلاً تا مرزِ
+      بعدیِ همان تایم‌فریم تلاشی نبود و کندلِ 1h/4h/1d با یک خطای گذرا برای همیشه گم می‌شد.
+    * کندلِ قبلی (تحلیلِ کهنه — کشِ سردِ درست پیش از مرز، یا صرافیِ دیررس) ⇒ تحلیلِ کش‌شده دور انداخته و
+      همین حالا یک‌بار از نو ساخته می‌شود؛ اگر باز کهنه بود **ثبت نمی‌شود** و دورِ بعد دوباره (LP-4).
+      اگر BTC کهنه بود، آلت‌های همان تایم‌فریم هم از نو ساخته می‌شوند (btc_z از همان تحلیل می‌آید).
+    خروجی: ``(تصمیم‌های قابلِ ثبت، تعدادِ کهنه‌ها)``.
+    """
+    def split(ds):
+        good, stale = [], []
+        for d in ds:
+            key = (d.get("sym"), d.get("tf"))
+            exp = _expected_bar(key[1], boundary)
+            try:
+                ts = int(d.get("candle_ts"))
+            except (TypeError, ValueError):
+                ts = None
+            if d.get("error") or ts is None:
+                retry[key] = exp
+            elif ts < exp:
+                retry[key] = exp
+                stale.append(key)
+            else:
+                retry.pop(key, None)
+                good.append(d)
+        return good, stale
+
+    good, stale = split(decisions)
+    if not stale:
+        return good, 0
+    redo = set(stale)
+    redo |= {(s, tf) for b, tf in stale if b == "BTCUSDT" for s in decision.SYMBOLS}
+    _drop_analysis(redo)
+    good = [d for d in good if (d.get("sym"), d.get("tf")) not in redo]
+    again, _still = split(_collect_cells(sorted(redo)))
+    return good + again, len(stale)
+
+
 def _decision_cycle(now=None, tfs=None):
     """یک دورِ پس‌زمینه: تصمیم‌ها → ثبت در دفترِ رو-به-جلو → داوریِ ردیف‌های باز → کارنامه (بی‌انتظار).
 
-    فقط تایم‌فریم‌هایی که کندلشان تازه بسته شده دوباره تحلیل و ثبت می‌شوند (``tfs`` برای تست/اجبار)؛
-    داوریِ ردیف‌های باز هر دور برای همه انجام می‌شود. هر گام جدا خطاگیری می‌شود تا خرابیِ یکی بقیه
-    را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
+    فقط تایم‌فریم‌هایی که کندلشان تازه بسته شده دوباره تحلیل و ثبت می‌شوند (``tfs`` برای تست/اجبار)،
+    به‌علاوهٔ خانه‌هایی که کندلِ آخرشان هنوز دیده نشده (خطا/تحلیلِ کهنه در دورهای قبل — ``_screen_decisions``).
+    داوریِ ردیف‌های باز (دفترِ تصمیم و دفترِ کاندیدها) هر دور برای همه انجام می‌شود. هر گام جدا
+    خطاگیری می‌شود تا خرابیِ یکی بقیه را نیندازد. خروجی: شمارنده‌ها برای لاگ/تست."""
     now = time.time() if now is None else now
     boundary = _decision_boundary(now)
+    # کپی و جایگزینی (نه جهشِ درجا): یک دورِ نیمه‌کاره یا patchِ تست حالتِ مشترک را آلوده نمی‌کند
+    retry = {k: exp for k, exp in (_decision_state.get("retry") or {}).items()
+             if exp == _expected_bar(k[1], boundary)}      # کندلِ تازه‌تری بسته شده ⇒ از راهِ tfs می‌آید
     if tfs is None:
         tfs = _due_tfs(boundary, _decision_state["last_boundary"])
     tfs = tuple(tfs)
-    out = {"decisions": 0, "tfs": list(tfs), "recorded": None, "resolved": None}
-    decisions = []
-    if tfs:
-        decisions = decision.collect(_decision_lookup(tfs=tfs), tfs=tfs)
+    cells = [(s, tf) for tf in tfs for s in decision.SYMBOLS]
+    extra = sorted(k for k in retry if k not in set(cells))
+    out = {"decisions": 0, "tfs": list(tfs), "retried": len(extra), "stale": 0,
+           "recorded": None, "resolved": None, "candidates_resolved": None}
+    collected = _collect_cells(cells + extra)
+    decisions, out["stale"] = _screen_decisions(collected, boundary, retry)
     _decision_state["last_boundary"] = boundary
-    out["decisions"] = len(decisions or [])
+    _decision_state["retry"] = retry
+    out["decisions"] = len(collected)
+    out["pending_retry"] = len(retry)
     if decisions:
         try:
             out["recorded"] = decision.record(decisions)
@@ -1310,6 +1500,12 @@ def _decision_cycle(now=None, tfs=None):
         out["resolved"] = decision.resolve(market.get_klines)
     except Exception:  # noqa: BLE001
         log.exc("decision ledger resolve")
+    try:
+        # دفترِ کاندیدها هم در پس‌زمینه داوری می‌شود، نه فقط وقتی UI ‎/api/live-stats را صدا می‌زند؛
+        # وگرنه با UIِ بسته پنجرهٔ ۴۲۰ کندلی از کندلِ ورود می‌گذشت (LP-7: حالا «no_data» می‌شود).
+        out["candidates_resolved"] = candidates.resolve(market.get_klines, limit=CANDIDATE_RESOLVE_LIMIT)
+    except Exception:  # noqa: BLE001
+        log.exc("candidates resolve")
     try:
         decision.scorecards(wait=False)             # حداکثر روزی یک‌بار، در نخِ جدا
     except Exception:  # noqa: BLE001
@@ -1323,6 +1519,15 @@ def _next_decision_run(now):
     return base + DECISION_PERIOD + DECISION_LAG
 
 
+def _decision_wait(now):
+    """ثانیه تا دورِ بعد. اگر مرزی که مهلتش گذشته هنوز پردازش نشده (دورِ قبل بیش از ۵ دقیقه طول کشید)
+    صفر — وگرنه ``_next_decision_run`` آن مرز را جا می‌انداخت و کندلِ 5mِ آن هرگز دیده نمی‌شد (LP-5)."""
+    last = _decision_state.get("last_boundary")
+    if last is not None and _decision_boundary(now) > last:
+        return 0.0
+    return max(1.0, _next_decision_run(now) - now)
+
+
 def _decision_loop():
     """دفترِ میزِ تصمیم باید حتی وقتی کسی صفحه را باز نکرده ثبت و داوری شود."""
     time.sleep(DECISION_WARM_DELAY)
@@ -1332,7 +1537,7 @@ def _decision_loop():
         log.exc("decision scorecard warm-up")
     while True:
         try:
-            time.sleep(max(1.0, _next_decision_run(time.time()) - time.time()))
+            time.sleep(_decision_wait(time.time()))
             info = _decision_cycle()
             log.info("decision cycle", **info)
         except Exception:  # noqa: BLE001
@@ -1415,7 +1620,9 @@ def open_pos(req: OpenReq):
             elif pw is not None and pw < 45:
                 weak.append(f"احتمال بردِ مدل فقط {pw:.0f}٪ است")
         else:
-            p_up = a.get("p_up")
+            # فقط p_upِ مدلِ جهت‌یابِ کالیبره «اطمینان» است و آستانهٔ ۵۸٪ دارد؛ امتیازِ اکتشافی
+            # (p_up_kind="heuristic") احتمال نیست و نباید با «٪» و «آمار علیه» به کاربر نشان داده شود
+            p_up = advisor.model_p_up(a)
             conf = None if p_up is None else (p_up if side == "long" else 100 - p_up)
             if conf is not None and conf < 58:
                 weak.append(f"اطمینانِ جهت‌یاب برای این سمت فقط {conf:.0f}٪ است (آستانهٔ اطمینان ۵۸٪)")
@@ -1537,14 +1744,16 @@ def positions():
     # شبیه‌سازِ واقع‌گرا: ویکِ کندل‌ها + لغزشِ استاپ + فاندینگ (نه فقط قیمتِ نمونه‌برداری‌شده)
     db = paper.refresh(prices, klines_fn=market.get_klines_cached,
                        funding_fn=market.get_funding_history)
-    # 🧭 مشاورِ پوزیشن: برای هر پوزیشنِ باز، توصیهٔ مدیریتِ زنده با مدلِ کالیبره
+    # 🧭 مشاورِ پوزیشن: برای هر پوزیشنِ باز، توصیهٔ مدیریتِ زنده — تیلت فقط با مدلِ جهت‌یابِ کالیبره
+    #    (مثلِ autotrader)؛ امتیازِ اکتشافیِ p_up به مشاور نمی‌رسد و خروجی «فقط هندسه» است
     for pos in db["open"]:
         try:
             a = get_analysis(pos["symbol"], pos["tf"])
             b = get_analysis("BTCUSDT", pos["tf"])
             bz = b.get("z") if "error" not in b else None
-            pos["advice"] = advisor.advise(
-                pos, {"p_up": a.get("p_up")} if "error" not in a else None, btc_z=bz)
+            model = ({"p_up": a.get("p_up"), "p_calibrated": True}
+                     if "error" not in a and a.get("p_calibrated") else None)
+            pos["advice"] = advisor.advise(pos, model, btc_z=bz)
         except Exception:  # noqa: BLE001 — توصیه هرگز نباید نمایشِ پوزیشن را بشکند
             pos["advice"] = None
     total_open = round(sum(p["pnl_usdt"] for p in db["open"]), 2)

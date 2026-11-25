@@ -370,6 +370,11 @@ def event_features(cs, c, i, sig, setup, ts_ms, funding_z=0.0, rs_rank=0.5, htf_
 
 
 # ───────────────────────── kNN لورنتزی (نقطه آخر) ─────────────────────────
+# برچسبِ نمایشیِ رأیِ kNN: کلیدِ components در analyze و برچسبِ decision.COMPONENTS (قبلاً «هوش مصنوعی»)
+KNN_LABEL = "الگوی مشابه (kNN)"
+KNN_LABEL_LEGACY = "هوش مصنوعی"      # خروجی‌های قدیمیِ کش‌شده/آزمون‌ها هنوز با این کلید خوانده می‌شوند
+
+
 def knn_ml(h, l, c, cs, k=10, stride=2, max_samples=1500):
     n = len(c)
     hlc3 = (h + l + c) / 3
@@ -490,13 +495,19 @@ def trade_suggestion(c, cs, fc, tf, votes_bull, votes_bear, s_ml, force_side=Non
             reasons.append("دسته‌ها دوپاره‌اند")
         # analyze() فقط کندلِ آخر و یکی قبل‌تر را برای ستاپ می‌گردد (range(0, 2)) — متن همان را بگوید
         reasons.append(f"و هیچ‌یک از ۵ ستاپ رویدادی (کراس z، پولبک، شکست، فید روند، فید رنج) در {SETUP_LOOKBACK_FA} کندل اخیر رخ نداده")
-        # آمادگی: چند درصد شرایطِ نزدیک‌ترین سیگنال پر شده (برای نمایش پیشرفت در UI)
-        long_prog = 0.55 * min(max(z, 0.0) / 1.2, 1.0) + 0.45 * min(bull5 / 3.0, 1.0)
-        short_prog = 0.55 * min(max(-z, 0.0) / 1.2, 1.0) + 0.45 * min(bear5 / 3.0, 1.0)
+        # آمادگی: چند درصد شرایطِ نزدیک‌ترین سیگنال پر شده (فقط نمایشِ پیشرفت در UI — side را عوض نمی‌کند).
+        # شرطِ رأی «≥۳ هم‌جهت و ≤۱ مخالف» است؛ پیشرفتش = ۱ − (کمترین تعدادِ رأیی که باید برگردد)/۳.
+        # با ≤۱ مخالف همان min(هم‌جهت/۳، ۱) قبلی است؛ رأیِ مخالفِ اضافه حالا از آمادگی کم می‌کند.
+        def _vote_prog(same, opp):
+            return max(0.0, 1.0 - max(3 - same, opp - 1, 0) / 3.0)
+        long_prog = 0.55 * min(max(z, 0.0) / 1.2, 1.0) + 0.45 * _vote_prog(bull5, bear5)
+        short_prog = 0.55 * min(max(-z, 0.0) / 1.2, 1.0) + 0.45 * _vote_prog(bear5, bull5)
         ready_side = "long" if long_prog >= short_prog else "short"
+        # گردکردن به پایین، نه round: ۹۹٫۵ با شرطِ پرنشده نباید «۱۰۰٪» شود؛ «صبر» حداکثر ۹۹٪ آماده است
+        readiness = min(int(math.floor(max(long_prog, short_prog) * 100 + 1e-9)), 99)
         return {"side": None, "status": "منتظر ستاپ", "reasons": reasons,
                 "setup": None, "setup_fa": None, "setup_observed": False,
-                "readiness": round(max(long_prog, short_prog) * 100),
+                "readiness": readiness,
                 "ready_side": ready_side}
 
     votes = bull5 if side == "long" else bear5
@@ -527,11 +538,30 @@ def trade_suggestion(c, cs, fc, tf, votes_bull, votes_bear, s_ml, force_side=Non
 
 
 # ───────────────────────── بک‌تست سریع (سه‌مانعی) ─────────────────────────
-def quick_backtest(o, h, l, c, cs, tf, cost_pct=0.15):
-    """بک‌تست سریعِ همهٔ ستاپ‌ها با ورود کندل بعد، timeout و هزینه.
+BT_MIN_N = 30              # زیرِ این، وین‌ریتِ بک‌تست «نمونهٔ کم» است (همان مرزِ UI و decision.MIN_TRADES)
 
-    نتیجهٔ هر رویداد حتماً شمرده می‌شود و برخورد هم‌زمان SL/TP به‌صورت
-    محافظه‌کارانه باخت است.
+
+def wilson_ci(k, n, z=1.96):
+    """بازهٔ اطمینانِ ویلسون (۹۵٪) برای نرخِ برد، به درصد؛ بی‌نمونه ‹(None, None)›.
+
+    برخلافِ تقریبِ نرمال، با n کوچک یا نرخِ ۰/۱۰۰٪ هم در [۰، ۱۰۰] می‌ماند و صفرپهنا نمی‌شود.
+    """
+    if not n:
+        return None, None
+    p = k / n
+    den = 1.0 + z * z / n
+    mid = (p + z * z / (2 * n)) / den
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return round(max(mid - half, 0.0) * 100, 1), round(min(mid + half, 1.0) * 100, 1)
+
+
+def quick_backtest(o, h, l, c, cs, tf, cost_pct=0.15):
+    """بک‌تست سریعِ ستاپ‌های رویدادی با ورود کندل بعد، timeout و هزینه.
+
+    نتیجهٔ هر رویداد (حتی timeout) شمرده می‌شود و برخورد هم‌زمان SL/TP به‌صورت
+    محافظه‌کارانه باخت است. فقط برای نمایش: قاعدهٔ z/رأی را نمی‌سنجد، خنک‌شدنِ ۱۰ کندلی کوتاه‌تر
+    از سقفِ ۴۰ کندلیِ براکت است (معامله‌ها هم‌پوشان‌اند) و پنجرهٔ زنده n≈۶ می‌دهد — پس بازهٔ ویلسون
+    و پرچمِ small_n هم برمی‌گردد. کارنامهٔ واقعیِ قاعده decision.scorecards است.
     """
     n = len(c)
     wins = losses = timeouts = 0
@@ -559,10 +589,16 @@ def quick_backtest(o, h, l, c, cs, tf, cost_pct=0.15):
     total = wins + losses
     gross_win = sum(x for x in outcomes if x > 0)
     gross_loss = -sum(x for x in outcomes if x <= 0)
+    wr_lo, wr_hi = wilson_ci(wins, total)
     return {"n": total, "win_rate": (wins / total * 100) if total else None,
             "avg_r": (sum(outcomes) / total) if total else None,
             "timeouts": timeouts,
-            "profit_factor": gross_win / gross_loss if gross_loss > 0 else None}
+            "profit_factor": gross_win / gross_loss if gross_loss > 0 else None,
+            # فقط نمایش: پنجرهٔ ۴۲۰ کندلی حدودِ ۶ معامله می‌دهد (خطای معیارِ وین‌ریت ~۲۰ واحد)؛
+            # بازهٔ ۹۵٪ ویلسون و پرچمِ «نمونهٔ کم» تا عدد مثلِ کارنامه خوانده نشود
+            "win_rate_lo": wr_lo, "win_rate_hi": wr_hi,
+            "small_n": total < BT_MIN_N,
+            "scope": "setups"}                   # فقط ستاپ‌های رویدادی؛ قاعدهٔ z/رأی در این بک‌تست نیست
 
 
 # ───────────────────────── تحلیل کامل یک نماد/تایم‌فریم ─────────────────────────
@@ -619,7 +655,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         sg, st_ = setup_signal(cs, o, h, l, c, j)
         if sg != 0:
             if st_ in suspended:
-                break                                # ستاپِ معلق — انگار سیگنالی نبود
+                continue                             # ستاپِ معلق — انگار سیگنالی نبود: اسکن به کندلِ قبل می‌رود (break ستاپِ سالمِ n−2 را دور می‌انداخت)
             # اعتبار: قیمت از کندل ستاپ بیش از ۱٫۲ ATR خلاف جهت نرفته باشد
             if sg * (c[n - 1] - c[j]) >= -1.2 * float(cs["a14"][n - 1]):
                 live_sig, live_setup = sg, st_
@@ -628,6 +664,19 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         (action_stats.get("side") if action_stats and action_stats.get("policy_pass") else None)
     action_used = bool(live_sig == 0 and force and action_stats and action_stats.get("policy_pass"))
     tr = trade_suggestion(c, cs, fc, tf, vb, vs, s_ml, force_side=force)
+    # ── تصمیمِ خودِ قاعده، بی‌تحمیلِ «سیاستِ انتخابِ عمل» (فقط خروجیِ افزوده؛ هیچ خروجیِ دیگری عوض نمی‌شود) ──
+    # جدولِ تصمیم و دفترِ رو-به-جلو روی همین می‌مانند. دو لایه‌اش هم جدا گفته می‌شود — ستاپ و z/رأیِ خالص —
+    # به‌علاوهٔ RSI14 همان کندل، تا گونه‌های پیش‌ثبت‌شده (prereg_rule_variants_forward.json) از همین پنجره ساخته شوند.
+    zr = trade_suggestion(c, cs, fc, tf, vb, vs, s_ml)
+    setup_side = ("long" if live_sig == 1 else "short") if live_sig != 0 else None
+    rule_tr = (trade_suggestion(c, cs, fc, tf, vb, vs, s_ml, force_side=setup_side) if setup_side
+               else dict(zr))
+    rule_tr.update(setup=live_setup if setup_side else None, setup_observed=bool(setup_side),
+                   entry=float(c[-1]), atr14=float(cs["a14"][-1]),
+                   setup_side=setup_side, zrule_side=zr.get("side"), policy_forced=bool(action_used))
+    rule_trade = {k: (sig_round(vv) if isinstance(vv, float) else vv) for k, vv in rule_tr.items()}
+    _r14 = float(cs["rsi"][-1])
+    rule_trade["rsi14"] = _r14 if math.isfinite(_r14) else None   # گرد نمی‌شود: مرزِ ۳۰ باید دقیق بماند
     bt = quick_backtest(o, h, l, c, cs, tf, cost_pct=ex.get("cost", 0.15))
 
     # ── ویژگی‌سازی زنده + احتمال از متا-مدل ──
@@ -638,7 +687,7 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         # بدونِ ستاپِ رویدادی، setup خالی است (None) — قبلاً «zx» برچسب می‌خورد و UI «کراس z»
         # نشان می‌داد در حالی که فقط قاعدهٔ سطحیِ z/رأی جهت داده بود. ویژگی‌ها عوض نمی‌شوند:
         # event_features برای zx و None هر چهار پرچمِ ستاپ را صفر می‌گذارد. دفترِ کاندید/سایه
-        # مقدارِ خالی را مثل قبل «zx» ثبت می‌کنند (candidates.py / shadow.py: setup or "zx").
+        # مقدارِ خالی را «rule» ثبت می‌کنند، نه «zx» (candidates.RULE_SETUP / shadow.RULE_SETUP).
         setup_used = "ap" if action_used else live_setup if (live_sig != 0 and live_sig == d) else None
         policy_applicable = bool(action_used or (live_sig != 0 and live_sig == d and live_setup is not None))
         btc_align = True if btc_z is None else (btc_z * d > -0.3)   # همان آستانه آموزش
@@ -665,7 +714,8 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
         # مشاهدهٔ ستاپ ≠ مجوز معامله. side/grade فقط «چه ستاپی دیده شد» را نگه می‌دارند.
         tr["setup_observed"] = bool(policy_applicable and live_setup)
         if stats:
-            # «کالیبره ✓» فقط وقتی مرجعِ احتمال واقعاً برای تصمیم فعال است — نه سیاستِ مردود دادگاه
+            # p_win «کالیبره» فقط وقتی مرجعِ احتمال واقعاً برای تصمیم فعال است — نه سیاستِ مردود دادگاه
+            # (این پرچمِ p_win است، نه p_calibrated؛ آن فقط از مدلِ جهت‌یاب می‌آید — پایینِ analyze)
             calibrated = bool(
                 not stats.get("diagnostic_only")
                 and (
@@ -738,8 +788,9 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             tr["authority"] = None
             pst = (stats or {}).get("policy_test") or tr.get("policy_test") or {}
             if ex.get("toxic_tf"):
-                tr["status"] = ("مشاهده — تایم‌فریم روزانه در کارنامهٔ زنده زیان‌ده است؛ "
-                                "ورود فقط با سیاست نهاییِ دادگاه‌قبول مجاز است")
+                # پرچمِ ثابتِ کد (main: tf == "1d")، نه آمارِ زنده — دفترِ زنده برای 1d هنوز داوری ندارد
+                tr["status"] = ("مشاهده — تایم‌فریم روزانه فقط با سیاست نهاییِ دادگاه‌قبول مجوزِ ورود دارد "
+                                "(محدودیتِ ثابتِ کد، نه نتیجهٔ کارنامهٔ زنده)")
             elif stats and src == "policy" and not stats.get("policy_trusted"):
                 avg = pst.get("avg_net_r")
                 pf = pst.get("profit_factor")
@@ -917,16 +968,20 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
     regime = {"volatile": "پرنوسان", "trend": "رونددار",
               "range": "رنج", "transition": "انتقالی"}[regime_code]
 
+    # p_up فقط «احتمالِ بالارفتن تا افقِ H» است: یا از مدلِ جهت‌یابِ معتبر (کالیبره، تأییدشده OOS)،
+    # یا امتیازِ اکتشافیِ forecast() که احتمالِ کالیبره نیست (روی تاریخِ پیش از ۲۰۲۶ مهارتی نداشت).
     p_up = fc["p_up"]
+    p_up_kind = "heuristic"
     if dir_stats:
-        # اولویت با مدل جهت‌یاب همیشه‌روشن (آموزش‌دیده روی ده‌ها هزار نمونه، تأییدشده OOS)
         p_up = dir_stats["p_up"]
-        calibrated = True
-    elif calibrated and tr.get("p_win") is not None:
-        # احتمال از فراوانی واقعی ستاپ‌های مشابه تاریخی (کالیبره)
-        p_up = tr["p_win"] if tr["side"] == "long" else 100 - tr["p_win"]
-    # ترکیبِ win_rateِ بک‌تست حذف شد: آن نرخِ بردِ معامله‌های براکتیِ ستاپ‌ها در **هر دو جهت**
-    # است، نه احتمالِ بالارفتن؛ آمیختنش با p_up عدد را بی‌دلیل به ۶۵/۳۵ می‌کشید.
+        p_up_kind = "model"
+    # p_win (احتمالِ بردِ براکتِ 1R/1.8R) هرگز به p_up نگاشته نمی‌شود: نرخِ پایه‌اش ~۳۶٪ است نه ۵۰٪،
+    # پس «p_up = p_win» لانگِ عادی را نزولی و شورت را صعودی نشان می‌داد و مشاور پوزیشنِ سالم را می‌بست.
+    # p_win جدا می‌ماند و فقط با پایهٔ براکت (سربه‌سرِ ۱/۲٫۸) مقایسه می‌شود.
+    # ترکیبِ win_rateِ بک‌تست هم به همین دلیل حذف شد: نرخِ بردِ براکت در **هر دو جهت** است، نه احتمالِ بالارفتن.
+    if tr.get("p_win") is not None:
+        tr["p_win_base"] = round(bracket.breakeven_win_rate() * 100, 1)
+        tr["p_win_calibrated"] = calibrated      # مرجعِ p_win مدلِ ستاپ یا سیاستِ دادگاه‌قبول است
 
     return {
         "tf": tf,
@@ -942,13 +997,17 @@ def analyze(kl, tf, btc_z=None, predict_fn=None, extras=None, dir_fn=None, actio
             "مومنتوم": round(float(cs["s_mom"][-1]), 2),
             "حجم": round(float(cs["s_vol"][-1]), 2),
             "ساختار": round(float(cs["s_struct"][-1]), 2),
-            "هوش مصنوعی": round(s_ml, 2),
+            # رأیِ kNN روی ~۱۷۸ نمونهٔ پنجرهٔ ۴۲۰ کندلی — در 5m..4h مهارتی نداشت؛ «هوش مصنوعی» خواندنش
+            # تأییدی نشان می‌داد که وجود ندارد. فقط برچسب عوض شد؛ رأی و شمارش دست‌نخورده‌اند (decision.COMPONENTS).
+            KNN_LABEL: round(s_ml, 2),
         },
         "regime": regime, "adx": round(adx_l, 1), "chop": round(chop_l, 1), "atr_pct": round(atr_pct, 0),
         "p_up": round(p_up, 1),
-        "p_calibrated": calibrated,
+        "p_calibrated": p_up_kind == "model",     # فقط مدلِ جهت‌یابِ معتبر؛ نه p_win و نه سیاست
+        "p_up_kind": p_up_kind,                    # "model" | "heuristic" (امتیازِ اکتشافی، نه احتمال)
         "forecast": {k: (sig_round(vv) if isinstance(vv, float) else vv)
                      for k, vv in fc.items() if k not in ("path_log", "trend_w", "conf", "sig1")},
         "trade": {k: (sig_round(vv) if isinstance(vv, float) else vv) for k, vv in tr.items()},
+        "rule_trade": rule_trade,
         "backtest": bt,
     }

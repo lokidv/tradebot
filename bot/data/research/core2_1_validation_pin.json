@@ -1,0 +1,19 @@
+{
+ "what": "core v2.1 validation pin — holdout refuses unless every hash below matches",
+ "created_utc": "2026-09-24 13:55:54",
+ "report": "core2_1_validation_20260924_135542.json",
+ "report_sha256_lf": "0ab7678c70794e755705632d70e37674c17eaf5050413648a6ca618317920f84",
+ "prereg_sha256_lf": "fc0f8fc8864f57fa61e41470ca02d59245705b5c5f4504e0025b14c7c742b4c9",
+ "code_sha256_lf": {
+  "bot/core2_1.py": "8f7e0bbc6fa75272235fdf8a1b4392029f01c17368f0e1ed0eea2fab3ac3b225",
+  "bot/core2.py": "69196d72e2501b5e0fa45a465c71d0bd0c8aab651eb6638906ef84a2fdf5b23b",
+  "bot/core_feats.py": "794f25df3d0db3d7161d0831465bf9c6d1263d5c9c1673847c1fc65a1bfd17b9",
+  "bot/bracket.py": "11aab4b0344c2dbb691c97100b64d64eac3e6b5ff31dc1ae0b444dc26e25542e",
+  "bot/decision.py": "0cacd5093193a30d2772116b2b0d7ab3ef3cb7a79699d9090a713b168d30e7e0",
+  "bot/engine.py": "85eced2503abf3ed52bd8767fde59a13fd68071e5ea1f846ca9f31b00c8e28a8",
+  "bot/tf_spec.py": "73c39809dc5135276861908d53b6c86a5b1f90b5f926b1692872344da9f23209",
+  "bot/watchlist.py": "bbf88cc3a8b4d660de7b5e4dfe43ee68dd44dc7a14f036a02b1364d308a01fcf",
+  "tools/train_core2_1.py": "7137dea6f8468de994b6d4aa1758205f8e280c0da111b1b73e55202b4126b8b6"
+ },
+ "adopted": []
+}

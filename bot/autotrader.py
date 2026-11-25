@@ -730,7 +730,8 @@ def _cycle():
             continue
         if not row or row.get("p_up") is None or not row.get("p_calibrated"):
             continue
-        adv = advisor.advise(p, {"p_up": row["p_up"]}, btc_z=(ov.get("btc") or {}).get("z"))
+        adv = advisor.advise(p, {"p_up": row["p_up"], "p_calibrated": True},   # بالا بررسی شد
+                             btc_z=(ov.get("btc") or {}).get("z"))
         if adv["urgency"] >= 2 and adv["action"] in ("close_now", "lock_profit"):
             lp = prices.get(p["symbol"]) or _live(p["symbol"])
             if lp:

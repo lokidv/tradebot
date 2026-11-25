@@ -143,23 +143,28 @@ class ResolutionMatchesTheTrainingLabelTests(_LedgerMixin, unittest.TestCase):
         self.assertIsNone(candidates.resolve_one(cand, kl))
 
     def test_resolve_walks_the_ledger_and_is_idempotent(self):
-        # گامِ یک‌دقیقه‌ای تا کندلِ سیگنال از گاردِ «فیدِ مرده» رد شود
-        kl = bars(80, start_price=100.0, drift=0.5, step=60_000)
+        # کندل‌های ساعتیِ واقعی‌شکل: کندلِ سیگنال یک ساعت پیش (از گاردِ «فیدِ مرده» رد می‌شود) و
+        # کندلِ ورود دقیقاً یک کندل بعد — نه گامِ یک‌دقیقه‌ای که حالا «no_data» می‌شود (LP-7)
+        kl = bars(80, start_price=100.0, drift=0.5, t0=int(time.time() * 1000) - 11 * 3_600_000)
         self.assertTrue(candidates.log_candidate(make_row(zt=kl["t"][10]), "1h"))
         self.assertEqual(candidates.resolve(lambda *_a: kl), 1)
         self.assertEqual(candidates.resolve(lambda *_a: kl), 0)
-        self.assertEqual(len(candidates._read(candidates.RESULT_PATH)), 1)
+        rows = candidates._read(candidates.RESULT_PATH)
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("skipped", rows[0])
+        self.assertAlmostEqual(rows[0]["entry"], kl["o"][11])
 
 
 class HonestStatsTests(_LedgerMixin, unittest.TestCase):
     def test_stats_cover_all_candidates_and_can_isolate_the_tradeable_ones(self):
         now = int(time.time() * 1000)
+        v = candidates.SETUP_KEY_V          # ردیفِ نوع‌جدید: «zx» یعنی واقعاً کراسِ z
         rows = [
-            {"id": "a", "tf": "1h", "setup": "zx", "side": "long", "candle_ts": now,
+            {"id": "a", "tf": "1h", "setup": "zx", "setup_v": v, "side": "long", "candle_ts": now,
              "net_r": 1.6, "was_tradeable": True, "blocking_gates": []},
-            {"id": "b", "tf": "1h", "setup": "zx", "side": "long", "candle_ts": now,
+            {"id": "b", "tf": "1h", "setup": "zx", "setup_v": v, "side": "long", "candle_ts": now,
              "net_r": -1.1, "was_tradeable": False, "blocking_gates": ["gates_allowlist"]},
-            {"id": "c", "tf": "1h", "setup": "zx", "side": "short", "candle_ts": now,
+            {"id": "c", "tf": "1h", "setup": "zx", "setup_v": v, "side": "short", "candle_ts": now,
              "net_r": -1.1, "was_tradeable": False, "blocking_gates": ["gates_allowlist"]},
         ]
         for r in rows:

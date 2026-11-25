@@ -3,7 +3,6 @@
 طبقه‌بند ensemble احتمال برد و مدل مستقل Ridge/LightGBM برای بازده خالص روی ۲۳ ویژگی.
 انتخاب، کالیبراسیون و آزمون نهایی پنجره‌های زمانی جدا و purged دارند. خروجی زنده
 همراه بازهٔ عدم‌قطعیت، کران پایین EV، اعتبار رژیم و تشخیص خارج‌ازدامنه است."""
-import bisect
 import json
 import math
 import os
@@ -23,6 +22,7 @@ import paths
 import research
 import stats
 import universe
+import watchlist
 
 try:
     import lightgbm as lgb
@@ -35,7 +35,10 @@ COST_PCT = 0.15
 # هفتگی، نه روزانه: بازسازیِ روزانه همان پنجرهٔ آزمون را ۳۶۵ بار در سال دوباره قضاوت می‌کرد
 REBUILD_SEC = 7 * 86400
 TRUST_STREAK = 2         # اعتماد فقط پس از دو ساختِ متوالیِ موفق روشن می‌شود
-CALIB_VERSION = 22       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+CALIB_VERSION = 23       # با هر تغییرِ ویژگی‌ها/براکت/فرمتِ مدل یک واحد اضافه شود تا مدل قدیمی خودکار بازساخته شود
+# ۲۳: یک تعریف برای آموزش و اجرا — وضعیتِ بازار از سبدِ ثابتِ پنج‌ارزی (پهنا و رتبهٔ نسبی خنثی)،
+#     فاندینگِ آخرین تسویهٔ پیش از بسته‌شدنِ کندل با تاریخچهٔ کامل، شبکهٔ نمونهٔ متراکمِ سراسری،
+#     براکتِ کاملِ ۴۰ کندلی، هزینهٔ زندهٔ هم‌واحد با آموزش (R)، embargoِ ۴۱ کندلیِ سیاستِ عمل
 # ۲۲: پنجرهٔ آزمونِ منجمد از آموزش کنار گذاشته می‌شود؛ اعتماد با هیسترزیسِ دو ساخت
 # ۲۱: جهانِ نقطه‌-در-زمان — رویداد فقط اگر ارز در همان ماه جزوِ ۱۰۰ برتر بوده
 # ۲۰: هزینهٔ هر رویداد = ردهٔ نقدشوندگیِ لحظه‌ای + فاندینگِ واقعیِ مدتِ نگه‌داری
@@ -43,6 +46,11 @@ CALIB_VERSION = 22       # با هر تغییرِ ویژگی‌ها/براکت/�
 # ۱۹: حذفِ ویژگیِ مردهٔ dxy_dir (۲۴ → ۲۳ ویژگی) + یکسان‌سازیِ فرمولِ فاندینگِ آموزش/اجرا
 WF_FOLDS = 5             # تعداد فولدهای Walk-Forward
 CALIB_UNIVERSE_N = 100   # اندازهٔ جهانِ نقطه‌-در-زمان در هر ماه
+# سبدِ مرجعِ «وضعیتِ کلِ بازار» (دامیننس BTC، ETH/BTC) — **همان** پنج ارزی که برنامه زنده
+# می‌خواند (watchlist، به خواستِ کاربر برای سرعت). قبلاً آموزش ۱۰۰ ارز را می‌دید و اجرا فقط
+# کشِ نیمه‌تازهٔ همین پنج تا را؛ دامیننس زنده در ~۹۷٪ کندل‌ها روی +۱ می‌ماند (calib-F1).
+MARKET_BASKET = tuple(watchlist.SYMBOLS)
+DENSE_STRIDE = 4         # نمونهٔ متراکم: هر ۴ کندل — روی شبکهٔ زمانیِ سراسری، نه اندیسِ هر ارز
 WF_EMBARGO = 24          # fallback فقط برای ورودی‌های بدون timestamp
 MIN_BRIER_SKILL = 0.01   # حداقل ۱٪ بهبود نسبت به پیش‌بینیِ ثابتِ نرخ پایه
 MIN_SETUP_LIFT = 4.0
@@ -395,20 +403,39 @@ def _walk_forward(X, y, kind, extra=None, ts=None, embargo_ms=0):
     return oos_p
 
 
+def _thirds(pred):
+    """اندیس‌های یک‌سومِ پایین و بالای ``pred``؛ تساوی با ترتیبِ شبه‌تصادفیِ ثابت شکسته می‌شود.
+
+    ``argsort`` روی مقدارهای برابر ترتیبِ اندیس — یعنی **زمان** — را نگه می‌داشت؛ با پیش‌بینیِ
+    ثابت (شیبِ کالیبراسیونِ صفر) «لیفت» همان روندِ زمانیِ پنجرهٔ آزمون می‌شد (4h: ۰٫۵۵R با
+    rank_ic صفر — calib-F11). پیش‌بینیِ (تقریباً) ثابت هیچ رتبه‌ای ندارد ⇒ None.
+    """
+    pred = np.asarray(pred, float)
+    if len(pred) < 2 or float(np.std(pred)) < 1e-12:
+        return None
+    tie_break = np.random.RandomState(len(pred)).random_sample(len(pred))
+    order = np.lexsort((tie_break, pred))          # کلیدِ اصلی pred؛ بی‌تساوی همان argsort است
+    third = max(len(order) // 3, 1)
+    return order[:third], order[-third:]
+
+
 def _lift(oos_p, y):
     mask = ~np.isnan(oos_p)
     if mask.sum() < 80:
         return -99.0, mask
     po, yo = oos_p[mask], y[mask]
-    order = np.argsort(po)
-    third = max(len(order) // 3, 1)
-    return float(yo[order[-third:]].mean() - yo[order[:third]].mean()) * 100, mask
+    th = _thirds(po)
+    if th is None:
+        return 0.0, mask
+    return float(yo[th[1]].mean() - yo[th[0]].mean()) * 100, mask
 
 
 def _lift_on(p, yv):
-    order = np.argsort(p)
-    third = max(len(order) // 3, 1)
-    return float(yv[order[-third:]].mean() - yv[order[:third]].mean()) * 100
+    th = _thirds(p)
+    if th is None:
+        return 0.0
+    yv = np.asarray(yv, float)
+    return float(yv[th[1]].mean() - yv[th[0]].mean()) * 100
 
 
 def _fit_model(X, y, champion=None, ts=None, champion_ts=0.0, embargo_ms=0):
@@ -647,18 +674,74 @@ def _walk_forward_ridge_rolling(X, y, ts, embargo_ms, lookback_groups):
     return oos
 
 
+def _avg_rank(a):
+    """رتبهٔ میانگین (مقدارهای برابر رتبهٔ یکسان می‌گیرند، نه رتبه به ترتیبِ زمان)."""
+    a = np.asarray(a, float)
+    order = np.argsort(a, kind="mergesort")
+    ranks = np.empty(len(a), float)
+    ranks[order] = np.arange(len(a), dtype=float)
+    _, inv, counts = np.unique(a, return_inverse=True, return_counts=True)
+    sums = np.bincount(inv, weights=ranks)
+    return (sums / counts)[inv]
+
+
 def _rank_corr(a, b):
     if len(a) < 3 or np.std(a) < 1e-12 or np.std(b) < 1e-12:
         return 0.0
-    ra = np.argsort(np.argsort(a)).astype(float)
-    rb = np.argsort(np.argsort(b)).astype(float)
-    return float(np.corrcoef(ra, rb)[0, 1])
+    return float(np.corrcoef(_avg_rank(a), _avg_rank(b))[0, 1])
 
 
 def _edge_lift(pred, actual):
-    order = np.argsort(pred)
-    third = max(len(order) // 3, 1)
-    return float(actual[order[-third:]].mean() - actual[order[:third]].mean())
+    th = _thirds(pred)
+    if th is None:
+        return 0.0                                 # پیش‌بینیِ ثابت ⇒ لیفت صفر، نه روندِ زمانیِ آزمون
+    actual = np.asarray(actual, float)
+    return float(actual[th[1]].mean() - actual[th[0]].mean())
+
+
+def _trained_cost_meta(tf, cost_pct, risk_pct, rows, funding_pct=None):
+    """هزینه‌ای که مدل **واقعاً** یاد گرفته، برای تعدیلِ زنده (calib-F2).
+
+    برچسب‌ها ``r − هزینهٔ هر ردیف/ریسکِ همان ردیف`` هستند، ولی مدل‌ها بینِ نمادها تجمیعی‌اند و
+    هیچ ویژگی‌ای نقدشوندگی یا نوسانِ مطلق را نمی‌بیند؛ پس خروجیِ کالیبره فقط **میانگینِ**
+    هزینه در واحدِ R را کم می‌کند — روی ردیف‌های calibration، جایی که intercept تنظیم شد.
+    قبلاً ``trained_cost_pct=0.15`` ذخیره می‌شد و زنده ``(ردهٔ نماد − ۰٫۱۵)/ریسک`` کم می‌شد؛
+    خطایی تا ±۰٫۱۵R، هم‌اندازهٔ آستانه‌های اعتماد (TRX 1h باد می‌کرد، SOL فرو می‌رفت).
+    """
+    cost_pct = np.asarray(cost_pct, float)[rows]
+    risk_pct = np.asarray(risk_pct, float)[rows]
+    # فاندینگِ برآوردیِ زنده = میانگینِ فاندینگی که همین ردیف‌ها واقعاً پرداختند (رویدادها: تسویه‌های
+    # واقعیِ مدتِ نگه‌داری)؛ نمونه‌های متراکم همان برآوردِ ثابتِ نیمِ براکت را دارند.
+    live_funding = costs.expected_funding_pct(tf, bracket.MAX_BARS / 2)
+    if funding_pct is not None:
+        fund = np.asarray(funding_pct, float)[rows]
+        fund = fund[np.isfinite(fund)]
+        if len(fund):
+            live_funding = round(float(np.mean(fund)), 6)
+    return {
+        "trained_cost_pct": round(float(np.mean(cost_pct)), 6) if len(cost_pct) else float(COST_PCT),
+        "trained_cost_r": round(float(np.mean(cost_pct / risk_pct)), 6) if len(cost_pct) else 0.0,
+        "live_funding_pct": live_funding,
+    }
+
+
+def _event_funding(evs):
+    """سهمِ فاندینگ از هزینهٔ هر رویداد (هزینه − ردهٔ نقدشوندگی)؛ رویدادِ بی ``tier_pct`` ⇒ NaN."""
+    return np.asarray([float(e["cost_pct"]) - float(e["tier_pct"])
+                       if "tier_pct" in e and "cost_pct" in e else np.nan for e in evs], float)
+
+
+def _live_cost_delta_r(m, cost_pct, risk_pct):
+    """چند R باید از خروجیِ کالیبرهٔ مدل کم شود تا هزینهٔ **همین** معامله را ببیند.
+
+    ``(ردهٔ زنده + فاندینگِ برآوردی)/ریسکِ زنده − میانگینِ هزینهٔ R ِ آموزش``. جدولِ
+    پیش از v23 (بی ``trained_cost_r``) همان فرمولِ قدیمی را می‌گیرد.
+    """
+    risk = max(float(risk_pct), 0.05)
+    if m.get("trained_cost_r") is None:
+        return (float(cost_pct) - float(m.get("trained_cost_pct", COST_PCT))) / risk
+    live = float(cost_pct) + float(m.get("live_funding_pct") or 0.0)
+    return live / risk - float(m["trained_cost_r"])
 
 
 def _fit_edge_model(events, tf, cost_pct=COST_PCT):
@@ -746,7 +829,7 @@ def _fit_edge_model(events, tf, cost_pct=COST_PCT):
         "kind": best_kind, "n_feat": X.shape[1],
         "mu": mu.tolist(), "sd": sd.tolist(),
         "calibration": [slope, intercept], "trained_ts": time.time(),
-        "trained_cost_pct": float(cost_pct),
+        **_trained_cost_meta(tf, ev_cost, risk, cal_rows, _event_funding(evs)),
         "n_train": len(idx), "n_oos": len(test_rows),
         "oos_rank_ic": round(rank_ic, 4),
         "oos_lift_r": round(lift_r, 4),
@@ -786,8 +869,8 @@ def _score_edge(m, feats, risk_pct, cost_pct, regime=None):
         raw = float(_ridge_pred(model, x)[0])
     slope, intercept = m.get("calibration", [1.0, 0.0])
     edge_r = float(np.clip(float(slope) * raw + float(intercept), -1.5, 2.2))
-    # اگر هزینهٔ نماد از هزینهٔ آموزش بیشتر است، اختلاف در واحد R کم می‌شود.
-    edge_r -= (float(cost_pct) - float(m.get("trained_cost_pct", COST_PCT))) / max(risk_pct, 0.05)
+    # هزینهٔ همین نماد/ریسک به‌جای میانگینِ هزینه‌ای که مدل یاد گرفته (calib-F2)
+    edge_r -= _live_cost_delta_r(m, cost_pct, risk_pct)
     n_oos = max(int(m.get("n_oos") or 1), 1)
     # خطای یک پیش‌بینی تازه نباید مثل خطای میانگین با sqrt(n) تقریباً صفر شود.
     # n/20 یک اندازه‌نمونهٔ مؤثر محافظه‌کارانه برای پنجره‌های زمانی هم‌بسته است.
@@ -1016,7 +1099,7 @@ def _fit_policy_model(events, tf, cost_pct=COST_PCT):
     feat_sd = np.where(feat_sd < 1e-9, 1.0, feat_sd)
     meta = {
         "n_feat": X.shape[1], "trained_ts": time.time(),
-        "trained_cost_pct": float(cost_pct),
+        **_trained_cost_meta(tf, ev_cost, risk, cal_rows, _event_funding(evs)),
         "prob_kind": prob_kind, "prob_model": _ser(prob_kind, prob_fit),
         "edge_kind": edge_kind,
         "edge_model": ({"lgbm": edge_fit.model_to_string()} if edge_kind == "lgb_edge"
@@ -1092,7 +1175,7 @@ def _score_policy(m, feats, risk_pct, cost_pct, regime=None):
         raw_edge = float(_ridge_pred(edge_model, x)[0])
     es, ei = m.get("edge_calibration", [1.0, 0.0])
     edge_r = float(np.clip(float(es) * raw_edge + float(ei), -1.5, 2.2))
-    edge_r -= (float(cost_pct) - float(m.get("trained_cost_pct", COST_PCT))) / max(float(risk_pct), 0.05)
+    edge_r -= _live_cost_delta_r(m, cost_pct, risk_pct)
     norm = m["live_norm"]
     pz = (p - float(norm["p_mu"])) / max(float(norm["p_sd"]), 1e-6)
     ez = (edge_r - float(norm["edge_mu"])) / max(float(norm["edge_sd"]), 1e-6)
@@ -1145,7 +1228,13 @@ def _time_partitions(rows, timestamps, purge_ms=0):
 
 
 def _cross_section_mask(score, rows, timestamps, quantile, min_group=8):
-    """انتخاب بهترین درصد در هر لحظه؛ قرارداد آموزش دقیقاً با رتبه‌بندی live یکسان می‌شود."""
+    """انتخاب بهترین درصد در هر لحظه (رتبه فقط بینِ ردیف‌های هم‌زمان، گروهِ زیرِ ``min_group`` هیچ).
+
+    هم‌شکلِ رتبه‌بندیِ زنده است، نه یکسان با آن: زنده بینِ نامزدهای فعالِ همان کندل در میانِ ارزهای
+    overview رتبه می‌گیرد و این‌جا بینِ همهٔ نمونه‌های متراکمِ همان timestamp. شبکهٔ سراسریِ
+    نمونه‌ها (``_dense_slot``) و نازک‌سازیِ لحظه‌به‌لحظه (``_thin_whole_timestamps``) گروه‌های
+    هم‌زمان را کامل نگه می‌دارند (calib-F14).
+    """
     score = np.asarray(score, float)
     rows = np.asarray(rows, dtype=int)
     timestamps = np.asarray(timestamps, dtype=np.int64)
@@ -1157,6 +1246,25 @@ def _cross_section_mask(score, rows, timestamps, quantile, min_group=8):
         cutoff = float(np.quantile(score[pos], quantile))
         chosen[pos] = score[pos] >= cutoff
     return chosen
+
+
+def _thin_whole_timestamps(ts_sorted, cap):
+    """اندیسِ ردیف‌های ماندنی (حداکثر ``cap``): لحظه‌هایی با فاصلهٔ یکنواخت در کلِ تاریخ، هر لحظه
+    با **همهٔ** ردیف‌هایش. نازک‌سازیِ ردیف‌به‌ردیف (linspace روی ردیف‌ها) گروه‌های هم‌زمانِ
+    ``_cross_section_mask`` را تکه می‌کرد و بخشی از آن‌ها زیرِ کفِ ۸ ردیف هرگز انتخاب نمی‌شد
+    (calib-F14). ``ts_sorted`` صعودی است؛ ردیف‌های یک لحظه پشتِ هم‌اند."""
+    ts = np.asarray(ts_sorted, dtype=np.int64)
+    if len(ts) <= cap:
+        return np.arange(len(ts))
+    uniq, start, counts = np.unique(ts, return_index=True, return_counts=True)
+    n_keep = max(1, len(uniq) * cap // len(ts))
+    while True:
+        pick = np.unique(np.linspace(0, len(uniq) - 1, n_keep, dtype=int))
+        total = int(counts[pick].sum())
+        if total <= cap or n_keep <= 1:
+            break
+        n_keep = max(1, min(n_keep - 1, n_keep * cap // total))
+    return np.concatenate([np.arange(start[i], start[i] + counts[i]) for i in pick])
 
 
 def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
@@ -1172,7 +1280,7 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     pairs = sorted(zip(dir_y, dir_X, dir_R), key=lambda p: p[0][0])
     if len(pairs) > ACTION_MAX_SAMPLES:
         # پوشش یکنواختِ کل تاریخ، نه بریدنِ صرفاً ابتدای/انتهای رژیم؛ timestamp در split حفظ می‌شود.
-        keep = np.linspace(0, len(pairs) - 1, ACTION_MAX_SAMPLES, dtype=int)
+        keep = _thin_whole_timestamps([p[0][0] for p in pairs], ACTION_MAX_SAMPLES)
         pairs = [pairs[i] for i in keep]
     if not pairs or not (
         isinstance(pairs[0][1], (list, tuple)) and len(pairs[0][1]) == 2
@@ -1193,7 +1301,9 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     X[0::2], X[1::2] = X_long, X_short
     target[0::2], target[1::2] = net_long, net_short
     ts_stack = np.repeat(timestamps, 2)
-    embargo = engine.HORIZON[tf] * TF_MS[tf]
+    # برچسب‌ها نتیجهٔ براکتِ ۴۰ کندلی‌اند (کندل‌های i+1..i+40)، نه افقِ جهت‌یاب (۳۰-۳۶ کندل):
+    # purge/embargo و بلوکِ بوت‌استرپ باید کلِ عمرِ برچسب را بپوشانند (calib-F8)
+    embargo = (bracket.MAX_BARS + 1) * TF_MS[tf]
     oof_all = _walk_forward_edge(X, target, ts_stack, embargo)
     for window in ACTION_ROLLING_WINDOWS[tf]:
         oof_all[f"ridge_roll_{window}"] = _walk_forward_ridge_rolling(
@@ -1314,7 +1424,7 @@ def _fit_action_policy(dir_X, dir_y, dir_R, tf, cost_pct=COST_PCT):
     feat_sd = np.where(feat_sd < 1e-9, 1.0, feat_sd)
     return {
         "kind": best_kind, "n_feat": d, "trained_ts": time.time(),
-        "trained_cost_pct": float(cost_pct),
+        **_trained_cost_meta(tf, sample_cost, risks, cal_rows),
         "model": ({"lgbm": fitted.model_to_string()} if fit_kind == "lgb_edge"
                   else {"w": fitted["w"].tolist(), "mu": fitted["mu"].tolist(), "sd": fitted["sd"].tolist()}),
         "rolling_groups": rolling_window,
@@ -1374,7 +1484,7 @@ def _score_action_policy(m, long_feats, short_feats, risk_pct, cost_pct):
     slope, intercept = m.get("calibration", [1.0, 0.0])
     long_r = float(np.clip(float(slope) * _action_edge(m, xl) + float(intercept), -1.5, 2.2))
     short_r = float(np.clip(float(slope) * _action_edge(m, xs) + float(intercept), -1.5, 2.2))
-    cost_delta = (float(cost_pct) - float(m.get("trained_cost_pct", COST_PCT))) / max(float(risk_pct), 0.05)
+    cost_delta = _live_cost_delta_r(m, cost_pct, risk_pct)      # هر دو سمت یکسان ⇒ سمت عوض نمی‌شود
     long_r -= cost_delta
     short_r -= cost_delta
     side = "long" if long_r >= short_r else "short"
@@ -1451,15 +1561,6 @@ def keys_for(direction, z, votes, trending, btc_align):
     return [f"{d}|{zb}|{v}|{t}|{b}", f"{d}|{zb}|{t}", f"{zb}|{t}", "all"]
 
 
-def _fz_at(fz_list, ts):
-    """آخرین z فاندینگ قبل از ts (جست‌وجوی دودویی)."""
-    if not fz_list:
-        return 0.0
-    keys = [row[0] for row in fz_list]
-    i = bisect.bisect_right(keys, ts) - 1
-    return float(fz_list[i][1]) if i >= 0 else 0.0
-
-
 def mom_norm_map(ts_list, closes, look=20, win=250):
     """نقشه ts→مومنتوم نرمال‌شده [-1,1] با انحراف‌معیارِ *علّیِ متحرک* (فقط داده گذشته — بدون نشتی آینده).
     مشترک آموزش/اجرا: هر ردیف با انحراف‌معیار پنجرهٔ گذشتهٔ خودش مقیاس می‌شود."""
@@ -1471,6 +1572,55 @@ def mom_norm_map(ts_list, closes, look=20, win=250):
         sd = (float(np.std(seg)) if len(seg) >= 10 else 0.02) or 0.02
         out[ts_list[i]] = max(-1.0, min(1.0, r / (2 * sd)))
     return out
+
+
+def market_state_maps(hists, basket=None):
+    """نقشه‌های وضعیتِ کلِ بازار ``{"dom": {ts: m}, "ethbtc": {ts: m}}`` — **یک** کد برای آموزش و اجرا.
+
+    تعریف (calib-F1، نسخهٔ ۲۳):
+    * ``dom`` — مومنتومِ نرمال‌شدهٔ سهمِ BTC از حجمِ دلاریِ سبدِ ثابتِ ``MARKET_BASKET``، فقط در
+      لحظه‌هایی که **همهٔ** ارزهای سبد کندل دارند (جمعیتِ ناقص ⇒ بی‌مقدار ⇒ ۰). قبلاً آموزش
+      ۱۰۰ ارز را جمع می‌زد و اجرا هر چه در کش بود؛ کشِ نیمه‌تازه سهمِ BTC در آخرین کندل را ۱٫۰ و
+      دامیننس را در ~۹۷٪ کندل‌ها +۱ می‌کرد.
+    * ``ethbtc`` — مومنتومِ نسبتِ ETH/BTC روی کندل‌های مشترک (بی‌تغییر).
+    * پهنای بازار و رتبهٔ نسبی خنثی‌اند (``features.DISABLED``).
+
+    مقدارِ هر لحظه فقط به ۲۷۰ کندلِ مشترکِ قبلش بسته است، پس ۴۲۰ کندلِ زنده همان عددِ آموزش را می‌دهد.
+    """
+    basket = tuple(basket or MARKET_BASKET)
+    out = {"dom": {}, "ethbtc": {}}
+    if basket and all((hists or {}).get(s) for s in basket):
+        tot, btc, cnt = {}, {}, {}
+        for s in basket:
+            kl = hists[s]
+            for t, c_, v_ in zip(kl["t"], kl["c"], kl["v"]):
+                dv = float(c_) * float(v_)
+                if not math.isfinite(dv):
+                    continue
+                tot[t] = tot.get(t, 0.0) + dv
+                cnt[t] = cnt.get(t, 0) + 1
+                if s == "BTCUSDT":
+                    btc[t] = dv
+        dom_ts = sorted(t for t, k in cnt.items() if k == len(basket) and tot[t] > 0 and t in btc)
+        if len(dom_ts) > 40:
+            out["dom"] = mom_norm_map(dom_ts, [btc[t] / tot[t] for t in dom_ts])
+    kb, ke = (hists or {}).get("BTCUSDT"), (hists or {}).get("ETHUSDT")
+    if kb and ke:
+        bb_ = dict(zip(kb["t"], kb["c"]))
+        ee_ = dict(zip(ke["t"], ke["c"]))
+        common = sorted(t for t in ee_ if t in bb_)
+        if len(common) > 40:
+            out["ethbtc"] = mom_norm_map(common, [ee_[t] / bb_[t] for t in common])
+    return out
+
+
+def market_state_at(hists, tk, basket=None):
+    """وضعیتِ بازار در **یک** کندلِ مشخص (زمانِ بازِ ``tk``) — همان کلیدهای ``extras`` زنده.
+    کندلی که در سبد کامل نیست مقدارِ خنثی (۰) می‌گیرد، مثلِ ``dict.get(ts, 0.0)`` ِ آموزش."""
+    maps = market_state_maps(hists, basket)
+    return {"breadth": 0.0,
+            "dom": float(maps["dom"].get(tk, 0.0)),
+            "ethbtc": float(maps["ethbtc"].get(tk, 0.0))}
 
 
 def _htf_sign(zmap, ts, htf):
@@ -1487,6 +1637,19 @@ def _htf_sign(zmap, ts, htf):
     return 1 if z > 0.3 else -1 if z < -0.3 else 0
 
 
+def _dense_slot(ts, bar_ms):
+    """آیا کندلِ ``ts`` نمونهٔ متراکم است — تابعی فقط از زمان، پس برای همهٔ ارزها یکسان (calib-F14).
+
+    هر ``DENSE_STRIDE`` کندل یکی؛ روی تایم‌فریم‌های درون‌روزی با چرخشِ روزانه (شمارهٔ روز به
+    شمارهٔ کندل افزوده می‌شود) تا همهٔ ساعت‌های روز نمونه داشته باشند — باقی‌ماندهٔ ثابت روی 1h
+    فقط ۶ ساعت از ۲۴ و روی 4h فقط ۰۰/۰۸/۱۶ را می‌دید و hour_sin/cos زنده بیرون از آموزش بود.
+    """
+    k = int(ts) // bar_ms
+    if bar_ms < 86_400_000:
+        k += int(ts) // 86_400_000
+    return k % DENSE_STRIDE == 0
+
+
 # ───────────────────── استخراج رویدادها + نمونه‌های جهت‌یاب ─────────────────────
 def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=None,
                    breadth_map=None, dom_map=None, ethbtc_map=None, funding_rows=None):
@@ -1501,18 +1664,34 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
     # نمونه‌های مدل جهت‌یاب همیشه‌روشن: هر ۴ کندل یک نمونه — برچسب = جهت بازده تا افق H
     H = engine.HORIZON[tf]
     dir_X, dir_y, dir_R = [], [], []
+    # فاندینگ: آخرین تسویهٔ پیش از **بسته‌شدنِ** کندل — همان قاعدهٔ اجرا (features.funding_z_at)
+    fz_keys = [row[0] for row in fz_list] if fz_list else []
+
+    def _fz(ts_):
+        return features.funding_z_at(fz_list, ts_, TF_MS[tf], keys=fz_keys)
 
     def _barrier(i, sig):
         res = bracket.signal_trade(o, h, l, c, cs["a14"][i], i, sig)
         return None if res is None else res["gross_r"]
 
-    for i in range(260, n - H - 1, 4):
+    # ── شبکهٔ نمونه‌ها ──
+    # * سراسری، نه اندیسِ هر ارز (calib-F14): ارزی که وسطِ پنجره لیست شده بود از اندیسِ خودش
+    #   هر ۴ کندل نمونه می‌گرفت و با بقیه هیچ مهرِ زمانیِ مشترکی نداشت؛ گروه‌های مقطعیِ
+    #   سیاستِ عمل (رتبه در هر لحظه) به ۴ زیرگروه می‌شکست. حالا ``_dense_slot`` — تابعی فقط از
+    #   زمان، برای همهٔ ارزها یکسان.
+    # * پایان: براکتِ کاملِ ۴۰ کندلی باید جا شود (calib-F13)؛ قبلاً نمونه‌های آخر پس از
+    #   H+1..۳۹ کندل روی c[n-1] «تایم‌اوت» می‌خوردند (همان چیزی که core2.replay_sides دور می‌ریزد).
+    bar_ms = TF_MS[tf]
+    dense_end = min(n - H - 1, n - bracket.MAX_BARS)
+    for i in range(260, dense_end):
         ts = ts_arr[i]
+        if not _dense_slot(ts, bar_ms):
+            continue
         entry = o[i + 1]
         ret = c[i + H] / entry - 1
         bz = btc_zmap.get(ts) if btc_zmap else None
         common_kwargs = dict(
-            funding_z=_fz_at(fz_list, ts),
+            funding_z=_fz(ts),
             rs_rank=(rs_map.get(ts, {}) or {}).get(sym, 0.5),
             htf_sign=_htf_sign(htf_zmap, ts, HTF_OF[tf]),
             gold_m=(gold_map or {}).get(ts, 0.0),
@@ -1550,6 +1729,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
         entry_ts = ts_arr[i + 1]
         exit_ts = ts_arr[min(res["exit_idx"], n - 1)]
         ev_cost = costs.event_cost_pct(sig, c, v, i, tf, entry_ts, exit_ts, funding_rows)
+        ev_tier = costs.point_in_time_tier(c, v, i, tf)
         b, s = engine.votes_at(cs, i)
         votes = b if sig == 1 else s
         trending = cs["adx"][i] >= 22 and cs["chop"][i] < 55
@@ -1560,7 +1740,7 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
             btc_align = (bz is None) or (bz * sig > -0.3)
         feats = engine.event_features(
             cs, c, i, sig, setup, ts,
-            funding_z=_fz_at(fz_list, ts),
+            funding_z=_fz(ts),
             rs_rank=(rs_map.get(ts, {}) or {}).get(sym, 0.5),
             htf_sign=_htf_sign(htf_zmap, ts, HTF_OF[tf]),
             btc_align=btc_align,
@@ -1573,12 +1753,37 @@ def extract_events(sym, kl, tf, fz_list, rs_map, htf_zmap, btc_zmap, gold_map=No
                        "bars_held": int(res["bars_held"]),
                        "outcome": res["outcome"],
                        "cost_pct": ev_cost,            # رده‌ای + فاندینگ — نه ۰٫۱۵٪ ثابت
+                       "tier_pct": ev_tier,            # سهمِ نقدشوندگی (بقیه فاندینگ است)
                        "z": float(cs["z"][i]), "votes": int(votes),
                        "trend": bool(trending), "btc": bool(btc_align),
                        "regime": engine.regime_at(cs, c, i)[0]})
         cooldown = 6
     zmap = {t: float(zz) for t, zz in zip(ts_arr, cs["z"])}
     return events, zmap, dir_X, dir_y, dir_R
+
+
+def _frozen_exclusion(tf, prereg):
+    """ts → آیا این ردیف بیرون از آموزش می‌ماند: داخلِ پنجرهٔ منجمد، یا در ``MAX_BARS+1`` کندلِ
+    پیش از شروعش — برچسبِ ۴۰ کندلیِ آن ردیف تا داخلِ پنجره می‌رسد (purge، calib-F9)."""
+    w = ((prereg or {}).get("final_windows") or {}).get(tf)
+    if not w:
+        return lambda _ts: False
+    lo = int(w["start_ms"]) - (bracket.MAX_BARS + 1) * TF_MS[tf]
+    hi = int(w["end_ms"])
+    return lambda ts: lo <= int(ts) < hi
+
+
+def _event_cells(events):
+    """سطل‌های پس‌گردِ ``lookup`` — [n، برد، جمعِ R، جمعِ ریسک٪] برای هر کلید."""
+    cells = {}
+    for e in events:
+        for key in keys_for(e["dir"], e["z"], e["votes"], e["trend"], e["btc"]):
+            cell = cells.setdefault(key, [0, 0, 0.0, 0.0])
+            cell[0] += 1
+            cell[1] += 1 if e["r"] > 0 else 0
+            cell[2] += e["r"]
+            cell[3] += e["risk_pct"]
+    return cells
 
 
 # ───────────────────── آموزش لجستیک (هسته مشترک، numpy خالص) ─────────────────────
@@ -1598,13 +1803,11 @@ def _fit_logistic(X, y):
         w -= lr * grad
     p_oos = 1 / (1 + np.exp(-np.clip(X1[cut:] @ w, -30, 30)))
     y_oos = y[cut:]
-    order = np.argsort(p_oos)
-    third = max(len(order) // 3, 1)
     return {"w": w.tolist(), "mu": mu.tolist(), "sd": sd.tolist(),
             "n_train": cut, "n_oos": n - cut,
             "oos_brier": round(float(((p_oos - y_oos) ** 2).mean()), 4),
             "oos_base": round(float(y_oos.mean()) * 100, 1),
-            "oos_lift": round(float(y_oos[order[-third:]].mean() - y_oos[order[:third]].mean()) * 100, 1)}
+            "oos_lift": round(_lift_on(p_oos, y_oos), 1)}
 
 
 def _train_dir_model(dir_X, dir_y, dir_R, tf, champion=None, champion_ts=0.0):
@@ -1690,15 +1893,19 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
         _state.update(building=True, progress="دریافت فاندینگ", done=0,
                       total=len(symbols) * len(tfs), error=None)
     try:
+        # تاریخچهٔ فاندینگ تا ابتدای عمیق‌ترین پنجرهٔ آموزش صفحه‌بندی می‌شود (calib-F4)؛ قبلاً
+        # فقط ۱۰۰۰ ردیفِ آخر بود و funding_dir در بیشترِ نمونه‌های 4h/1d صفر می‌ماند.
+        fund_since = int(time.time() * 1000) - max(BARS.get(tf, bars) * TF_MS[tf] for tf in tfs)
+
         def _fz_one(s):
             try:
-                return s, market.funding_z_map(s)
+                return s, market.funding_z_map(s, since_ms=fund_since)
             except Exception:  # noqa: BLE001
                 return s, []
 
         def _fr_one(s):
             try:
-                return s, market.get_funding_history(s)
+                return s, market.get_funding_history(s, since_ms=fund_since)
             except Exception:  # noqa: BLE001
                 return s, []
         with ThreadPoolExecutor(max_workers=8) as pool:      # دریافتِ موازیِ فاندینگ (I/O شبکه)
@@ -1734,59 +1941,29 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             def _member(sym, ts_, _snaps=snaps):
                 return universe.in_universe(_snaps, sym, ts_)
 
-            # رتبه قدرت نسبی مقطعی (بازده ۲۰ کندلی) — فقط بینِ اعضای جهانِ همان لحظه
-            rets = {}
-            for sym, kl in hists.items():
-                cc = kl["c"]
-                for idx in range(20, len(cc)):
-                    t_ = kl["t"][idx]
-                    if _member(sym, t_):
-                        rets.setdefault(t_, []).append((sym, cc[idx] / cc[idx - 20] - 1))
+            # رتبهٔ قدرتِ نسبی و پهنای بازار عمداً خنثی‌اند (features.DISABLED، calib-F1): اجرا فقط
+            # پنج ارز را می‌خواند و تعریفِ ۱۰۰ ارزی/کفِ جمعیتِ ۴۰ در اجرا همیشه ۰٫۵/۰ بود.
             rs_map = {}
-            for ts, lst in rets.items():
-                if len(lst) >= universe.MIN_POPULATION:
-                    lst.sort(key=lambda x: x[1])
-                    m = len(lst) - 1
-                    rs_map[ts] = {sym: (k / m if m else 0.5) for k, (sym, _) in enumerate(lst)}
             try:
                 gk = market.get_history("PAXGUSDT", tf, tf_bars)  # طلای توکنی = پروکسی طلا
                 gold_map = mom_norm_map(gk["t"], gk["c"])
             except Exception:  # noqa: BLE001
                 gold_map = {}
 
-            # ── P2: نقشه‌های وضعیتِ کلِ بازار (پهنا، دامیننس BTC، ETH/BTC) از همین تاریخچه‌ها ──
+            # ── P2: وضعیتِ کلِ بازار (دامیننس BTC، ETH/BTC) از سبدِ ثابتِ پنج‌ارزی — همان کدِ اجرا ──
             with _lock:
                 _state["progress"] = f"وضعیت بازار {tf}"
-            above = {}                                  # ts -> [بالای EMA50 بودن هر ارز]
-            volq = {}                                   # ts -> [حجمِ دلاری هر ارز]، جدا برای BTC
-            btc_volq = {}
-            for sym, kl in hists.items():
-                cc = np.array(kl["c"], float)
-                if len(cc) < 60:
-                    continue
-                e50 = engine.ema(cc, 50)
-                vv = np.array(kl["v"], float) * cc
-                for j in range(50, len(cc)):
-                    ts_ = kl["t"][j]
-                    if _member(sym, ts_):
-                        above.setdefault(ts_, []).append(1.0 if cc[j] > e50[j] else 0.0)
-                    volq[ts_] = volq.get(ts_, 0.0) + float(vv[j])
-                    if sym == "BTCUSDT":
-                        btc_volq[ts_] = float(vv[j])
-            breadth_map = {t: (sum(v) / len(v) - 0.5) * 2 for t, v in above.items()
-                           if len(v) >= universe.MIN_POPULATION}
-            dom_ts = sorted(t for t in btc_volq if t in volq and volq[t] > 0)
-            dom_map = mom_norm_map(dom_ts, [btc_volq[t] / volq[t] for t in dom_ts]) if len(dom_ts) > 40 else {}
-            ethbtc_map = {}
-            if "ETHUSDT" in hists and "BTCUSDT" in hists:
-                eb = {t: c_ for t, c_ in zip(hists["ETHUSDT"]["t"], hists["ETHUSDT"]["c"])}
-                bb_ = {t: c_ for t, c_ in zip(hists["BTCUSDT"]["t"], hists["BTCUSDT"]["c"])}
-                common = sorted(set(eb) & set(bb_))
-                if len(common) > 40:
-                    ethbtc_map = mom_norm_map(common, [eb[t] / bb_[t] for t in common])
+            basket_h = {s: hists[s] for s in MARKET_BASKET if s in hists}
+            for s in MARKET_BASKET:                       # سبد حتی اگر بیرونِ فهرستِ آموزش باشد
+                if s not in basket_h:
+                    _s, kl_ = _hist_one(s)
+                    if kl_:
+                        basket_h[s] = kl_
+            mstate = market_state_maps(basket_h)
+            breadth_map, dom_map, ethbtc_map = {}, mstate["dom"], mstate["ethbtc"]
 
             btc_events_zmap_src = None
-            cells, all_events = {}, []
+            all_events = []
             dir_X_all, dir_y_all, dir_R_all = [], [], []
             zmaps[tf] = {}
             order = ["BTCUSDT"] + [s for s in symbols if s != "BTCUSDT"]
@@ -1823,16 +2000,9 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
                 dir_X_all.extend(dx)
                 dir_y_all.extend(dy)
                 dir_R_all.extend(dr)
-                for e in evs:
-                    for key in keys_for(e["dir"], e["z"], e["votes"], e["trend"], e["btc"]):
-                        cell = cells.setdefault(key, [0, 0, 0.0, 0.0])
-                        cell[0] += 1
-                        cell[1] += 1 if e["r"] > 0 else 0
-                        cell[2] += e["r"]
-                        cell[3] += e["risk_pct"]
                 with _lock:
                     _state["done"] += 1
-            pending[tf] = (cells, all_events, dir_X_all, dir_y_all, dir_R_all)
+            pending[tf] = (all_events, dir_X_all, dir_y_all, dir_R_all)
 
         # ── آموزشِ همهٔ تایم‌فریم‌ها موازی روی هسته‌ها (استخراج ترتیبی بود تا HTF آماده باشد؛ آموزش مستقل است) ──
         with _lock:
@@ -1841,36 +2011,61 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
         # پیش‌ثبت اگر نیست، همین‌جا — پس از استخراج و **پیش از** هر برازش و داوری
         try:
             prereg, fresh = research.ensure_registered({
-                tf: (int(min(e["ts"] for e in pending[tf][1])),
-                     int(max(e["ts"] for e in pending[tf][1])))
-                for tf in pending if pending[tf][1]})
+                tf: (int(min(e["ts"] for e in pending[tf][0])),
+                     int(max(e["ts"] for e in pending[tf][0])))
+                for tf in pending if pending[tf][0]})
             if fresh:
                 with _lock:
                     _state["progress"] = "پیش‌ثبتِ فرضیه‌ها انجام شد — پنجرهٔ آزمون منجمد شد"
         except Exception:  # noqa: BLE001 — بدونِ پیش‌ثبت، هیچ ترکیبی مجاز نمی‌شود (fail-closed)
             log.exc("preregistration")
             prereg = None
+        # پنجرهٔ منجمد فقط تا داوریِ یک‌بارمصرف معنا دارد. پس از آن (judged_<hash>.json) کنارگذاشتنش
+        # فقط ۲۵-۲۸٪ از تاریخِ 4h/1d را برای همیشه از مدل‌ها می‌گرفت (calib-F15)؛ پیش‌ثبتِ تازه
+        # پنجرهٔ تازه‌ای می‌سازد که تا داوری‌اش دوباره کنار گذاشته می‌شود.
+        judged_done = False
+        if prereg:
+            try:
+                judged_done = bool((research.last_judgement() or {}).get("judged"))
+            except Exception:  # noqa: BLE001 — نامعلوم ⇒ محافظه‌کار: کنار بگذار
+                log.exc("last_judgement")
+        freeze = prereg if (prereg and not judged_done) else None
 
         def _train_tf(tf):
-            cells, all_events, dx, dy, dr = pending[tf]
-            # ── پنجرهٔ آزمونِ منجمد: از **همهٔ** آموزش‌ها کنار گذاشته می‌شود ──
+            all_events, dx, dy, dr = pending[tf]
+            # ── پنجرهٔ آزمونِ منجمد (تا داوری): از **همهٔ** آموزش‌ها کنار گذاشته می‌شود ──
             # فقط داورِ یک‌بارمصرف (research.judge) این رویدادها را می‌بیند.
-            if prereg:
-                held = [e for e in all_events if research.in_final_window(tf, e["ts"], prereg)]
-                all_events = [e for e in all_events
-                              if not research.in_final_window(tf, e["ts"], prereg)]
-                keep = [k for k, yy in enumerate(dy)
-                        if not research.in_final_window(tf, yy[0], prereg)]
+            if freeze:
+                held = [e for e in all_events if research.in_final_window(tf, e["ts"], freeze)]
+                out_of_train = _frozen_exclusion(tf, freeze)
+                all_events = [e for e in all_events if not out_of_train(e["ts"])]
+                keep = [k for k, yy in enumerate(dy) if not out_of_train(yy[0])]
                 dx, dy, dr = [dx[k] for k in keep], [dy[k] for k in keep], [dr[k] for k in keep]
                 final_events[tf] = held
+            # سطل‌های پس‌گرد (lookup) هم فقط از رویدادهای آموزش — قبلاً پیش از کنارگذاشتن ساخته
+            # می‌شدند و آمارِ پنجرهٔ منجمد را نشان می‌دادند (calib-F9)
+            cells = _event_cells(all_events)
             # ── سلامتِ ویژگی‌ها پیش از آموزش ──
             # ویژگیِ با واریانسِ صفر چیزی برای یادگرفتن ندارد و فقط بُعد اضافه می‌کند؛
             # dxy_dir دقیقاً همین بود و کسی متوجه نشد. حالا در جدول ثبت می‌شود.
-            feat_health = features.health([e["feats"] for e in all_events])
-            if feat_health["dead"]:
+            feat_health = features.health([e["feats"] for e in all_events],
+                                          expected=features.expected_constant(tf))
+            # ماتریسِ متراکم (تا صدها هزار ردیف) با نمونهٔ یکنواختِ ≤ ۵۰هزار ردیف سنجیده می‌شود
+            dense_health = features.health([row[0] for row in dx[::max(1, len(dx) // 50_000)]],
+                                           expected=features.expected_constant(tf, dense=True))
+            dead_any = sorted(set(feat_health["dead"]) | set(dense_health["dead"]))
+            if dead_any:
                 with _lock:
-                    _state["progress"] = (f"⚠️ {tf}: ویژگیِ بی‌واریانس "
-                                          f"{', '.join(feat_health['dead'])}")
+                    _state["progress"] = f"⚠️ {tf}: ویژگیِ بی‌واریانس {', '.join(dead_any)}"
+            # ویژگیِ «۰ = نبود» با پوششِ ناچیز در آموزش **و** اجرا ۰ می‌شود (calib-F4): مدل از چند
+            # ردیفِ پراکنده وزنِ پرنویز یاد نمی‌گیرد و در اجرا ورودیِ خارج از توزیع نمی‌بیند.
+            zero_ev, zero_dn = features.live_zeroed(feat_health), features.live_zeroed(dense_health)
+            if zero_ev:
+                all_events = [dict(e, feats=features.zero_features(e["feats"], zero_ev))
+                              for e in all_events]
+            if zero_dn:
+                dx = [(features.zero_features(lf, zero_dn), features.zero_features(sf, zero_dn))
+                      for lf, sf in dx]
             model = _train_logistic(all_events, tf)
             edge_model = _fit_edge_model(all_events, tf, COST_PCT)
             policy_model = _fit_policy_model(all_events, tf, COST_PCT)
@@ -1879,6 +2074,8 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             return tf, {"cells": cells, "events": len(all_events),
                         "held_out_final_events": len(final_events.get(tf) or []),
                         "feature_health": feat_health,
+                        "feature_health_dense": dense_health,
+                        "live_zeroed": {"events": zero_ev, "dense": zero_dn},
                         "model": model, "edge_model": edge_model,
                         "policy_model": policy_model, "dir_model": dir_model,
                         "action_model": action_model}
@@ -1886,10 +2083,11 @@ def build(symbols, tfs=("1d", "4h", "1h", "15m"), bars=3000):
             for tf, blob in pool.map(_train_tf, list(pending)):
                 table["tfs"][tf] = blob
         table["trust_history"] = _update_trust_history(load() or {}, table)
-        table["spans"] = {tf: [int(min(e["ts"] for e in pending[tf][1])),
-                               int(max(e["ts"] for e in pending[tf][1]))]
-                          for tf in pending if pending[tf][1]}
-        if prereg and final_events:
+        table["spans"] = {tf: [int(min(e["ts"] for e in pending[tf][0])),
+                               int(max(e["ts"] for e in pending[tf][0]))]
+                          for tf in pending if pending[tf][0]}
+        table["frozen_window"] = {"excluded": bool(freeze), "judged": judged_done}
+        if freeze and final_events:
             try:
                 judged = research.last_judgement() or {}
                 if not judged.get("judged"):
@@ -1942,11 +2140,18 @@ def status():
         st["events"] = {tf: d.get("events", 0) for tf, d in t.get("tfs", {}).items()}
         st["breakeven_win_rate"] = round(bracket.breakeven_win_rate() * 100, 1)
         st["feature_health"] = {
-            tf: {k: (d.get("feature_health") or {}).get(k)
-                 for k in ("ok", "dead", "low_coverage", "n", "n_feat")}
+            tf: {**{k: (d.get("feature_health") or {}).get(k)
+                    for k in ("ok", "dead", "low_coverage", "expected_constant", "n", "n_feat")},
+                 "dense_dead": (d.get("feature_health_dense") or {}).get("dead"),
+                 "live_zeroed": d.get("live_zeroed")}
             for tf, d in t.get("tfs", {}).items() if d.get("feature_health")
         }
         st["models"] = {}
+
+        def _eff(tf_, key, ok):
+            # پرچمِ «معتبر» همان چیزی است که predict به کار می‌برد: این ساخت + هیسترزیسِ دو ساخت؛
+            # قبلاً این‌جا فقط تک‌ساخت بود و tf_trust «معتبر» نشان می‌داد در حالی که predict رد می‌کرد
+            return bool(ok and trusted_with_hysteresis(tf_, key, t))
         for tf, d in t.get("tfs", {}).items():
             m = d.get("model")
             if m:
@@ -1954,7 +2159,9 @@ def status():
                                     ("n_train", "n_oos", "oos_brier", "oos_brier_base",
                                      "oos_brier_skill", "oos_base", "oos_lift", "by_setup")}
                 st["models"][tf]["kind"] = m.get("kind", "logit")
-                st["models"][tf]["trusted"] = valid_version and _model_trusted(m, MIN_SETUP_LIFT)
+                ok = valid_version and _model_trusted(m, MIN_SETUP_LIFT)
+                st["models"][tf]["trusted_this_build"] = bool(ok)
+                st["models"][tf]["trusted"] = _eff(tf, "model", ok)
                 if m.get("kind") == "ensemble":
                     st["models"][tf]["members"] = m.get("member_kinds", [])
             dm = d.get("dir_model")
@@ -1962,12 +2169,16 @@ def status():
                 st["models"].setdefault(tf, {})
                 st["models"][tf]["dir_lift"] = dm["oos_lift"]
                 st["models"][tf]["dir_n"] = dm["n_train"] + dm["n_oos"]
-                st["models"][tf]["dir_trusted"] = valid_version and _model_trusted(dm, MIN_DIR_LIFT)
+                ok = valid_version and _model_trusted(dm, MIN_DIR_LIFT)
+                st["models"][tf]["dir_trusted_this_build"] = bool(ok)
+                st["models"][tf]["dir_trusted"] = _eff(tf, "dir_model", ok)
             em = d.get("edge_model")
             if em:
                 st["models"].setdefault(tf, {})
+                ok = valid_version and _edge_model_trusted(em)
                 st["models"][tf].update({
-                    "edge_trusted": valid_version and _edge_model_trusted(em),
+                    "edge_trusted": _eff(tf, "edge_model", ok),
+                    "edge_trusted_this_build": bool(ok),
                     "edge_n": em.get("n_oos"),
                     "edge_rank_ic": em.get("oos_rank_ic"),
                     "edge_lift_r": em.get("oos_lift_r"),
@@ -1977,8 +2188,10 @@ def status():
             if pm:
                 st["models"].setdefault(tf, {})
                 pst = pm.get("test") or {}
+                ok = valid_version and _policy_model_trusted(pm)
                 st["models"][tf].update({
-                    "policy_trusted": valid_version and _policy_model_trusted(pm),
+                    "policy_trusted": _eff(tf, "policy_model", ok),
+                    "policy_trusted_this_build": bool(ok),
                     "policy_n": pst.get("n"),
                     "policy_avg_net_r": pst.get("avg_net_r"),
                     "policy_lcb_net_r": pst.get("lcb_net_r"),
@@ -1993,8 +2206,10 @@ def status():
             if am:
                 st["models"].setdefault(tf, {})
                 ast = am.get("test") or {}
+                ok = valid_version and _action_policy_trusted(am)
                 st["models"][tf].update({
-                    "action_trusted": valid_version and _action_policy_trusted(am),
+                    "action_trusted": _eff(tf, "action_model", ok),
+                    "action_trusted_this_build": bool(ok),
                     "action_n": ast.get("n"),
                     "action_avg_net_r": ast.get("avg_net_r"),
                     "action_lcb_net_r": ast.get("lcb_net_r"),
@@ -2058,6 +2273,12 @@ def _model_nfeat(m):
     return m.get("n_feat", len(m.get("mu", [])))
 
 
+def _live_feats(tf_blob, feats, which):
+    """همان ویژگی‌هایی که آموزش صفر کرد (پوششِ ناچیز) در اجرا هم صفر — ``which``: events یا dense."""
+    names = ((tf_blob or {}).get("live_zeroed") or {}).get(which) or []
+    return features.zero_features(feats, names) if names else feats
+
+
 def _score_model(m, feats):
     """احتمالِ کالیبره از مدل (تک‌مدل یا ترکیبی) + کالیبراسیونِ پلَت."""
     x = np.array(feats, float).reshape(1, -1)
@@ -2114,6 +2335,7 @@ def predict_dir(tf, feats):
         return None
     if not trusted_with_hysteresis(tf, "dir_model", t):
         return None
+    feats = _live_feats(t["tfs"][tf], feats, "dense")
     pd = _score_model_details(dm, feats)
     p = pd["p"]
     return {"p_up": round(p * 100, 1),
@@ -2138,6 +2360,8 @@ def predict_action(tf, long_feats, short_feats, risk_pct, cost=None, regime=None
     if not trusted_with_hysteresis(tf, "action_model", t):
         return None
     actual_cost = cost if cost is not None else t.get("cost_pct", COST_PCT)
+    long_feats = _live_feats(t["tfs"][tf], long_feats, "dense")
+    short_feats = _live_feats(t["tfs"][tf], short_feats, "dense")
     return _score_action_policy(m, long_feats, short_feats, risk_pct, actual_cost)
 
 
@@ -2185,6 +2409,7 @@ def predict(tf, feats, risk_pct, legacy=None, cost=None, regime=None):
         return None
     d = t["tfs"][tf]
     actual_cost = cost if cost is not None else t.get("cost_pct", COST_PCT)
+    feats = _live_feats(d, feats, "events")
     pm = d.get("policy_model")
     policy_diag = None
     if pm and _model_nfeat(pm) == len(feats):
@@ -2219,7 +2444,8 @@ def predict(tf, feats, risk_pct, legacy=None, cost=None, regime=None):
 
     m = d.get("model")
     # دروازه علمی: مدلی که در آزمون برون‌نمونه‌ای لیفت معنادار نشان نداده، حق صدور احتمال ندارد
-    if m and not _model_trusted(m, MIN_SETUP_LIFT):
+    # — و مثلِ بقیهٔ مدل‌ها فقط پس از دو ساختِ پیاپیِ موفق (calib-F12؛ یک ساختِ خوش‌شانس کافی نیست)
+    if m and not (_model_trusted(m, MIN_SETUP_LIFT) and trusted_with_hysteresis(tf, "model", t)):
         m = None
     if m and _model_nfeat(m) != len(feats):
         m = None                                   # مدل قدیمی با ویژگی‌های جدید ناسازگار است
@@ -2254,7 +2480,8 @@ def predict(tf, feats, risk_pct, legacy=None, cost=None, regime=None):
             out["policy_court_failed"] = True
             out["policy_avg_net_r"] = (policy_diag.get("policy_test") or {}).get("avg_net_r")
         em = d.get("edge_model")
-        if _edge_model_trusted(em) and _model_nfeat(em) == len(feats):
+        if (_edge_model_trusted(em) and trusted_with_hysteresis(tf, "edge_model", t)
+                and _model_nfeat(em) == len(feats)):
             out["edge_trusted"] = True
             out.update(_score_edge(em, feats, risk_pct, actual_cost, regime))
         return out
