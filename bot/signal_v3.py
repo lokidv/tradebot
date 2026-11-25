@@ -20,13 +20,19 @@
 اختیار: v3 هرگز به gates.json نمی‌نویسد، autotrader آن را نمی‌خواند، و دفترِ قاعدهٔ اصلی
 (``decision_ledger.jsonl``) و آزمونِ پیش‌ثبت‌شدهٔ گونه‌ها دست نمی‌خورند.
 """
+import json
 import math
+import os
+import threading
+import time
 
 import numpy as np
 
 import bracket
 import decision
 import engine
+import log
+import paths
 
 # ───────────────────────── ثابت‌های پیش‌ثبت (تغییر پس از دیدنِ نتیجه ممنوع) ─────────────────────────
 SIGNAL_TFS = ("4h", "1d")                 # تنها تایم‌فریم‌هایی که سیگنال می‌دهند
@@ -347,8 +353,6 @@ def judge(look, trades):
 
 def check_prereg(path=None):
     """ثابت‌های این فایل باید عیناً همان پیش‌ثبت باشند (وگرنه خطا) — پیش از هر اجرای آزمون صدا زده می‌شود."""
-    import json
-    import paths
     with open(path or paths.data("research", PREREG), "r", encoding="utf-8") as f:
         pr = json.load(f)
     sp, jd, bk = pr["spec"], pr["judgement"], pr["brake"]
@@ -375,3 +379,371 @@ def check_prereg(path=None):
     if bad:
         raise ValueError(f"ثابت‌های signal_v3 با پیش‌ثبت یکی نیست: {bad}")
     return pr
+
+
+# ───────────────────────── ۴) برنامهٔ معامله ─────────────────────────
+ENTRY_TOL_R = 0.25            # راهنمای اجرا (بیرون از قراردادِ آزمون): ورود فقط تا این فاصله از قیمتِ برنامه
+SIDE_FA = {"long": "خرید (لانگ)", "short": "فروش (شورت)"}
+STATE_FA = {"signal": "سیگنالِ تازه", "in_trade": "معاملهٔ باز", "filtered": "خلافِ روندِ ۲۸ روزه — سیگنال نیست",
+            "wait": "صبر"}
+
+
+def bar_ms(tf):
+    return decision.TF_MINUTES[tf] * 60_000
+
+
+def plan(tf, sig):
+    """برنامهٔ کاملِ یک سیگنالِ تازه یا معاملهٔ باز: ورود، حدضرر، هدف، اعتبار و سقفِ زمانی.
+
+    سیگنالِ تازه: ورود = بازِ کندلِ بعد (≈ بستهٔ کندلِ سیگنال) و اعتبار تا بسته‌شدنِ همان کندلِ ورود؛ پس از آن
+    کندل، موتور دوباره تصمیم می‌گیرد. محدودهٔ ورود (±۰٫۲۵R) فقط راهنمای اجراست؛ آزمون ورود را دقیقاً روی بازِ
+    کندلِ بعد می‌سنجد.
+    """
+    step = bar_ms(tf)
+    entry, sl, tp = float(sig["entry"]), float(sig["sl"]), float(sig["tp"])
+    r = abs(entry - sl)
+    sd = 1 if sig["side"] == "long" else -1
+    entry_t = int(sig.get("entry_t") or (int(sig["t"]) + step))
+    out = {"side": sig["side"], "side_fa": SIDE_FA[sig["side"]], "entry": engine.sig_round(entry),
+           "sl": engine.sig_round(sl), "tp": engine.sig_round(tp), "r": engine.sig_round(r),
+           "risk_pct": round(r / entry * 100, 3) if entry > 0 else None,
+           "gain_pct": round(abs(tp - entry) / entry * 100, 3) if entry > 0 else None,
+           "rr": bracket.TP_R, "signal_t": int(sig["t"]), "entry_t": entry_t,
+           "time_stop_t": entry_t + MAX_BARS * step,            # بسته‌شدنِ چهلمین کندلِ معامله
+           "max_bars": MAX_BARS, "cost_r": round(COST_PCT / max(r / entry * 100, 0.05), 3) if entry > 0 else None,
+           "setup": sig.get("setup"), "setup_fa": engine.SETUP_FA.get(sig.get("setup")) if sig.get("setup") else None,
+           "votes": sig.get("votes"), "z": round(float(sig["z"]), 2) if sig.get("z") is not None else None,
+           "mom_pct": round(sig["mom"] * 100, 2) if sig.get("mom") is not None else None}
+    if "bars_held" in sig:                                      # معاملهٔ باز
+        out.update(bars_held=int(sig["bars_held"]), bars_left=max(MAX_BARS - int(sig["bars_held"]), 0),
+                   last=engine.sig_round(float(sig["last"])) if sig.get("last") is not None else None,
+                   unrealized_r=round(float(sig["unrealized_r"]), 3) if sig.get("unrealized_r") is not None else None)
+    else:                                                       # سیگنالِ تازه
+        out.update(valid_until=entry_t + step,
+                   entry_lo=engine.sig_round(entry - ENTRY_TOL_R * r), entry_hi=engine.sig_round(entry + ENTRY_TOL_R * r),
+                   chase_limit=engine.sig_round(entry + sd * ENTRY_TOL_R * r))
+    return out
+
+
+def last_bar(ev):
+    """ارزیابیِ آخرین کندلِ بسته: جهتِ قاعده (بی fd/sq)، بازدهِ ۲۸ روزه و نتیجهٔ شرطِ روند."""
+    if ev is None or not len(ev["t"]):
+        return None
+    i = len(ev["t"]) - 1
+    base, side = int(ev["base"][i]), int(ev["side"][i])
+    mom = _finite(ev["mom"][i])
+    return {"t": int(ev["t"][i]), "close": float(ev["c"][i]),
+            "base": {1: "long", -1: "short"}.get(base), "side": {1: "long", -1: "short"}.get(side),
+            "setup": ev["setup"][i], "votes": int(ev["votes"][i]), "z": round(float(ev["z"][i]), 2),
+            "mom_pct": round(mom * 100, 2) if mom is not None else None,
+            "trend_ok": bool(ev["ok_trend"][i]) if base else None}
+
+
+# ───────────────────────── ۵) کارنامهٔ رو-به-جلوی کامل ─────────────────────────
+VERSION = 1
+VENUE = decision.LIVE_VENUE               # binance-spot: همان کندل‌هایی که تصمیمِ زنده از آن‌ها ساخته می‌شود
+RECENT_TRADES = 40                        # تعدادِ آخرین معامله‌هایی که برای نمایش نگه داشته می‌شود
+_TRADE_KEYS = ("t", "side", "setup", "entry", "sl", "tp", "risk_pct", "outcome", "gross_r", "net_r",
+               "exit_t", "bars_held", "mom", "votes")
+
+
+def bars_needed(tf, now_ms):
+    """کندل‌های لازم برای بازپخش از T0 با گرم‌شدنِ کامل، گردشده رو به بالا تا کشِ کندلِ بلند فقط دنباله بگیرد."""
+    need = WARMUP_BARS + max(0, (int(now_ms) - T0_MS) // bar_ms(tf)) + 60
+    return int(math.ceil(need / 500.0) * 500)
+
+
+def _sha(kl, i_from):
+    import hashlib
+    hsh = hashlib.sha256()
+    for k in ("t", "o", "h", "l", "c", "v"):
+        hsh.update(np.ascontiguousarray(np.asarray(kl[k])[i_from:], dtype=np.int64 if k == "t" else np.float64).tobytes())
+    return hsh.hexdigest()
+
+
+def _compact(tr, sym, tf):
+    row = {k: tr.get(k) for k in _TRADE_KEYS}
+    row.update(sym=sym, tf=tf)
+    for k in ("gross_r", "net_r", "risk_pct", "mom"):
+        if row.get(k) is not None:
+            row[k] = round(float(row[k]), 4)
+    for k in ("entry", "sl", "tp"):
+        if row.get(k) is not None:
+            row[k] = engine.sig_round(float(row[k]))
+    return row
+
+
+def _maker(trades):
+    return [dict(x, net_r=bracket.net_r(x["gross_r"], x["risk_pct"], MAKER_COST_PCT)) for x in trades]
+
+
+def build_cell(kl, sym, tf, with_rule=True):
+    """یک ارز × تایم‌فریم از T0: معامله‌های v3 (و قاعدهٔ فعلی روی همان برش)، معاملهٔ باز، سیگنالِ تازه."""
+    a = decision._arrays(kl)
+    sub, i0 = window(a, T0_MS)
+    n = len(sub["t"])
+    if n < decision.MIN_BARS or i0 >= n:
+        raise ValueError(f"دادهٔ کافی برای بازپخش از T0 نیست ({n} کندل)")
+    if i0 < min(WARMUP_BARS, decision.LIVE_BARS):
+        raise ValueError(f"گرم‌شدنِ پیش از T0 ناقص است ({i0} کندل)")
+    step = bar_ms(tf)
+    gaps = int(np.count_nonzero(np.diff(sub["t"]) != step))
+    rep = replay(a, T0_MS)
+    ev = rep["ev"]
+    out = {"sym": sym, "tf": tf, "bars": {"n": int(n), "from_t": int(sub["t"][0]), "last_t": int(sub["t"][-1]),
+                                         "warmup": int(i0), "gaps": gaps, "sha256": _sha(sub, 0)},
+           "trades": rep["trades"], "open": rep["open"], "fresh": rep["fresh"], "last": last_bar(ev)}
+    if with_rule:
+        rr = decision.replay(sub, start_ts=T0_MS)
+        out["rule_trades"] = [dict(x, matured=bool(x["i"] + MAX_BARS <= n - 1)) for x in rr["trades"]]
+    return out
+
+
+def assemble(cells, now_ms, judgements=None, errors=None, symbols=None):
+    """کارنامهٔ کامل از خانه‌های ``build_cell``: هر خانه، هر تایم‌فریم (با ترمز)، تجمیعی (با آزمون) و فهرستِ سیگنال‌ها."""
+    symbols = tuple(symbols or decision.SYMBOLS)
+    judgements = list(judgements or [])
+    final = next((j for j in judgements if j.get("result") in ("pass", "fail")), None)
+    by_tf = {tf: [] for tf in SIGNAL_TFS}
+    rule_tf = {tf: [] for tf in SIGNAL_TFS}
+    out_cells, signals, recent = {s: {} for s in symbols}, [], []
+    horizon = {}
+    for c in cells:
+        sym, tf = c["sym"], c["tf"]
+        m = matured(c["trades"])
+        by_tf[tf] += m
+        rule_tf[tf] += matured(c.get("rule_trades"))
+        horizon[tf] = max(horizon.get(tf, 0), c["bars"]["last_t"] - MAX_BARS * bar_ms(tf))
+        recent += [_compact(x, sym, tf) for x in m]
+        pend = [x for x in c["trades"] if not x.get("matured")]
+        out_cells[sym][tf] = {"stats": stats(m), "pending": len(pend), "bars": c["bars"], "last": c["last"],
+                              "open": plan(tf, c["open"]) if c["open"] else None,
+                              "fresh": plan(tf, c["fresh"]) if c["fresh"] else None}
+    tfs = {}
+    for tf in SIGNAL_TFS:
+        bk = brake(by_tf[tf])
+        if final is not None and final["result"] == "fail":
+            bk = dict(bk, muted=True, code="failed_test")
+        tfs[tf] = {"stats": stats(by_tf[tf]), "rule": stats(rule_tf[tf]), "maker": stats(_maker(by_tf[tf])),
+                   "brake": bk, "matured_until": horizon.get(tf)}
+    pooled = sorted((x for tf in SIGNAL_TFS for x in by_tf[tf]), key=lambda x: x["t"])
+    pooled_rule = [x for tf in SIGNAL_TFS for x in rule_tf[tf]]
+    # دورهٔ توصیفی: از T0 تا آخرین کندلی که سقفِ ۴۰ کندلی‌اش در یکی از دو تایم‌فریم گذشته
+    t_to = max([T0_MS + 1] + [h + 1 for h in horizon.values() if h])
+    for sym in symbols:
+        for tf in SIGNAL_TFS:
+            cell = out_cells.get(sym, {}).get(tf)
+            if not cell:
+                continue
+            muted = tfs[tf]["brake"]["muted"]
+            last = cell["last"] or {}
+            if cell["open"]:
+                state = "in_trade"
+            elif cell["fresh"]:
+                state = "signal"
+            elif last.get("base") and last.get("trend_ok") is False:
+                state = "filtered"
+            else:
+                state = "wait"
+            cell.update(state=state, state_fa=STATE_FA[state], muted=bool(muted))
+            if state in ("signal", "in_trade"):
+                p = cell["fresh"] if state == "signal" else cell["open"]
+                signals.append(dict(p, sym=sym, tf=tf, state=state, state_fa=STATE_FA[state], muted=bool(muted),
+                                    expired=bool(state == "signal" and int(now_ms) >= p["valid_until"])))
+    signals.sort(key=lambda s: (s["muted"], s["state"] != "signal", -s["signal_t"]))
+    recent.sort(key=lambda x: -x["t"])
+    status = "passed" if (final and final["result"] == "pass") else "failed" if final else "testing"
+    return {"version": VERSION, "built_at": round(int(now_ms) / 1000, 3), "t0_ms": T0_MS, "venue": VENUE,
+            "cost_pct": COST_PCT, "prereg": PREREG, "status": status, "signal_tfs": list(SIGNAL_TFS),
+            "status_only_tfs": [tf for tf in decision.TFS if tf not in SIGNAL_TFS],
+            "cells": out_cells, "tfs": tfs,
+            "pooled": {"stats": stats(pooled), "rule": stats(pooled_rule), "maker": stats(_maker(pooled)),
+                       "test": bootstrap(pooled, T0_MS, t_to, rule=pooled_rule), "matured_until": t_to - 1},
+            "signals": signals, "recent_trades": recent[:RECENT_TRADES], "judgements": judgements,
+            "looks": [dict(l) for l in LOOKS], "errors": dict(errors or {})}
+
+
+def build(loader, now_ms, judgements=None, symbols=None, with_rule=True, keep_cells=False):
+    """بازپخشِ همهٔ خانه‌ها با ``loader(sym, tf) -> کندل‌های بسته‌شده`` و سرهم‌کردنِ کارنامه.
+
+    خانهٔ خراب (دادهٔ ناقص، خطای شبکه) در ``errors`` می‌آید و بقیه را نمی‌اندازد؛ ولی آزمون و ترمز فقط وقتی
+    معتبرند که ``errors`` خالی باشد — ``complete`` همین را می‌گوید.
+    """
+    symbols = tuple(symbols or decision.SYMBOLS)
+    cells, errors = [], {}
+    for tf in SIGNAL_TFS:
+        for sym in symbols:
+            try:
+                cells.append(build_cell(loader(sym, tf), sym, tf, with_rule=with_rule))
+            except Exception as e:  # noqa: BLE001 — در خروجی گزارش می‌شود
+                errors[f"{sym}|{tf}"] = str(e) or type(e).__name__
+    out = assemble(cells, now_ms, judgements=judgements, errors=errors, symbols=symbols)
+    out["complete"] = not errors and len(cells) == len(SIGNAL_TFS) * len(symbols)
+    if keep_cells:
+        out["_cells"] = cells
+    return out
+
+
+# ───────────────────────── ۶) مسیرِ زنده: کش، حکمِ یک‌باره، خروجیِ API ─────────────────────────
+SNAPSHOT_PATH = paths.data("signal_v3_forward.json")       # آخرین کارنامه (زمانِ اجرا؛ در گیت نیست)
+JUDGEMENT_PATH = paths.data("signal_v3_judgement.jsonl")   # حکم‌های یک‌باره (فقط افزودنی)
+STALE_AFTER_SEC = 3 * 86400       # کارنامهٔ کهنه‌تر از این دیگر مبنای «بخر/بفروش» نیست
+RETRY_SEC = 30.0                  # پس از ساختی که هنوز کندلِ تازه را نداشت (صرافیِ دیررس)، تا این‌قدر دوباره نمی‌سازد
+_lock = threading.Lock()
+_build_lock = threading.Lock()
+_cache = {"snap": None, "tried": 0.0}
+
+
+def market_loader(sym, tf, now_ms=None):
+    """کندل‌های بسته‌شدهٔ اسپاتِ بایننس برای بازپخش از T0 (``market.get_klines_long``؛ بی‌جایگزینِ ونیوی دیگر)."""
+    import market
+    now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    return market.get_klines_long(sym, tf, bars_needed(tf, now_ms))
+
+
+def read_judgements(path=None):
+    rows = []
+    try:
+        with open(path or JUDGEMENT_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(r, dict) and r.get("look"):
+                    rows.append(r)
+    except OSError:
+        pass
+    seen, out = set(), []
+    for r in rows:                                    # هر نگاه فقط یک‌بار: نخستین ردیف معتبر است
+        if r["look"] not in seen:
+            seen.add(r["look"])
+            out.append(r)
+    return out
+
+
+def due_look(judgements, now_ms):
+    """نگاهی که موعدش رسیده و هنوز حکم ندارد؛ پس از pass/fail دیگر نگاهی نیست."""
+    done = {j["look"]: j for j in judgements}
+    for look in LOOKS:
+        j = done.get(look["name"])
+        if j is None:
+            return look if int(now_ms) >= look["due_ms"] else None
+        if j.get("result") != "continue":
+            return None
+    return None
+
+
+def record_judgement(cells, now_ms, path=None):
+    """اگر موعدِ نگاهی رسیده، حکمش را یک‌بار و برای همیشه می‌نویسد. خروجی: ردیفِ تازه یا ``None``."""
+    path = path or JUDGEMENT_PATH
+    look = due_look(read_judgements(path), now_ms)
+    if look is None:
+        return None
+    pooled = [x for c in cells for x in c["trades"]]
+    row = dict(judge(look, pooled), at=round(int(now_ms) / 1000, 3), prereg=PREREG, venue=VENUE)
+    with _lock:                                       # چک + افزودن اتمی: حکمِ دوم ممکن نیست
+        if any(j["look"] == look["name"] for j in read_judgements(path)):
+            return None
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return row
+
+
+def expected_last(tf, now_ms):
+    """بازِ آخرین کندلِ بسته‌شدهٔ ``tf`` از روی ساعت."""
+    step = bar_ms(tf)
+    return (int(now_ms) // step) * step - step
+
+
+def is_current(snap, now_ms):
+    """کارنامه کامل است و آخرین کندلِ بستهٔ هر خانه را دارد."""
+    if not isinstance(snap, dict) or snap.get("version") != VERSION or not snap.get("complete"):
+        return False
+    for sym, row in (snap.get("cells") or {}).items():
+        for tf, cell in row.items():
+            if int(((cell or {}).get("bars") or {}).get("last_t") or 0) < expected_last(tf, now_ms):
+                return False
+    return True
+
+
+def _persist(snap):
+    try:
+        os.makedirs(os.path.dirname(SNAPSHOT_PATH), exist_ok=True)
+        tmp = SNAPSHOT_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(snap, f, ensure_ascii=False)
+        os.replace(tmp, SNAPSHOT_PATH)
+    except OSError:
+        log.exc("signal_v3 persist")
+
+
+def _load_persisted():
+    try:
+        with open(SNAPSHOT_PATH, "r", encoding="utf-8") as f:
+            snap = json.load(f)
+        return snap if isinstance(snap, dict) and snap.get("version") == VERSION else None
+    except (OSError, ValueError):
+        return None
+
+
+def snapshot(force=False, loader=None, now=None):
+    """کارنامهٔ رو-به-جلوی جاری. فقط وقتی کندلِ تازه‌ای بسته شده (یا ``force``) از نو ساخته می‌شود.
+
+    ساختِ ناموفق (شبکه) آخرین کارنامهٔ موجود را با ``stale`` برمی‌گرداند؛ کارنامه‌ای که آخرین کندل را ندارد
+    هرگز «تازه» خوانده نمی‌شود و ``view`` برایش هیچ «بخر/بفروش»ی نمی‌دهد.
+    """
+    now = time.time() if now is None else now
+    now_ms = int(now * 1000)
+    with _lock:
+        snap, tried = _cache["snap"], _cache["tried"]
+    if snap is None:
+        snap = _load_persisted()
+    if not force and snap is not None and (is_current(snap, now_ms) or abs(now - tried) < RETRY_SEC):
+        with _lock:
+            _cache["snap"] = snap
+        return snap
+    with _build_lock:
+        with _lock:
+            again, tried = _cache["snap"], _cache["tried"]
+        if not force and again is not None and (is_current(again, now_ms) or abs(now - tried) < RETRY_SEC):
+            return again                              # نخِ دیگری همین حالا ساخت (یا تلاش کرد)
+        with _lock:
+            _cache["tried"] = now
+        ld = loader or (lambda sym, tf: market_loader(sym, tf, now_ms))
+        try:
+            fresh = build(ld, now_ms, judgements=read_judgements(), keep_cells=True)
+            cells = fresh.pop("_cells")
+            if fresh["complete"] and record_judgement(cells, now_ms) is not None:
+                fresh = assemble(cells, now_ms, judgements=read_judgements())    # همین حالا حکمی ثبت شد
+                fresh["complete"] = True
+        except Exception as e:  # noqa: BLE001 — کارنامهٔ قبلی می‌ماند
+            log.exc("signal_v3 build")
+            if snap is None:
+                raise
+            return dict(snap, stale=True, build_error=str(e) or type(e).__name__)
+        if not fresh["complete"] and snap is not None and snap.get("complete"):
+            # ساختِ ناقص (یک خانه بی‌داده) جای کارنامهٔ کاملِ قبلی را نمی‌گیرد
+            return dict(snap, stale=True, build_error="؛ ".join(f"{k}: {v}" for k, v in fresh["errors"].items()))
+        with _lock:
+            _cache["snap"] = fresh
+        _persist(fresh)
+        return fresh
+
+
+def view(force=False, loader=None, now=None):
+    """خروجیِ ``GET /api/signals``: کارنامه + اینکه الان می‌شود به آن تکیه کرد یا نه.
+
+    ``actionable`` فقط وقتی درست است که کارنامه کامل و تازه باشد؛ وگرنه صفحه هیچ سیگنالی را «بخر/بفروش» نشان
+    نمی‌دهد (ترمزی که داده ندارد باید بسته بماند، نه باز).
+    """
+    now = time.time() if now is None else now
+    snap = dict(snapshot(force=force, loader=loader, now=now))
+    age = now - float(snap.get("built_at") or 0)
+    current = is_current(snap, int(now * 1000))
+    snap["age_sec"] = round(age, 1)
+    snap["current"] = bool(current)
+    snap["actionable"] = bool(current and not snap.get("stale") and age < STALE_AFTER_SEC)
+    snap["now_ms"] = int(now * 1000)
+    return snap

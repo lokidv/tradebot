@@ -31,3 +31,5 @@ bot/data/decision_ledger.jsonl
 bot/data/decision_variants_ledger.jsonl
 bot/data/research/decision_scorecard.json
 bot/data/carry_ledger.jsonl
+bot/data/signal_v3_forward.json
+bot/data/signal_v3_judgement.jsonl
