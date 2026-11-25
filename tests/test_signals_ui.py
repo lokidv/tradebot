@@ -6,6 +6,7 @@
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -99,6 +100,56 @@ class CellCallTests(unittest.TestCase):
             body = html[html.index(head):html.index("\n}\n", html.index(head))]
             self.assertIn("cellCall(", body, head)
             self.assertNotIn("callLabel(", body, head)
+
+
+@unittest.skipUnless(shutil.which("node"), "node نصب نیست")
+class TextDirectionTests(unittest.TestCase):
+    """متنِ فارسی با «R» و عدد: اگر تکهٔ لاتین در قابِ خودش نباشد، مرورگر عددِ بعدی را به آن می‌چسباند و
+    «BTC · ۱۵ دقیقه» به شکلِ «۱۵ · BTC دقیقه» دیده می‌شود. این تست همان الگوها را در منبعِ صفحه می‌بندد."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(HTML, encoding="utf-8") as f:
+            cls.html = f.read()
+
+    def _helpers(self):
+        lines = [ln for ln in self.html.splitlines()
+                 if re.match(r"const (esc|faN|faS|bR|escNum) = ", ln)]
+        self.assertEqual(len(lines), 5, lines)
+        return "\n".join(lines)
+
+    def _node(self, expr):
+        r = subprocess.run(["node", "-e", self._helpers() + "\nconsole.log(JSON.stringify(%s));" % expr],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_signed_numbers_in_engine_text_get_their_own_ltr_box(self):
+        box = lambda t: '<bdi dir="ltr">%s</bdi>' % t                                  # noqa: E731
+        texts = ["z امتیازِ ترکیبی +1.43 از آستانهٔ +1.2 گذشته", "z فعلی -0.20 است؛ برای پیشنهاد به ±1.2 نیاز است",
+                 "پیش‌ثبت 2026-09-24 و رو-به-جلو", "<b>x</b> −5%"]
+        out = self._node("%s.map(escNum)" % json.dumps(texts, ensure_ascii=False))
+        self.assertEqual(out[0], "z امتیازِ ترکیبی %s از آستانهٔ %s گذشته" % (box("+1.43"), box("+1.2")))
+        self.assertEqual(out[1], "z فعلی %s است؛ برای پیشنهاد به %s نیاز است" % (box("-0.20"), box("±1.2")))
+        self.assertEqual(out[2], texts[2])                                             # تاریخ و خط‌تیرهٔ واژه دست نمی‌خورد
+        self.assertEqual(out[3], "&lt;b&gt;x&lt;/b&gt; " + box("−5%"))                 # هنوز HTML را بی‌اثر می‌کند
+
+    def test_r_values_are_boxed(self):
+        self.assertEqual(self._node("bR(-0.41)"), '<bdi dir="ltr">−۰٫۴۱R</bdi>')
+
+    def test_no_bare_latin_token_runs_into_the_next_persian_number(self):
+        html = re.sub(r"(?m)\s//\s.*$", "", self.html)                                # توضیحِ کد متنِ صفحه نیست
+        # «…R، ۱۵ دقیقه»: مقدارِ R باید از bR بیاید، نه متنِ ساده
+        self.assertEqual(re.findall(r"[۰-۹]R[،؛] ?[۰-۹]", html), [])
+        self.assertEqual(re.findall(r"[−-][۰-۹]+٫[۰-۹]+R(?!</bdi>)", html), [])
+        # نمادِ ارز پیش از «۴ ساعت/۱۵ دقیقه»: در HTML داخلِ <bdi>، در متنِ ساده با نشانهٔ راست‌به‌چپ
+        heads = re.findall(r"(.{6}) · \$\{TF_FA\[", html)
+        self.assertEqual(len(heads), 4, heads)
+        for h in heads:
+            self.assertTrue(h.endswith("</bdi>") or h.endswith("\\u200F"), h)
+        # آستانهٔ قاعده یک فرمولِ چپ‌به‌راست است
+        self.assertEqual(html.count("z ≥ ۱٫۲"), html.count('<bdi dir="ltr">z ≥ ۱٫۲</bdi>'))
+        self.assertNotIn("۱R = ۱٫۳ برابرِ", html)
 
 
 if __name__ == "__main__":

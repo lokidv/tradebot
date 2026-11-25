@@ -2131,6 +2131,8 @@ function scOf(x){
   return {st:"building", sc: sc || null};
 }
 const bR = (v, d=2) => `<bdi dir="ltr">${faS(v, d)}R</bdi>`;
+// متنِ فارسیِ موتور با عددِ علامت‌دارِ لاتین («+1.43»، «±1.2»): علامت باید سمتِ چپِ عدد بماند
+const escNum = s => esc(s).replace(/(^|[\s(])([+\-−±]\d+(?:[.,]\d+)?%?)/g, (m, a, b) => `${a}<bdi dir="ltr">${b}</bdi>`);
 function leanOf(x){
   const l = x && x.lean;
   if(l==null) return null;
@@ -2174,7 +2176,7 @@ function recLine(x, short){                          // «۲ سال: ۳۶٪ بر
     : ["معامله‌ای نبود"];
   parts.push(`<b>${esc(v.fa)}</b>`);
   const tip = [`کارنامهٔ بک‌تست پس از کارمزد · n=${faN(sc.n)}`,
-               sc.ci_lo!=null && sc.ci_hi!=null ? `بازهٔ ۹۵٪: ${faS(sc.ci_lo,2)} تا ${faS(sc.ci_hi,2)}R` : "",
+               sc.ci_lo!=null && sc.ci_hi!=null ? `بازهٔ ۹۵٪: \u200E${faS(sc.ci_lo,2)} تا \u200E${faS(sc.ci_hi,2)}R` : "",
                v.say, na ? SC_NA : ""].filter(Boolean).join(" · ");
   return `<span class="${v.cls}${na ? " na" : ""}" title="${esc(tip)}">${short ? "" : recSpan(sc) + ": "}${parts.filter(Boolean).join(" · ")}</span>`;
 }
@@ -2224,7 +2226,7 @@ function dmCell(sym, tf, x){
       <small class="dm-rec">${x && x.error ? esc(x.error) : "برای این خانه داده‌ای نیامد"}</small></div>`;
   const k = cellCall(sym, tf, x), warns = warnsOf(x), sOnly = k.kind === "status";
   const s = safeSym(sym);
-  const tip = `${coinOf(sym)} · ${TF_FA[tf]||tf} — برای جزئیات بزنید` + (warns.length && sOnly ? `\n⚠ ${warns.join("\n⚠ ")}` : "");
+  const tip = `${coinOf(sym)}\u200F · ${TF_FA[tf]||tf} — برای جزئیات بزنید` + (warns.length && sOnly ? `\n⚠ ${warns.join("\n⚠ ")}` : "");
   return `<button class="dm-cell ${k.cls}${act}" onclick="openDecision('${s}','${tf}')" title="${esc(tip)}">
     ${warns.length && sOnly ? `<span class="dm-wb" aria-label="${faN(warns.length)} هشدار">⚠${warns.length > 1 ? faN(warns.length) : ""}</span>` : ""}
     ${tfl}
@@ -2282,12 +2284,12 @@ function scMetaHtml(D){                              // یک بار زیرِ م�
            (btV.some(v => v !== liveV) ? ` <small class="mid">(حجمِ دو بازار فرق دارد؛ بخشی از سیگنال‌ها یکی نیست)</small>` : "") + `</span>`);
   const lo = D.live_overall;
   if(lo && lo.n > 0)
-    out.push(`📡 کارنامهٔ زنده (رو-به-جلو، همهٔ خانه‌ها، فقط تصمیم‌های قاعده، پس از کارمزد): n=${faN(lo.n)}` +
+    out.push(`📡 کارنامهٔ زنده (رو-به-جلو، همهٔ خانه‌ها، فقط تصمیم‌های قاعده، پس از کارمزد): <bdi dir="ltr">n=${faN(lo.n)}</bdi>` +
              `${lo.win_rate!=null ? ` · ${faN(n100(lo.win_rate),0)}٪ برد` : ""}${lo.avg_r!=null ? ` · میانگین ${bR(lo.avg_r)}` : ""}` +
              `${lo.total_r!=null ? ` · جمع ${bR(lo.total_r,1)}` : ""}${lo.open ? ` · ${faN(lo.open)} در انتظارِ داوری` : ""}`);
   const lp = D.live_policy_overall;
   if(lp && (lp.n > 0 || lp.open > 0))
-    out.push(`<small class="mid">ردیف‌های قدیمیِ «سیاستِ انتخابِ عمل» جدا شمرده می‌شوند (با قاعده آمیخته نمی‌شوند): n=${faN(lp.n || 0)}` +
+    out.push(`<small class="mid">ردیف‌های قدیمیِ «سیاستِ انتخابِ عمل» جدا شمرده می‌شوند (با قاعده آمیخته نمی‌شوند): <bdi dir="ltr">n=${faN(lp.n || 0)}</bdi>` +
              `${lp.avg_r != null ? ` · میانگین ${bR(lp.avg_r)}` : ""}</small>`);
   return out.join("<br>");
 }
@@ -2363,26 +2365,26 @@ function ddHtml(sym, tf, x){
     return `<div class="comp v"><label>${esc(c.fa || c.key)}</label><div class="bar" style="width:100%"><i style="${v>=0?"left":"right"}:50%;width:${w}%;background:${v>=0?"var(--up)":"var(--dn)"}"></i></div><b class="num ${cls(Number(c.value))}">${fmt(c.value,2)}</b>${vote}</div>`;
   }).join("") || `<div class="note">جزئیاتِ اجزا نیامد.</div>`;
   const st = n100(x.strength), rd = n100(x.readiness), ld = leanOf(x), warns = warnsOf(x);
-  const reasons = (x.reasons || []).length ? `<ul class="dd-reasons">${x.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul>` : "";
+  const reasons = (x.reasons || []).length ? `<ul class="dd-reasons">${x.reasons.map(r => `<li>${escNum(r)}</li>`).join("")}</ul>` : "";
   const kc = cellCall(sym, tf, x), sOnly = kc.kind === "status", c3 = sigCell(sym, tf), t3 = sigTfInfo(tf);
   const p3 = kc.kind === "signal" ? c3.fresh : kc.kind === "in_trade" ? c3.open : null;
   // «معامله» فقط برای سیگنالِ تازهٔ v3؛ سطح‌های قاعدهٔ پایه در ۴h/1d فقط برای اطلاع‌اند و در تایم‌فریمِ کوتاه اصلاً نمی‌آیند
   const hasLv = !sOnly && a !== "wait" && x.entry != null && x.sl != null;
   const costR = x.risk_pct > 0 ? 0.14 / Math.max(x.risk_pct, 0.05) : null;
   const polBox = sOnly
-    ? `<div class="dd-caution"><b>این تایم‌فریم فقط وضعیت است — «بخر/بفروش» نمی‌دهد.</b><br>حدضرر این‌جا نزدیک است${costR != null ? ` و کارمزدِ رفت‌وبرگشتِ ۰٫۱۴٪ حدودِ <b>${faN(costR,2)}R</b> از هر معامله را می‌خورد` : ""}. بازپخشِ ۱۸ ماههٔ همین قاعده روی هر پنج ارز زیان‌ده بود (۵ دقیقه −۰٫۴۱R، ۱۵ دقیقه −۰٫۲۷R، ۱ ساعت −۰٫۱۲R در هر معامله). سیگنال‌ها فقط در ۴ ساعته و روزانه‌اند.</div>`
+    ? `<div class="dd-caution"><b>این تایم‌فریم فقط وضعیت است — «بخر/بفروش» نمی‌دهد.</b><br>حدضرر این‌جا نزدیک است${costR != null ? ` و کارمزدِ رفت‌وبرگشتِ ۰٫۱۴٪ حدودِ <b><bdi dir="ltr">${faN(costR,2)}R</bdi></b> از هر معامله را می‌خورد` : ""}. بازپخشِ ۱۸ ماههٔ همین قاعده روی هر پنج ارز زیان‌ده بود (۵ دقیقه ${bR(-0.41)}، ۱۵ دقیقه ${bR(-0.27)}، ۱ ساعت ${bR(-0.12)} در هر معامله). سیگنال‌ها فقط در ۴ ساعته و روزانه‌اند.</div>`
     : `<div class="dd-verdict${kc.kind === "muted" ? " vb-loss" : ""}"><b>سیگنالِ v3: ${esc(kc.label)}</b>${kc.sub ? ` — ${esc(kc.sub)}` : ""}` +
       (p3 ? `<br><small>ورود <b class="num">${px(p3.entry)}</b> · حدضرر <b class="num dn">${px(p3.sl)}</b> · هدف <b class="num up">${px(p3.tp)}</b>${kc.kind === "signal" ? ` · معتبر تا ${tsFa(p3.valid_until, true)}` : ` · ${faN(p3.bars_left)} کندل تا خروجِ زمانی`} — برنامهٔ کامل در پنلِ «سیگنال‌ها»</small>` : "") +
       (c3 && c3.last && c3.last.mom_pct != null ? `<br><small>حرکتِ ۲۸ روزهٔ این ارز: <bdi dir="ltr">${faS(c3.last.mom_pct,1)}٪</bdi> — v3 فقط ${c3.last.mom_pct > 0 ? "خرید" : "فروش"} را می‌پذیرد.</small>` : "") +
       (t3 && t3.stats ? `<br><small>کارنامهٔ رو-به-جلوی v3 در ${TF_FA[tf]} (از ۱ سپتامبر ۲۰۲۶، هر پنج ارز): ${t3.stats.n ? `${faN(t3.stats.n)} معامله · ${faN(t3.stats.win_pct,0)}٪ سودده · میانگین ${bR(t3.stats.mean)}` : "هنوز معامله‌ای نیست"} — در حالِ آزمون، هنوز اثبات‌نشده.</small>` : "") + `</div>`;
   const levels = sOnly ? `<div class="kv"><span>وضعیتِ این تایم‌فریم</span><b class="mid">${esc(kc.label)}</b></div>
-      <p class="note">قاعدهٔ پایه: z ≥ ۱٫۲ و دست‌کم ۳ رأیِ هم‌جهت از ۵ و حداکثر ۱ رأیِ مخالف. این‌جا فقط جهتِ بازار را می‌گوید؛ ورودی پیشنهاد نمی‌شود.</p>`
+      <p class="note">قاعدهٔ پایه: <bdi dir="ltr">z ≥ ۱٫۲</bdi> و دست‌کم ۳ رأیِ هم‌جهت از ۵ و حداکثر ۱ رأیِ مخالف. این‌جا فقط جهتِ بازار را می‌گوید؛ ورودی پیشنهاد نمی‌شود.</p>`
     : hasLv ? `
       <div class="kv"><span>ورود / حدضرر / هدف</span><b class="num">${px(x.entry)} / <span class="dn">${px(x.sl)}</span> / <span class="up">${px(x.tp)}</span></b></div>
       <div class="kv"><span>فاصلهٔ حدضرر · R:R</span><b class="num">${x.risk_pct!=null ? fmt(x.risk_pct,2) + "٪" : "—"} · ${x.rr!=null ? fmt(x.rr,1) : "—"}</b></div>
       <p class="note">این‌ها سطح‌های <b>قاعدهٔ پایه</b>‌اند (حدضرر = ۱R، هدف = ۱٫۸R)، فقط برای اطلاع. سیگنال همان است که در کادرِ «سیگنالِ v3» بالا آمده.</p>`
     : `<div class="kv"><span>قاعدهٔ پایه</span><b class="mid">صبر — جهتی ندارد</b></div>
-      <p class="note">شرطِ ورود: z ≥ ۱٫۲ و دست‌کم ۳ رأیِ هم‌جهت از ۵ و حداکثر ۱ رأیِ مخالف (برای شورت برعکس). ${ld ? `تمایلِ فعلی: <b class="${ld==="long"?"up":"dn"}">${ld==="long"?"صعودی ↗":"نزولی ↘"}</b>` : ""}${rd!=null ? ` · آمادگی ${faN(rd,0)}٪` : ""}</p>`;
+      <p class="note">شرطِ ورود: <bdi dir="ltr">z ≥ ۱٫۲</bdi> و دست‌کم ۳ رأیِ هم‌جهت از ۵ و حداکثر ۱ رأیِ مخالف (برای شورت برعکس). ${ld ? `تمایلِ فعلی: <b class="${ld==="long"?"up":"dn"}">${ld==="long"?"صعودی ↗":"نزولی ↘"}</b>` : ""}${rd!=null ? ` · آمادگی ${faN(rd,0)}٪` : ""}</p>`;
   const lv = x.live, S = scOf(x), sc = S.sc, v = S.st === "ok" ? vInfo(sc) : null, na = x.scorecard_applies === false;
   const hasGC = sc && sc.avg_gross_r!=null && isFinite(sc.avg_gross_r) && sc.avg_cost_r!=null && isFinite(sc.avg_cost_r);
   // گونهٔ ثانویِ «ورودِ میکر»: همان معامله‌ها با کارمزدِ کمتر — کنارِ حکمِ اصلی (تیکر)، نه به‌جایش
@@ -2409,7 +2411,7 @@ function ddHtml(sym, tf, x){
     ? `<div class="dd-verdict vb-${v.code}"><b class="${v.cls}">کارنامه: ${esc(v.fa)}</b>؛ ${esc(v.say)}${ciText(sc) ? `<br><small>${ciText(sc)}${hasGC ? ` · پیش از کارمزد ${bR(sc.avg_gross_r)}، کارمزد ${bR(-Math.abs(sc.avg_cost_r))}` : ""}</small>` : ""}${mkLine ? `<br><small class="${vm.cls}">${mkLine}</small>` : ""}${na ? `<br><small class="v-pos">ℹ️ ${SC_NA}.</small>` : ""}</div>`
     : `<div class="dd-verdict"><b class="v-neu">${S.st === "building" ? "کارنامه در حال ساخت…" : "کارنامه ساخته نشد"}</b> — دربارهٔ سودآوریِ این تصمیم هیچ ادعایی نمی‌شود کرد.</div>`;
   const warnBox = warns.length
-    ? `<div class="dd-caution"><b>⚠ هشدارهای موتور (${faN(warns.length)})</b><ul class="dd-reasons">${warns.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "";
+    ? `<div class="dd-caution"><b>⚠ هشدارهای موتور (${faN(warns.length)})</b><ul class="dd-reasons">${warns.map(w => `<li>${escNum(w)}</li>`).join("")}</ul></div>` : "";
   const po = poOf(x);
   const poBox = po ? `<div class="dd-caution"><b>ℹ️ نظرِ جدای «سیاستِ انتخابِ عمل»: <span class="${po.side==="long"?"up":"dn"}">${callLabel(po.side)}</span></b>` +
     ` — ${po.same_as_rule ? "هم‌جهت با قاعده" : "تصمیمِ این خانه همان قاعده است، نه این"}<br><small>${esc(po.note || "")}</small></div>` : "";
@@ -2439,7 +2441,7 @@ function ddHtml(sym, tf, x){
       </div>
     </div>` : "";
   return `
-    <h3>${esc(coinOf(sym))} · ${TF_FA[tf] || esc(tf)} — <span class="${kc.side === "long" ? "up" : kc.side === "short" ? "dn" : "mid"}">${esc(kc.label)}</span></h3>
+    <h3><bdi>${esc(coinOf(sym))}</bdi> · ${TF_FA[tf] || esc(tf)} — <span class="${kc.side === "long" ? "up" : kc.side === "short" ? "dn" : "mid"}">${esc(kc.label)}</span></h3>
     <span class="sub">${[x.setup_fa, x.grade ? "درجه " + x.grade : "", x.regime].filter(Boolean).map(esc).join(" · ")}${x.price!=null ? ` · قیمتِ بستهٔ کندل <b class="num">${px(x.price)}</b>` : ""}${x.candle_ts!=null ? ` · کندلِ ${tsFa(x.candle_ts, true)}` : ""}</span>
     ${polBox}
     <div class="note" style="margin-top:6px">⚠️ پایین: تحلیلِ قاعدهٔ پایه (اندیکاتورها + رأیِ الگوی مشابه) و کارنامه‌اش — نه سیگنالِ تأییدشده. ورودِ خودکار فقط با قفلِ ایمنی.</div>
@@ -2476,13 +2478,13 @@ function dmDemo(){
   let rec;
   if(S.st === "ok"){
     const v = vInfo(sc);
-    rec = `کارنامه (${recSpan(sc)}، پس از کارمزد): ${sc.n ? `${sc.win_rate!=null ? faN(n100(sc.win_rate),0) + "٪ برد · " : ""}میانگین ${faS(sc.avg_r,2)}R · ` : ""}n=${faN(sc.n)} — ${v.fa}` +
+    rec = `کارنامه (${recSpan(sc)}، پس از کارمزد): ${sc.n ? `${sc.win_rate!=null ? faN(n100(sc.win_rate),0) + "٪ برد · " : ""}میانگین \u200E${faS(sc.avg_r,2)}R · ` : ""}n=${faN(sc.n)}\u200F — ${v.fa}` +
           `${sc.ci_lo!=null && sc.ci_hi!=null ? `\nبازهٔ ۹۵٪: از ${faS(sc.ci_lo,2)} تا ${faS(sc.ci_hi,2)}R در هر معامله` : ""}\n${v.say}`;
   }else rec = S.st === "building" ? "کارنامه در حال ساخت… — دربارهٔ سودآوریِ این تصمیم هیچ ادعایی نمی‌شود کرد."
                                   : "کارنامهٔ این خانه ساخته نشد — دربارهٔ سودآوری‌اش هیچ ادعایی نمی‌شود کرد.";
   if(x.scorecard_applies === false) rec += `\n${SC_NA}.`;
   const wl = warns.length ? `\n\n⚠ هشدارهای موتور:\n• ${warns.join("\n• ")}` : "";
-  const msg = `${coinOf(sym)} · ${TF_FA[tf]||tf} — ${callLabel(a)}\n\n${rec}${wl}\n\nاین تحلیل است، نه سیگنالِ تأییدشده.\n\nپوزیشنِ دمو با ${fmt(size,0)}$ باز شود؟ (فقط کیف‌پولِ دمو)`;
+  const msg = `${coinOf(sym)}\u200F · ${TF_FA[tf]||tf} — ${callLabel(a)}\n\n${rec}${wl}\n\nاین تحلیل است، نه سیگنالِ تأییدشده.\n\nپوزیشنِ دمو با ${fmt(size,0)}$ باز شود؟ (فقط کیف‌پولِ دمو)`;
   if(!confirm(msg)) return;
   openPos(sym, tf, size, false, false, a, {entry: x.entry, sl: x.sl, tp: x.tp})
     .then(ok => { if(ok && DD && DD.sym === sym && DD.tf === tf) closeDecision(); });
@@ -2557,9 +2559,9 @@ function sgBanner(S){
     : S.status === "failed"
       ? `<div class="sg-banner bad">✗ این سیگنال در آزمونِ رو-به-جلوی ازپیش‌ثبت‌شده <b>رد</b> شد${j ? ` (میانگین ${bR(j.mean)})` : ""}. تا یک پیش‌ثبتِ تازه هیچ «بخر/بفروش»ی نمایش داده نمی‌شود.</div>`
       : `<div class="sg-banner warn">🧪 <b>در حالِ آزمون — هنوز اثبات نشده.</b> کارنامهٔ زیر از ۱ سپتامبر ۲۰۲۶ روی کندل‌هایی است که پیش از ثبتِ قاعده دیده نشده بودند. نخستین داوریِ رسمی: ${esc(due)}. تا آن روز این عددها فقط توصیفی‌اند، و با این تعداد معامله هنوز چیزی را ثابت یا رد نمی‌کنند.</div>`;
-  const errs = Object.entries(S.errors || {}).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join("؛ ");
+  const errs = Object.entries(S.errors || {}).map(([k, v]) => `<bdi>${esc(k)}: ${esc(v)}</bdi>`).join("؛ ");
   const stale = S.actionable ? "" :
-    `<div class="sg-banner bad">⚠️ کارنامه به‌روز نیست (آخرین ساخت: ${tsFa(S.built_at, true)})${S.build_error ? ` — ${esc(S.build_error)}` : errs ? ` — ${errs}` : ""}. ` +
+    `<div class="sg-banner bad">⚠️ کارنامه به‌روز نیست (آخرین ساخت: ${tsFa(S.built_at, true)})${S.build_error ? ` — <bdi>${esc(S.build_error)}</bdi>` : errs ? ` — ${errs}` : ""}. ` +
     `تا به‌روز شود هیچ «بخر/بفروش»ی نمایش داده نمی‌شود. <button class="btn mini" onclick="loadSignals(true)">↻ ساختِ دوباره</button></div>`;
   return main + stale;
 }
@@ -2577,7 +2579,7 @@ function sgCard(s, i){
        <div class="kv"><span>تا این لحظه</span><b class="${cls(s.unrealized_r)}">${s.unrealized_r != null ? bR(s.unrealized_r) : "—"} <small class="mid">(آخرین بسته ${px(s.last)})</small></b></div>
        <div class="kv"><span>خروجِ زمانی</span><b>${tsFa(s.time_stop_t, true)} <small class="mid">(${faN(s.bars_left)} کندلِ دیگر)</small></b></div>`;
   return `<div class="sg-card ${s.side}${fresh ? "" : " old"}">
-    <h3><span>${esc(coinOf(s.sym))} · ${TF_FA[s.tf] || s.tf} — ${sgSideFa(s.side)}</span><span class="sg-tag${fresh ? " new" : ""}">${fresh ? "سیگنالِ تازه" : "معاملهٔ باز"}</span></h3>
+    <h3><span><bdi>${esc(coinOf(s.sym))}</bdi> · ${TF_FA[s.tf] || s.tf} — ${sgSideFa(s.side)}</span><span class="sg-tag${fresh ? " new" : ""}">${fresh ? "سیگنالِ تازه" : "معاملهٔ باز"}</span></h3>
     <div class="sg-lv">
       <div><small>ورود${fresh ? " (حدودِ)" : ""}</small><b class="num">${px(s.entry)}</b></div>
       <div><small>حدضرر <bdi dir="ltr">−${fmt(s.risk_pct,2)}٪</bdi></small><b class="num dn">${px(s.sl)}</b></div>
@@ -2626,9 +2628,9 @@ function renderSignals(){
   const pend = Object.values(S.cells || {}).reduce((n, row) => n + Object.values(row || {}).reduce((m, c) => m + ((c && c.pending) || 0), 0), 0);
   const more = `<details class="sg-more"><summary>آخرین معامله‌های شمرده‌شده و روشِ شمارش</summary>
       ${sgTradesHtml(S)}
-      <p>قاعده: همان قاعدهٔ ماتریس، بدونِ دو ستاپِ «فیدِ روند» و «شکستِ فشردگی»، و فقط هم‌جهت با حرکتِ ۲۸ روزهٔ همان ارز (خرید وقتی قیمت بالاتر از ۲۸ روز پیش است، فروش وقتی پایین‌تر). ورود در بازِ کندلِ بعد، حدضرر ۱R = ۱٫۳ برابرِ ATR، هدف ۱٫۸R، سقفِ ۴۰ کندل، کارمزدِ رفت‌وبرگشت ${faN(S.cost_pct,2)}٪.</p>
+      <p>قاعده: همان قاعدهٔ ماتریس، بدونِ دو ستاپِ «فیدِ روند» و «شکستِ فشردگی»، و فقط هم‌جهت با حرکتِ ۲۸ روزهٔ همان ارز (خرید وقتی قیمت بالاتر از ۲۸ روز پیش است، فروش وقتی پایین‌تر). ورود در بازِ کندلِ بعد، حدضرر <bdi dir="ltr">۱R = ۱٫۳ × ATR</bdi>، هدف <bdi dir="ltr">۱٫۸R</bdi>، سقفِ ۴۰ کندل، کارمزدِ رفت‌وبرگشت ${faN(S.cost_pct,2)}٪.</p>
       <p>فقط معامله‌ای شمرده می‌شود که ۴۰ کندلش کامل گذشته باشد، تا معامله‌های زود-بسته‌شده کارنامه را کج نکنند${pend ? ` (الان ${faN(pend)} معاملهٔ بسته‌شده هنوز در نوبتِ شمارش است)` : ""}. کندل‌ها: اسپاتِ بایننس، همان‌هایی که تحلیلِ زنده از آن‌ها ساخته می‌شود؛ شما روی فیوچرزِ کوکوین معامله می‌کنید و قیمتِ پرشدن کمی فرق دارد. فاندینگِ فیوچرز هم در این کارنامه حساب نشده است: برای معامله‌ای که چند روز باز می‌ماند در حدِ چند صدمِ R است و بسته به جهتِ معامله می‌تواند به سود یا زیان باشد.</p>
-      <p>ترمز: تایم‌فریمی که دست‌کم ۲۰ معامله دارد و میانگینش منفی است (یا ۱۰۰ معاملهٔ آخرش زیرِ −۰٫۱۰R است) خاموش می‌شود و با بهترشدنِ کارنامه خودش برمی‌گردد. داوریِ رسمی در دو نوبت است: ${(S.looks || []).map(l => tsFa(l.due_ms, false)).join(" و ")}.</p></details>`;
+      <p>ترمز: تایم‌فریمی که دست‌کم ۲۰ معامله دارد و میانگینش منفی است (یا ۱۰۰ معاملهٔ آخرش زیرِ ${bR(-0.10)} است) خاموش می‌شود و با بهترشدنِ کارنامه خودش برمی‌گردد. داوریِ رسمی در دو نوبت است: ${(S.looks || []).map(l => tsFa(l.due_ms, false)).join(" و ")}.</p></details>`;
   el.innerHTML = sgBanner(S) + sgChips(S) +
     `<div class="sg-sizebar"><span>🧮 حجم برای فیوچرزِ کوکوین:</span>
        <label>موجودی (USDT) <input id="sgBal" class="cfgin" type="number" min="1" step="10" value="${esc(bal)}" placeholder="مثلاً ۱۰۰" onchange="sgSizeAll()"></label>

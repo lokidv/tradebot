@@ -313,7 +313,7 @@ function renderForward(){
   const lab = {IN_PROGRESS: ["در جریان", "warn"], GO_SMALL: ["مجاز — فقط با مبلغِ کم", "ok"], NO_GO: ["رد — برای پولِ واقعی نه", "bad"], BRAKE: ["ترمز — نمایش متوقف", "bad"]};
   $("#forward").innerHTML = Object.keys(f).map(sym => {
     const x = f[sym] || {}, [t, c] = lab[x.verdict] || ["—", "dim"];
-    return `<div class="cell"><div class="h">${coin(sym)} · ${fa(x.weeks)} از ۱۲ هفته</div>
+    return `<div class="cell"><div class="h"><bdi>${coin(sym)}</bdi> · ${fa(x.weeks)} از ۱۲ هفته</div>
       <div class="v ${c}">${t}</div>
       <div class="dim" style="font-size:13px">قاعده ${pct(x.model_return_pct)} · نگه‌داری ${pct(x.buy_hold_return_pct)} · افت ${fa(x.model_max_dd_pct, 1)}٪ در برابرِ ${fa(x.buy_hold_max_dd_pct, 1)}٪</div></div>`;
   }).join("") + `<div class="cell"><div class="h">معیارِ ازپیش‌ثبت‌شده برای پولِ واقعی</div>
@@ -326,7 +326,7 @@ async function loadCarry(){
   const lab = {IN_PROGRESS: ["در جریان", "warn"], GO_SMALL: ["مجاز — فقط با مبلغِ کم", "ok"], NO_GO: ["رد — برای پولِ واقعی نه", "bad"], BRAKE: ["ترمز", "bad"]};
   $("#carry").innerHTML = Object.keys(d.assets || {}).map(sym => {
     const x = d.assets[sym] || {}, [t, c] = lab[x.verdict] || ["—", "dim"];
-    return `<div class="cell"><div class="h">${coin(sym)} · ${fa(x.days, 0)} از ۸۴ روز</div>
+    return `<div class="cell"><div class="h"><bdi>${coin(sym)}</bdi> · ${fa(x.days, 0)} از ۸۴ روز</div>
       <div class="v ${c}">${t}</div>
       <div class="dim" style="font-size:13px">خالصِ روی سرمایه ${pct(x.net_return_pct, 2)} · نرخِ فاندینگِ ۷ روزِ اخیر ${x.last7d_rate_annual_pct == null ? "—" : fa(x.last7d_rate_annual_pct, 1) + "٪ سالانه روی نُشنال"}</div></div>`;
   }).join("") + `<div class="cell"><div class="h">این چیست</div>
